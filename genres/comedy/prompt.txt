@@ -1,0 +1,53 @@
+COMEDY WRITING GUIDE
+====================
+
+Core engine: INCONGRUITY + ESCALATION + RELEASE. Comedy is the collision between expectation and reality, between dignity and situation, between what someone wants and what they get. It runs on surprise — but the right kind of surprise, one the audience recognizes as true the moment it lands.
+
+THE RULE OF THREE
+Setup, setup, punchline. Establish a pattern (twice is enough), then break it in the third beat. The third beat must be unexpected AND feel inevitable. The break can go higher (escalation), sideways (misdirection), or inward (the punchline is the character, not the situation).
+
+COMIC TIMING
+- Timing on the page = word count. Short sentences hit hard. Long sentences build and then land. The shortest sentence after a long one is usually the joke.
+- Put the funniest word at the end of the sentence. "She arrived in a limousine carrying a ferret" is funnier than "She was carrying a ferret when she arrived in a limousine."
+- In dialogue: the laugh comes after the straight line. The straight line matters more than the joke — if it doesn't set up correctly, nothing lands.
+- Pause = white space. Parentheticals like (beat) can hold a laugh, let it develop, then continue.
+
+MISDIRECTION
+Comedy is about controlling where the audience's mind goes, then surprising them. Set up the expectation clearly, then go somewhere else. The somewhere else must be funnier AND make more sense than what they expected.
+
+ESCALATION
+Comedy scenes should escalate in specificity and absurdity. The first thing is bad. The second thing is worse. The third thing is the thing that makes it unbearable. Each escalation step should feel logical from within the comic world's rules.
+
+CHARACTER COMEDY
+The best comedy comes from character, not situation. The situation is just pressure — character is what pops out under pressure. Ask: what is this person's fundamental delusion about themselves? That delusion, colliding with reality, is the engine of their comedy.
+- The character should take their situation more seriously than it deserves
+- They should have a clear, consistent logic even when that logic is absurd
+- Their flaw should be specific, not generic (not "prideful" — "cannot admit being wrong in front of people they've condescended to")
+
+PHYSICAL COMEDY
+Physical comedy works on the page through specificity and logical consequence. If a character slips, the comedy is in what they hit, what they grab, what that brings down. One domino, then another, then the piano.
+
+THE COMIC PREMISE
+The comic premise is a "what if" that unlocks a vein of escalating situations. It should be:
+- Specific (not "a fish out of water" but "a medieval knight in a modern HR department")
+- Sustainable (can you get 90 minutes of escalating problems from it?)
+- Personal (connected to the protagonist's flaw in a way that forces growth)
+
+TONE
+- Commit to the world. Even the most absurd comedy works because everyone in it plays it straight.
+- Irony and winking at the audience kills comedy. Characters don't know they're funny.
+- Warmth matters. Audiences laugh harder when they like the characters. Cruelty without affection wears out fast.
+- Know your register: farce (maximum absurdity, high speed), character comedy (grounded, slower burn), satire (real-world target), romantic comedy (the genre blend). Different rules apply.
+
+PITFALLS TO AVOID
+- Jokes that require the characters to be stupid rather than unlucky or deluded
+- On-the-nose comedy: the character noticing and commenting on their own comic situation
+- Repeating the same joke without escalation (repetition is technique when it escalates; it's just repetition otherwise)
+- Explaining the joke
+- Skipping the setup because you're in a hurry to get to the punchline
+
+KEY CRAFT MOVES
+- The callback (plant something odd early; pay it off as a punchline later)
+- The slow burn (something is clearly going wrong, the character doesn't notice — audience anticipation is the comedy)
+- The straight man (the only character who sees how absurd things are; their reactions calibrate the audience's)
+- The comedic cost (what the character pays for their comic flaw — must feel proportional and real)

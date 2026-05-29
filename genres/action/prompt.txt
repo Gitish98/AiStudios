@@ -1,0 +1,58 @@
+ACTION WRITING GUIDE
+====================
+
+Core engine: PHYSICAL STAKES + ESCALATING JEOPARDY. Action is the genre of consequence made physical. Every major idea in action is expressed through the body: pursuit, combat, survival, sacrifice. The audience must believe the danger is real, the cost is real, and the protagonist's survival is never guaranteed.
+
+THE ACTION HERO
+Action protagonists are defined by competence AND vulnerability. Too competent = no tension. Too vulnerable = implausible. The sweet spot is: skilled enough that we believe they can survive, limited enough that survival isn't certain.
+- Give them a specific skill set that is relevant to the threat
+- Give them a limitation: emotional, physical, or situational (they're protecting someone else, they're out of resources, they're operating in unfamiliar territory)
+- Their wound should eventually become their weapon: the thing that makes them fight harder than anyone else would
+
+THE SET PIECE
+Action movies are defined by their set pieces — the big action sequences that demonstrate the physical stakes of the story. Each set piece should:
+- Have clear spatial geography (we know where everyone is)
+- Have clear stakes (what happens if the protagonist fails here?)
+- Escalate internally (the set piece gets worse before it gets better)
+- End with a cost or consequence (no free victories)
+
+Plan your set pieces before anything else. The script exists to get between them logically.
+
+PACING
+- Action sequences: short sentences, present tense energy, rapid cuts implied on the page. White space = speed.
+- Recovery scenes (between action sequences): longer, character-focused, slower. These scenes make the audience care what happens in the next sequence.
+- The rhythm of action writing is sprint-walk-sprint-walk. The walking scenes must exist; they make the sprinting matter.
+
+WRITING ACTION LINES
+- Be specific. "He fights three guards" does nothing. "He deflects the first punch into the second guard's nose, grabs the third by the collar, drives his forehead into the wall. Two seconds. He's already moving."
+- Focus on what matters cinematically — the significant object, the specific wound, the exact obstacle
+- Imply the camera through the action: long shots for scale, close shots for faces and hands during the critical moment
+- Economy: 3-4 lines per action paragraph maximum. Blank lines between beats of a fight.
+
+THE VILLAIN / THREAT
+Action antagonists must be a credible physical and strategic match for the protagonist. An easily defeated villain produces no tension. The threat should:
+- Be established as dangerous before they confront the protagonist (we see what they can do)
+- Have a coherent motivation (even if it's simply greed or power, it should be specific)
+- Take the protagonist seriously (villains who underestimate the hero are uninteresting)
+- Represent a specific kind of threat that exploits the protagonist's specific limitation
+
+THE STAKES
+Action works best when the stakes are personal, not just global. "Save the world" is abstract. "Protect his daughter while stopping the bomb" is specific. The personal stakes should be established before the global stakes are introduced — the audience cares about the person before they care about the world.
+
+TONE
+- Action has a natural alliance with genre pleasures: we're here for the set pieces, the wit under pressure, the spectacular.
+- Humor works in action — characters who trade lines during a gunfight are characters we enjoy watching. But humor should be character-specific, not generic quipping.
+- Violence in action has weight. Characters get hurt, tire, run out of ammo. The body's limits are the drama.
+
+PITFALLS TO AVOID
+- Unmotivated action sequences (action must arise from story logic, not just spectacle desire)
+- The unbreakable protagonist (wounds that disappear, fatigue that doesn't accumulate)
+- Faceless henchmen who exist only to be dispatched (the villain's team should have hierarchy and logic)
+- Relying on the villain being stupid at the critical moment
+- The quiet middle of Act Two — action films need to maintain kinetic energy even in character scenes
+
+KEY CRAFT MOVES
+- The asymmetric fight (protagonist must win against impossible odds through intelligence, not strength)
+- The body count cost (each victory leaves the protagonist more damaged; Act Three is won on fumes)
+- The villain's entrance (establish the threat through a scene where we see them in action before they face the protagonist)
+- The hostage equation (protecting someone else while also protecting themselves — impossible choice)

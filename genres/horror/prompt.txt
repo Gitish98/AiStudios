@@ -1,0 +1,55 @@
+HORROR WRITING GUIDE
+====================
+
+Core engine: THE UNKNOWN + ESCALATING DREAD. Horror is not about the monster — it is about the anticipation of the monster. The moment the threat is fully revealed, fear begins to diminish. Manage revelation carefully.
+
+STRUCTURAL CONVENTIONS
+- Horror opens in normalcy. The scarier the eventual threat, the more grounded the setup must be. Give the audience something to lose.
+- The horror story is about violation: of a safe space, of a body, of a mind, of the rules of reality. Identify which violation you're writing and commit to it.
+- Act Two is about escalating intrusion — the threat gets closer, the rules of the world bend further, the safe spaces narrow.
+- Act Three: the protagonist must either destroy the threat, escape it, or be destroyed by it. Ambiguous endings work in horror when they feel earned, not lazy.
+- The "final girl" structure still holds: the survivor must demonstrate some quality — clarity, will, refusal — that explains why they survive.
+
+THE UNKNOWN
+Fear lives in what you don't fully show. The silhouette is scarier than the face. The sound in the next room is scarier than the thing in this room. Delay revelation strategically. When you finally show the threat, make it specific and physical — audiences fill in vagueness with their own fears.
+
+ESCALATING TENSION
+Each intrusion should be worse than the last:
+- First: something slightly wrong (a sound, a shadow, an absence)
+- Second: undeniable evidence that something is here
+- Third: direct encounter — survived at cost
+- Fourth: the threat cannot be escaped or reasoned with
+- Climax: total confrontation, no way out but through
+
+THE RULES OF YOUR HORROR WORLD
+Horror requires an internal logic. What can the threat do? What can it not do? What stops it? What makes it worse? Establish these rules early (often obliquely) and pay them off rigorously. Breaking your own rules destroys believability.
+
+TONE
+- Horror requires the audience to believe in the danger. A single moment of campiness can puncture the spell.
+- But humor and levity exist in horror — they function as release valves that make the next scare hit harder. Use them deliberately.
+- Physical specificity creates dread. Describe what the character's body feels: the cold, the smell, the wet, the wrong texture.
+- Isolation amplifies everything. Cut your protagonist off from help early.
+
+JUMP SCARES VS. DREAD
+- Jump scares: cheap, diminishing returns, signal that the filmmaker doesn't trust the material.
+- Dread: watching someone walk toward a door they shouldn't open. Watching someone smile when they shouldn't be smiling. Watching the protagonist not notice what we notice.
+- Use dread as the primary tool. A jump scare can land hard if preceded by sustained dread — the release of tension.
+
+CHARACTER IN HORROR
+- Give characters specific, believable reasons to stay in the situation (duty, love, disbelief, no alternative)
+- Protagonists who are too stupid to live destroy investment. Make their mistakes understandable
+- The threat should mean something — ideally a metaphorical resonance with the protagonist's wound or the story's theme
+- Supporting characters who die should have enough development that their deaths cost something
+
+PITFALLS TO AVOID
+- Characters doing obviously stupid things destroys credibility
+- Over-explaining the monster/threat removes fear
+- The twist that reframes everything as fake/a dream — unless handled with extreme care, this feels like a cheat
+- Gratuitous gore without dread is torture porn, not horror
+- A threat with no rules feels random rather than menacing
+
+KEY CRAFT MOVES
+- The false scare that precedes the real one (audience relaxes, then gets hit)
+- The wrong detail (something in the frame that shouldn't be there — let the audience find it)
+- The body horror reversal (protagonist is already changed/infected/affected — when did it happen?)
+- The unreliable environment (the house is different from how it was)
