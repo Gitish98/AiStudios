@@ -652,7 +652,7 @@ def _preview_dashboard(args):
 
 
 def _build_project_html(embed_data: dict) -> str:
-    data_json = json.dumps(embed_data, ensure_ascii=False, indent=2)
+    data_json = json.dumps(embed_data, ensure_ascii=False).replace("</", "<\\/")
     project = embed_data["project"]
     title = project.get("title", "Untitled")
     genre = project.get("genre", "")
@@ -663,245 +663,409 @@ def _build_project_html(embed_data: dict) -> str:
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>{_esc(title)} — AiStudios</title>
 <style>
-  *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
-  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif; background: #f4f4f0; color: #1a1a1a; display: flex; min-height: 100vh; }}
-
-  /* Sidebar */
-  #sidebar {{ width: 240px; min-width: 240px; background: #1a1a2e; color: #c8c8d8; display: flex; flex-direction: column; padding: 24px 0; position: sticky; top: 0; height: 100vh; overflow-y: auto; }}
-  #sidebar .brand {{ padding: 0 20px 20px; border-bottom: 1px solid #2a2a4a; margin-bottom: 16px; }}
-  #sidebar .brand h1 {{ font-size: 13px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: #7878a8; margin-bottom: 6px; }}
-  #sidebar .brand .project-title {{ font-size: 16px; font-weight: 600; color: #e8e8f0; line-height: 1.3; }}
-  .genre-badge {{ display: inline-block; background: #2d2d5e; color: #9898c8; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; padding: 3px 8px; border-radius: 4px; margin-top: 6px; }}
-  .status-badge {{ display: inline-block; background: #1e3a2e; color: #5aaa7a; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; padding: 3px 8px; border-radius: 4px; margin-top: 4px; margin-left: 4px; }}
-  #sidebar nav {{ padding: 0 12px; flex: 1; }}
-  #sidebar nav a {{ display: block; color: #8888aa; text-decoration: none; padding: 9px 12px; border-radius: 6px; font-size: 14px; font-weight: 500; margin-bottom: 2px; transition: background 0.15s, color 0.15s; }}
-  #sidebar nav a:hover, #sidebar nav a.active {{ background: #2a2a4e; color: #d8d8f0; }}
-  #sidebar nav .section-label {{ font-size: 10px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: #4a4a6a; padding: 14px 12px 4px; }}
-
-  /* Content */
-  #content {{ flex: 1; padding: 40px 48px; max-width: 900px; }}
-  section {{ margin-bottom: 56px; }}
-  section h2 {{ font-size: 22px; font-weight: 700; color: #1a1a2e; margin-bottom: 20px; padding-bottom: 10px; border-bottom: 2px solid #e0e0d8; }}
-
-  /* Logline card */
-  .logline-card {{ background: #1a1a2e; color: #e8e8f0; border-radius: 12px; padding: 28px 32px; font-size: 17px; line-height: 1.65; font-style: italic; }}
-  .logline-card:empty::after {{ content: "No logline set."; color: #5a5a7a; font-style: normal; }}
-
-  /* Beat sheet */
-  .beat {{ background: #fff; border-radius: 8px; padding: 18px 22px; margin-bottom: 12px; border-left: 4px solid #1a1a2e; }}
-  .beat h3 {{ font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: #1a1a2e; margin-bottom: 6px; }}
-  .beat p {{ font-size: 14px; line-height: 1.6; color: #333; }}
-
-  /* Characters */
-  .character-grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }}
-  .character-card {{ background: #fff; border-radius: 10px; padding: 20px; border-top: 4px solid #1a1a2e; }}
-  .character-card h3 {{ font-size: 16px; font-weight: 700; color: #1a1a2e; margin-bottom: 6px; }}
-  .character-card .role {{ font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: #7878a8; margin-bottom: 12px; }}
-  .character-card .char-body {{ font-size: 13px; line-height: 1.55; color: #444; white-space: pre-wrap; }}
-
-  /* Script viewer */
-  .script-file {{ margin-bottom: 32px; }}
-  .script-file h3 {{ font-size: 14px; font-weight: 600; color: #7878a8; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.08em; }}
-  .screenplay {{ font-family: 'Courier New', Courier, monospace; font-size: 13px; line-height: 1.7; background: #fff; padding: 40px 48px; border-radius: 8px; white-space: pre-wrap; color: #1a1a1a; }}
-  .scene-heading {{ font-weight: bold; text-transform: uppercase; }}
-  .character-cue {{ text-align: center; font-weight: bold; text-transform: uppercase; }}
-  .parenthetical {{ text-align: center; margin-left: 60px; margin-right: 60px; color: #444; }}
-  .dialogue-block {{ margin-left: 80px; margin-right: 80px; }}
-
-  /* Outline */
-  .outline-content {{ background: #fff; border-radius: 8px; padding: 28px 32px; font-size: 15px; line-height: 1.7; color: #222; white-space: pre-wrap; }}
-
-  /* Responsive */
-  @media (max-width: 700px) {{
-    body {{ flex-direction: column; }}
-    #sidebar {{ width: 100%; height: auto; position: static; }}
-    #content {{ padding: 24px 20px; }}
-    .character-grid {{ grid-template-columns: 1fr; }}
-    .screenplay {{ padding: 20px; }}
-  }}
+*,*::before,*::after{{box-sizing:border-box;margin:0;padding:0}}
+:root{{
+  --navy:#0f0f1a;--navy2:#1a1a2e;--navy3:#252540;--accent:#6c6cff;
+  --text:#e8e8f4;--muted:#8888aa;
+  --sidebar-w:260px;--bottom-nav-h:64px;
+}}
+html{{scroll-behavior:smooth}}
+body{{font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;background:var(--navy);color:var(--text);min-height:100vh;display:flex;overflow-x:hidden}}
+#sidebar{{width:var(--sidebar-w);min-width:var(--sidebar-w);background:var(--navy2);display:flex;flex-direction:column;height:100vh;position:sticky;top:0;overflow-y:auto;z-index:100;border-right:1px solid rgba(255,255,255,0.05)}}
+.brand{{padding:24px 20px 20px;border-bottom:1px solid rgba(255,255,255,0.07)}}
+.brand-label{{font-size:10px;font-weight:700;letter-spacing:0.15em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}}
+.brand-title{{font-size:17px;font-weight:700;color:#fff;line-height:1.3;margin-bottom:10px}}
+.badges{{display:flex;gap:6px;flex-wrap:wrap}}
+.badge{{font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;padding:3px 8px;border-radius:20px}}
+.badge-genre{{background:rgba(108,108,255,0.2);color:#9898ff}}
+.badge-status{{background:rgba(80,200,120,0.15);color:#60cc88}}
+#sidebar nav{{padding:16px 12px;flex:1}}
+.nav-section{{font-size:10px;font-weight:700;letter-spacing:0.13em;text-transform:uppercase;color:rgba(255,255,255,0.25);padding:12px 10px 6px}}
+.nav-link{{display:flex;align-items:center;gap:10px;color:var(--muted);text-decoration:none;padding:10px 12px;border-radius:8px;font-size:14px;font-weight:500;margin-bottom:2px;transition:all 0.15s;cursor:pointer;border:none;background:none;width:100%;text-align:left}}
+.nav-link:hover,.nav-link.active{{background:rgba(108,108,255,0.15);color:#c0c0ff}}
+.sidebar-footer{{padding:16px 20px;border-top:1px solid rgba(255,255,255,0.07);font-size:11px;color:rgba(255,255,255,0.2)}}
+#main{{flex:1;display:flex;flex-direction:column;min-height:100vh;overflow-x:hidden}}
+.section{{display:none;flex:1;padding:32px 36px;max-width:860px;width:100%;margin:0 auto}}
+.section.active{{display:block}}
+.section-title{{font-size:13px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:var(--muted);margin-bottom:20px}}
+.logline-card{{background:linear-gradient(135deg,#1e1e3a 0%,#252550 100%);border:1px solid rgba(108,108,255,0.2);border-radius:16px;padding:32px;margin-bottom:24px}}
+.logline-label{{font-size:10px;font-weight:700;letter-spacing:0.15em;text-transform:uppercase;color:#6c6cff;margin-bottom:14px}}
+.logline-text{{font-size:18px;line-height:1.7;color:#e0e0f8;font-style:italic;font-weight:400}}
+.meta-row{{display:flex;gap:12px;flex-wrap:wrap;margin-top:20px}}
+.meta-chip{{background:rgba(255,255,255,0.06);border-radius:8px;padding:8px 14px;font-size:13px;color:var(--muted)}}
+.meta-chip strong{{color:var(--text);font-weight:600}}
+.beats-list{{display:flex;flex-direction:column;gap:10px}}
+.beat-card{{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:18px 20px;border-left:3px solid #6c6cff}}
+.beat-header{{display:flex;align-items:baseline;gap:10px;margin-bottom:8px}}
+.beat-num{{font-size:11px;font-weight:700;color:#6c6cff;letter-spacing:0.1em;min-width:24px}}
+.beat-name{{font-size:14px;font-weight:700;color:#d0d0f0;text-transform:uppercase;letter-spacing:0.05em}}
+.beat-pages{{font-size:11px;color:var(--muted);margin-left:auto}}
+.beat-text{{font-size:14px;line-height:1.65;color:#aaaacc}}
+.char-grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}}
+.char-card{{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:20px;cursor:pointer;transition:all 0.15s}}
+.char-card:hover{{background:rgba(108,108,255,0.1);border-color:rgba(108,108,255,0.3)}}
+.char-name{{font-size:16px;font-weight:700;color:#fff;margin-bottom:4px}}
+.char-role{{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:#6c6cff;margin-bottom:12px}}
+.char-snippet{{font-size:13px;line-height:1.6;color:#9090b8}}
+.char-drawer{{display:none;background:rgba(15,15,30,0.6);border:1px solid rgba(108,108,255,0.2);border-radius:12px;padding:24px;margin-top:10px;font-size:14px;line-height:1.7;color:#c0c0e0;grid-column:1/-1}}
+.char-drawer.open{{display:block}}
+.char-drawer h3{{color:#e0e0ff;font-size:15px;margin:16px 0 6px}}
+.outline-block{{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:24px 28px;margin-bottom:16px}}
+.outline-filename{{font-size:11px;color:var(--muted);margin-bottom:14px;letter-spacing:0.08em;text-transform:uppercase}}
+.outline-body{{font-size:14px;line-height:1.75;color:#b0b0d0}}
+.outline-body strong{{color:#e0e0ff}}
+#section-script{{padding:0;max-width:100%}}
+.script-header{{padding:20px 32px 14px;border-bottom:1px solid rgba(255,255,255,0.07)}}
+.script-tabs{{display:flex;gap:8px;overflow-x:auto;padding:12px 32px;border-bottom:1px solid rgba(255,255,255,0.07)}}
+.script-tab{{flex-shrink:0;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:20px;padding:6px 16px;font-size:13px;color:var(--muted);cursor:pointer;transition:all 0.15s;white-space:nowrap}}
+.script-tab.active{{background:#6c6cff;color:#fff;border-color:#6c6cff}}
+.screenplay-wrap{{background:#2a2a2a;padding:32px 24px;min-height:calc(100vh - 120px)}}
+.screenplay-page{{background:#f5f4f0;margin:0 auto 28px;padding:72px 72px 96px 96px;max-width:680px;position:relative;box-shadow:0 4px 32px rgba(0,0,0,0.6);font-family:'Courier New',Courier,monospace;font-size:12pt;line-height:1.7;color:#111}}
+.page-num{{position:absolute;top:48px;right:60px;font-size:12pt;color:#333;font-family:'Courier New',Courier,monospace}}
+.sp-heading{{font-weight:bold;text-transform:uppercase;margin-top:1.4em;margin-bottom:0}}
+.sp-action{{margin:0}}
+.sp-blank{{height:1.7em}}
+.sp-char{{margin-top:1.4em;margin-bottom:0;padding-left:200px;text-transform:uppercase}}
+.sp-dialogue{{padding-left:100px;padding-right:80px;margin:0}}
+.sp-paren{{padding-left:148px;padding-right:100px;margin:0;color:#444}}
+.sp-transition{{text-align:right;margin-top:1em;margin-bottom:0}}
+.empty{{text-align:center;padding:60px 24px;color:var(--muted)}}
+.empty h3{{font-size:17px;color:#5a5a7a;margin-bottom:8px}}
+.empty code{{background:rgba(255,255,255,0.07);padding:2px 6px;border-radius:4px;font-size:13px}}
+#bottom-nav{{display:none;position:fixed;bottom:0;left:0;right:0;height:var(--bottom-nav-h);background:rgba(15,15,30,0.96);border-top:1px solid rgba(255,255,255,0.1);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);z-index:200;padding:0 8px;padding-bottom:env(safe-area-inset-bottom)}}
+.bnav-inner{{display:flex;height:100%;align-items:center;justify-content:space-around}}
+.bnav-btn{{display:flex;flex-direction:column;align-items:center;gap:3px;color:var(--muted);background:none;border:none;padding:8px 10px;border-radius:10px;cursor:pointer;transition:all 0.15s;font-size:10px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;min-width:52px}}
+.bnav-btn.active{{color:#6c6cff}}
+@media(max-width:768px){{
+  #sidebar{{display:none}}
+  #bottom-nav{{display:flex}}
+  #main{{padding-bottom:var(--bottom-nav-h)}}
+  .section{{padding:20px 16px}}
+  #section-script{{padding:0}}
+  .script-header{{padding:16px 16px 12px}}
+  .script-tabs{{padding:10px 16px}}
+  .char-grid{{grid-template-columns:1fr}}
+  .logline-text{{font-size:16px}}
+  .screenplay-wrap{{padding:16px 0}}
+  .screenplay-page{{padding:44px 20px 56px 36px;font-size:10pt;box-shadow:0 2px 16px rgba(0,0,0,0.5)}}
+  .sp-char{{padding-left:110px}}
+  .sp-dialogue{{padding-left:56px;padding-right:36px}}
+  .sp-paren{{padding-left:84px;padding-right:50px}}
+  .page-num{{top:24px;right:16px;font-size:10pt}}
+}}
 </style>
 </head>
 <body>
 <div id="sidebar">
   <div class="brand">
-    <h1>AiStudios</h1>
-    <div class="project-title">{_esc(title)}</div>
-    {'<span class="genre-badge">' + _esc(genre) + '</span>' if genre else ''}
-    {'<span class="status-badge">' + _esc(status) + '</span>' if status else ''}
+    <div class="brand-label">AiStudios</div>
+    <div class="brand-title">{_esc(title)}</div>
+    <div class="badges">
+      {'<span class="badge badge-genre">' + _esc(genre) + '</span>' if genre else ''}
+      {'<span class="badge badge-status">' + _esc(status) + '</span>' if status else ''}
+    </div>
   </div>
   <nav>
-    <div class="section-label">Sections</div>
-    <a href="#logline">Logline</a>
-    <a href="#beats">Beat Sheet</a>
-    <a href="#characters">Characters</a>
-    <a href="#outlines">Outlines</a>
-    <a href="#script">Script</a>
+    <div class="nav-section">Navigate</div>
+    <button class="nav-link active" onclick="showSection('overview')">&#9632; Overview</button>
+    <button class="nav-link" onclick="showSection('beats')">&#9776; Beat Sheet</button>
+    <button class="nav-link" onclick="showSection('characters')">&#9786; Characters</button>
+    <button class="nav-link" onclick="showSection('outlines')">&#9741; Outlines</button>
+    <button class="nav-link" onclick="showSection('script')">&#9998; Script</button>
   </nav>
+  <div class="sidebar-footer">AiStudios &middot; Screenplay Toolkit</div>
 </div>
-<div id="content">
-  <section id="logline">
-    <h2>Logline</h2>
-    <div class="logline-card">{_esc(logline)}</div>
-  </section>
-
-  <section id="beats">
-    <h2>Beat Sheet</h2>
-    <div id="beats-content"></div>
-  </section>
-
-  <section id="characters">
-    <h2>Characters</h2>
-    <div id="characters-content" class="character-grid"></div>
-  </section>
-
-  <section id="outlines">
-    <h2>Outlines</h2>
+<div id="main">
+  <div id="section-overview" class="section active">
+    <div class="section-title">Project Overview</div>
+    <div class="logline-card">
+      <div class="logline-label">Logline</div>
+      <div class="logline-text">{_esc(logline) or "No logline set yet."}</div>
+      <div class="meta-row">
+        {'<div class="meta-chip"><strong>Genre</strong>&nbsp;&nbsp;' + _esc(genre.title()) + '</div>' if genre else ''}
+        {'<div class="meta-chip"><strong>Status</strong>&nbsp;&nbsp;' + _esc(status.title()) + '</div>' if status else ''}
+        {'<div class="meta-chip"><strong>Author</strong>&nbsp;&nbsp;' + _esc(project.get("author","")) + '</div>' if project.get("author") else ''}
+      </div>
+    </div>
+  </div>
+  <div id="section-beats" class="section">
+    <div class="section-title">Beat Sheet</div>
+    <div id="beats-content" class="beats-list"></div>
+  </div>
+  <div id="section-characters" class="section">
+    <div class="section-title">Characters</div>
+    <div id="characters-content" class="char-grid"></div>
+  </div>
+  <div id="section-outlines" class="section">
+    <div class="section-title">Outlines &amp; Notes</div>
     <div id="outlines-content"></div>
-  </section>
-
-  <section id="script">
-    <h2>Script</h2>
-    <div id="script-content"></div>
-  </section>
+  </div>
+  <div id="section-script" class="section" style="padding:0;max-width:100%">
+    <div class="script-header"><div class="section-title" style="margin-bottom:0">Script</div></div>
+    <div class="script-tabs" id="script-tabs"></div>
+    <div class="screenplay-wrap" id="screenplay-wrap"></div>
+  </div>
 </div>
-
+<div id="bottom-nav">
+  <div class="bnav-inner">
+    <button class="bnav-btn active" onclick="showSection('overview')">
+      <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+      Info
+    </button>
+    <button class="bnav-btn" onclick="showSection('beats')">
+      <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><polyline points="3 6 4 7 6 5"/><polyline points="3 12 4 13 6 11"/><polyline points="3 18 4 19 6 17"/></svg>
+      Beats
+    </button>
+    <button class="bnav-btn" onclick="showSection('characters')">
+      <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      Cast
+    </button>
+    <button class="bnav-btn" onclick="showSection('outlines')">
+      <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      Notes
+    </button>
+    <button class="bnav-btn" onclick="showSection('script')">
+      <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+      Script
+    </button>
+  </div>
+</div>
 <script>
-var AISTUDIOS_DATA = {data_json};
+var D = {data_json};
+var currentSection = 'overview';
+
+function showSection(id) {{
+  currentSection = id;
+  document.querySelectorAll('.section').forEach(function(s) {{
+    s.classList.remove('active'); s.style.display = 'none';
+  }});
+  var el = document.getElementById('section-' + id);
+  if (el) {{ el.style.display = 'block'; el.classList.add('active'); }}
+  document.querySelectorAll('.nav-link,.bnav-btn').forEach(function(b) {{
+    b.classList.toggle('active', (b.getAttribute('onclick') || '').indexOf("'" + id + "'") !== -1);
+  }});
+  window.scrollTo(0, 0);
+}}
 
 function esc(s) {{
   return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }}
 
+function renderMarkdown(md) {{
+  return (md || '')
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/^#{3}\\s+(.+)$/gm,'<strong style="color:#d0d0ff;display:block;margin-top:14px">$1</strong>')
+    .replace(/^#{1,2}\\s+(.+)$/gm,'')
+    .replace(/\\*\\*([^*]+)\\*\\*/g,'<strong style="color:#d0d0ff">$1</strong>')
+    .replace(/\\*([^*]+)\\*/g,'<em>$1</em>')
+    .replace(/^---+$/gm,'<hr style="border:none;border-top:1px solid rgba(255,255,255,0.1);margin:12px 0">')
+    .replace(/\\n/g,'<br>');
+}}
+
 function renderBeats() {{
-  var outlines = AISTUDIOS_DATA.outlines || [];
-  var beatsFile = null;
+  var outlines = D.outlines || [];
+  var bf = null;
   for (var i = 0; i < outlines.length; i++) {{
-    if (outlines[i].filename.toLowerCase().indexOf('beat') !== -1) {{
-      beatsFile = outlines[i];
-      break;
-    }}
+    if (outlines[i].filename.toLowerCase().indexOf('beat') !== -1) {{ bf = outlines[i]; break; }}
   }}
   var el = document.getElementById('beats-content');
-  if (!beatsFile) {{
-    el.innerHTML = '<p style="color:#888;">No beat sheet found. Run: aistudios beats</p>';
+  if (!bf) {{
+    el.innerHTML = '<div class="empty"><h3>No beat sheet yet</h3><p>Run: <code>python aistudios.py beats</code></p></div>';
     return;
   }}
-  var lines = beatsFile.content.split('\\n');
-  var html = '';
-  var currentBeat = null;
-  var currentText = [];
+  var lines = bf.content.split('\\n');
+  var html = ''; var beatNum = 0;
+  var name = ''; var pages = ''; var text = [];
+  function flush() {{
+    if (!name) return; beatNum++;
+    html += '<div class="beat-card"><div class="beat-header"><span class="beat-num">' + beatNum + '</span><span class="beat-name">' + esc(name.replace(/^\\d+\\.\\s*/, '')) + '</span>' + (pages ? '<span class="beat-pages">' + esc(pages) + '</span>' : '') + '</div><div class="beat-text">' + esc(text.join(' ').trim()) + '</div></div>';
+  }}
   for (var i = 0; i < lines.length; i++) {{
-    var line = lines[i];
-    if (line.match(/^##\\s/)) {{
-      if (currentBeat) {{
-        html += '<div class="beat"><h3>' + esc(currentBeat) + '</h3><p>' + esc(currentText.join(' ').trim()) + '</p></div>';
-      }}
-      currentBeat = line.replace(/^##\\s+/, '').trim();
-      currentText = [];
-    }} else if (currentBeat && line.trim()) {{
-      currentText.push(line.trim());
+    var l = lines[i];
+    if (/^###\\s/.test(l)) {{ flush(); name = l.replace(/^###\\s+/, '').trim(); pages = ''; text = []; }}
+    else if (name && l.trim()) {{
+      var pm = l.match(/\\(pp?\\.?\\s*([\\d\\s–-]+)\\)/);
+      if (pm) pages = 'pp.' + pm[1].trim();
+      text.push(l.replace(/\\(pp?\\..*?\\)/, '').trim());
     }}
   }}
-  if (currentBeat) {{
-    html += '<div class="beat"><h3>' + esc(currentBeat) + '</h3><p>' + esc(currentText.join(' ').trim()) + '</p></div>';
-  }}
-  el.innerHTML = html || '<p style="color:#888;">Beat sheet found but could not be parsed. View the raw file.</p>';
+  flush();
+  el.innerHTML = html || '<div class="empty"><h3>Beat sheet found</h3></div>';
 }}
 
 function renderCharacters() {{
-  var chars = AISTUDIOS_DATA.characters || [];
+  var chars = D.characters || [];
   var el = document.getElementById('characters-content');
   if (!chars.length) {{
-    el.innerHTML = '<p style="color:#888;">No character files found. Run: aistudios character</p>';
+    el.innerHTML = '<div class="empty"><h3>No characters yet</h3><p>Run: <code>python aistudios.py character</code></p></div>';
     return;
   }}
   var html = '';
-  for (var i = 0; i < chars.length; i++) {{
-    var c = chars[i];
+  chars.forEach(function(c, idx) {{
     var lines = c.content.split('\\n');
-    var name = lines[0].replace(/^#+\\s*Character:\\s*/i,'').replace(/^#+\\s*/,'').trim() || c.filename;
+    var name = (lines[0] || '').replace(/^#+\\s*(Character:\\s*)?/i, '').trim() || c.filename.replace('.md', '');
     var role = '';
-    var body = c.content;
-    for (var j = 0; j < lines.length; j++) {{
-      var l = lines[j].toLowerCase();
-      if (l.indexOf('role') !== -1 && lines[j+1]) {{
-        role = lines[j+1].trim();
-        break;
+    for (var i = 0; i < Math.min(lines.length, 12); i++) {{
+      var m = lines[i].match(/\\*\\*Role[^*]*\\*\\*[:\\s]+(.+)/i);
+      if (m) {{ role = m[1].trim(); break; }}
+    }}
+    var snippet = '';
+    for (var i = 1; i < lines.length; i++) {{
+      var t = lines[i].trim();
+      if (t && !t.startsWith('#') && !t.startsWith('**') && t.length > 20) {{
+        snippet = t.substring(0, 160) + (t.length > 160 ? '…' : ''); break;
       }}
     }}
-    html += '<div class="character-card"><h3>' + esc(name) + '</h3>';
-    if (role) html += '<div class="role">' + esc(role) + '</div>';
-    var bodyTrimmed = body.replace(/^#.*\\n/, '').trim().substring(0, 400);
-    html += '<div class="char-body">' + esc(bodyTrimmed) + (body.length > 400 ? '\\n\\n[...]' : '') + '</div></div>';
-  }}
+    html += '<div class="char-card" onclick="toggleChar(' + idx + ')">';
+    html += '<div class="char-name">' + esc(name) + '</div>';
+    if (role) html += '<div class="char-role">' + esc(role) + '</div>';
+    html += '<div class="char-snippet">' + esc(snippet) + '</div></div>';
+    html += '<div class="char-drawer" id="char-drawer-' + idx + '">' + renderMarkdown(c.content) + '</div>';
+  }});
   el.innerHTML = html;
+}}
+
+function toggleChar(idx) {{
+  var d = document.getElementById('char-drawer-' + idx);
+  if (d) d.classList.toggle('open');
 }}
 
 function renderOutlines() {{
-  var outlines = AISTUDIOS_DATA.outlines || [];
+  var outlines = D.outlines || [];
   var el = document.getElementById('outlines-content');
   var nonBeats = outlines.filter(function(o) {{ return o.filename.toLowerCase().indexOf('beat') === -1; }});
   if (!nonBeats.length) {{
-    el.innerHTML = '<p style="color:#888;">No outline files found. Run: aistudios outline</p>';
+    el.innerHTML = '<div class="empty"><h3>No outlines yet</h3><p>Run: <code>python aistudios.py outline</code></p></div>';
     return;
   }}
   var html = '';
-  for (var i = 0; i < nonBeats.length; i++) {{
-    var o = nonBeats[i];
-    html += '<div class="script-file"><h3>' + esc(o.filename) + '</h3>';
-    html += '<div class="outline-content">' + esc(o.content) + '</div></div>';
-  }}
+  nonBeats.forEach(function(o) {{
+    html += '<div class="outline-block"><div class="outline-filename">' + esc(o.filename) + '</div>';
+    html += '<div class="outline-body">' + renderMarkdown(o.content) + '</div></div>';
+  }});
   el.innerHTML = html;
 }}
 
-function renderScripts() {{
-  var scripts = AISTUDIOS_DATA.scripts || [];
-  var el = document.getElementById('script-content');
-  if (!scripts.length) {{
-    el.innerHTML = '<p style="color:#888;">No script files found. Run: aistudios scene or aistudios new</p>';
+function parseFountain(raw) {{
+  var text = raw;
+  var eqIdx = text.indexOf('\\n===\\n');
+  if (eqIdx !== -1) text = text.substring(eqIdx + 5);
+  var lines = text.split('\\n');
+  var els = []; var prevBlank = true; var inDlg = false;
+  for (var i = 0; i < lines.length; i++) {{
+    var t = lines[i].trim();
+    if (!t) {{
+      if (els.length && els[els.length - 1].type !== 'blank') els.push({{type:'blank'}});
+      prevBlank = true; inDlg = false; continue;
+    }}
+    if (t === '===' || t === '---') {{
+      els.push({{type:'pagebreak'}}); prevBlank = true; inDlg = false; continue;
+    }}
+    if (/^(FADE IN:|FADE OUT|FADE TO BLACK|CUT TO:|SMASH CUT|MATCH CUT|TITLE CARD:)/i.test(t)) {{
+      els.push({{type:'transition', content:t}}); prevBlank = false; inDlg = false; continue;
+    }}
+    if (/^(INT\\b|EXT\\b|INT\\.?\\/EXT\\.|I\\/E\\.)/i.test(t)) {{
+      els.push({{type:'heading', content:t.toUpperCase()}}); prevBlank = false; inDlg = false; continue;
+    }}
+    if (/^\\(.*\\)$/.test(t)) {{
+      els.push({{type:'paren', content:t}}); prevBlank = false; continue;
+    }}
+    if (prevBlank && t === t.toUpperCase() && /[A-Z]/.test(t) && t.length < 52 && !/[.!?,]$/.test(t) && !/^(INT\\b|EXT\\b)/.test(t)) {{
+      var nxt = '';
+      for (var j = i + 1; j < lines.length; j++) {{ if (lines[j].trim()) {{ nxt = lines[j].trim(); break; }} }}
+      if (nxt && !/^(INT\\b|EXT\\b)/i.test(nxt) && !/^(FADE|CUT TO)/i.test(nxt)) {{
+        els.push({{type:'char', content:t}}); prevBlank = false; inDlg = true; continue;
+      }}
+    }}
+    if (inDlg && !/^(INT\\b|EXT\\b)/i.test(t)) {{
+      els.push({{type:'dialogue', content:t}}); prevBlank = false; continue;
+    }}
+    els.push({{type:'action', content:t}}); prevBlank = false; inDlg = false;
+  }}
+  return els;
+}}
+
+function fmtInline(s) {{
+  return esc(s).replace(/\\*([^*]+)\\*/g,'<em>$1</em>').replace(/_([^_]+)_/g,'<em>$1</em>');
+}}
+
+function renderFountain(elements) {{
+  var pages = []; var pageLines = 0; var pageNum = 1;
+  var cur = '<div class="screenplay-page"><div class="page-num">' + pageNum + '.</div>';
+
+  function newPage() {{
+    cur += '</div>';
+    pages.push(cur);
+    pageNum++;
+    pageLines = 0;
+    cur = '<div class="screenplay-page"><div class="page-num">' + pageNum + '.</div>';
+  }}
+
+  function add(html, cost) {{
+    pageLines += cost;
+    if (pageLines > 54 && cost > 0) newPage();
+    cur += html;
+  }}
+
+  for (var i = 0; i < elements.length; i++) {{
+    var el = elements[i];
+    switch (el.type) {{
+      case 'blank': add('<div class="sp-blank"></div>', 1); break;
+      case 'pagebreak': newPage(); break;
+      case 'heading': add('<div class="sp-heading">' + esc(el.content) + '</div>', 2); break;
+      case 'action': add('<div class="sp-action">' + fmtInline(el.content) + '</div>', 1); break;
+      case 'char': add('<div class="sp-char">' + esc(el.content) + '</div>', 1); break;
+      case 'dialogue': add('<div class="sp-dialogue">' + fmtInline(el.content) + '</div>', 1); break;
+      case 'paren': add('<div class="sp-paren">' + esc(el.content) + '</div>', 1); break;
+      case 'transition': add('<div class="sp-transition">' + esc(el.content) + '</div>', 1); break;
+    }}
+  }}
+  cur += '</div>';
+  pages.push(cur);
+  return pages.join('');
+}}
+
+var scriptData = D.scripts || [];
+var currentScript = 0;
+
+function renderScriptTabs() {{
+  var tabs = document.getElementById('script-tabs');
+  if (!scriptData.length) {{ tabs.style.display = 'none'; return; }}
+  var html = '';
+  scriptData.forEach(function(s, i) {{
+    html += '<div class="script-tab' + (i === 0 ? ' active' : '') + '" onclick="showScript(' + i + ')">' + esc(s.filename.replace('.fountain', '')) + '</div>';
+  }});
+  tabs.innerHTML = html;
+}}
+
+function showScript(idx) {{
+  currentScript = idx;
+  document.querySelectorAll('.script-tab').forEach(function(t, i) {{ t.classList.toggle('active', i === idx); }});
+  renderCurrentScript();
+}}
+
+function renderCurrentScript() {{
+  var wrap = document.getElementById('screenplay-wrap');
+  if (!scriptData.length) {{
+    wrap.innerHTML = '<div class="empty" style="color:#888"><h3>No script files yet</h3></div>';
     return;
   }}
-  var html = '';
-  for (var i = 0; i < scripts.length; i++) {{
-    var s = scripts[i];
-    html += '<div class="script-file"><h3>' + esc(s.filename) + '</h3>';
-    html += '<div class="screenplay">' + esc(s.content) + '</div></div>';
-  }}
-  el.innerHTML = html;
+  var s = scriptData[currentScript];
+  wrap.innerHTML = renderFountain(parseFountain(s.content));
 }}
 
 document.addEventListener('DOMContentLoaded', function() {{
-  renderBeats();
-  renderCharacters();
-  renderOutlines();
-  renderScripts();
-
-  // Sidebar active state
-  var links = document.querySelectorAll('#sidebar nav a');
-  function setActive() {{
-    var scrollY = window.scrollY;
-    links.forEach(function(link) {{
-      var target = document.querySelector(link.getAttribute('href'));
-      if (target) {{
-        var top = target.offsetTop - 60;
-        var bottom = top + target.offsetHeight;
-        if (scrollY >= top && scrollY < bottom) {{
-          link.classList.add('active');
-        }} else {{
-          link.classList.remove('active');
-        }}
-      }}
-    }});
-  }}
-  window.addEventListener('scroll', setActive);
-  setActive();
+  renderBeats(); renderCharacters(); renderOutlines();
+  renderScriptTabs(); renderCurrentScript();
+  showSection('overview');
 }});
 </script>
 </body>
 </html>"""
+
 
 
 def _build_dashboard_html(projects: list) -> str:
