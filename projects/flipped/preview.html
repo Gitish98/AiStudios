@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Flipped — AiStudios</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif; background: #f4f4f0; color: #1a1a1a; display: flex; min-height: 100vh; }
+
+  /* Sidebar */
+  #sidebar { width: 240px; min-width: 240px; background: #1a1a2e; color: #c8c8d8; display: flex; flex-direction: column; padding: 24px 0; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+  #sidebar .brand { padding: 0 20px 20px; border-bottom: 1px solid #2a2a4a; margin-bottom: 16px; }
+  #sidebar .brand h1 { font-size: 13px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: #7878a8; margin-bottom: 6px; }
+  #sidebar .brand .project-title { font-size: 16px; font-weight: 600; color: #e8e8f0; line-height: 1.3; }
+  .genre-badge { display: inline-block; background: #2d2d5e; color: #9898c8; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; padding: 3px 8px; border-radius: 4px; margin-top: 6px; }
+  .status-badge { display: inline-block; background: #1e3a2e; color: #5aaa7a; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; padding: 3px 8px; border-radius: 4px; margin-top: 4px; margin-left: 4px; }
+  #sidebar nav { padding: 0 12px; flex: 1; }
+  #sidebar nav a { display: block; color: #8888aa; text-decoration: none; padding: 9px 12px; border-radius: 6px; font-size: 14px; font-weight: 500; margin-bottom: 2px; transition: background 0.15s, color 0.15s; }
+  #sidebar nav a:hover, #sidebar nav a.active { background: #2a2a4e; color: #d8d8f0; }
+  #sidebar nav .section-label { font-size: 10px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: #4a4a6a; padding: 14px 12px 4px; }
+
+  /* Content */
+  #content { flex: 1; padding: 40px 48px; max-width: 900px; }
+  section { margin-bottom: 56px; }
+  section h2 { font-size: 22px; font-weight: 700; color: #1a1a2e; margin-bottom: 20px; padding-bottom: 10px; border-bottom: 2px solid #e0e0d8; }
+
+  /* Logline card */
+  .logline-card { background: #1a1a2e; color: #e8e8f0; border-radius: 12px; padding: 28px 32px; font-size: 17px; line-height: 1.65; font-style: italic; }
+  .logline-card:empty::after { content: "No logline set."; color: #5a5a7a; font-style: normal; }
+
+  /* Beat sheet */
+  .beat { background: #fff; border-radius: 8px; padding: 18px 22px; margin-bottom: 12px; border-left: 4px solid #1a1a2e; }
+  .beat h3 { font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: #1a1a2e; margin-bottom: 6px; }
+  .beat p { font-size: 14px; line-height: 1.6; color: #333; }
+
+  /* Characters */
+  .character-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
+  .character-card { background: #fff; border-radius: 10px; padding: 20px; border-top: 4px solid #1a1a2e; }
+  .character-card h3 { font-size: 16px; font-weight: 700; color: #1a1a2e; margin-bottom: 6px; }
+  .character-card .role { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: #7878a8; margin-bottom: 12px; }
+  .character-card .char-body { font-size: 13px; line-height: 1.55; color: #444; white-space: pre-wrap; }
+
+  /* Script viewer */
+  .script-file { margin-bottom: 32px; }
+  .script-file h3 { font-size: 14px; font-weight: 600; color: #7878a8; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
+  .screenplay { font-family: 'Courier New', Courier, monospace; font-size: 13px; line-height: 1.7; background: #fff; padding: 40px 48px; border-radius: 8px; white-space: pre-wrap; color: #1a1a1a; }
+  .scene-heading { font-weight: bold; text-transform: uppercase; }
+  .character-cue { text-align: center; font-weight: bold; text-transform: uppercase; }
+  .parenthetical { text-align: center; margin-left: 60px; margin-right: 60px; color: #444; }
+  .dialogue-block { margin-left: 80px; margin-right: 80px; }
+
+  /* Outline */
+  .outline-content { background: #fff; border-radius: 8px; padding: 28px 32px; font-size: 15px; line-height: 1.7; color: #222; white-space: pre-wrap; }
+
+  /* Responsive */
+  @media (max-width: 700px) {
+    body { flex-direction: column; }
+    #sidebar { width: 100%; height: auto; position: static; }
+    #content { padding: 24px 20px; }
+    .character-grid { grid-template-columns: 1fr; }
+    .screenplay { padding: 20px; }
+  }
+</style>
+</head>
+<body>
+<div id="sidebar">
+  <div class="brand">
+    <h1>AiStudios</h1>
+    <div class="project-title">Flipped</div>
+    <span class="genre-badge">thriller</span>
+    <span class="status-badge">draft</span>
+  </div>
+  <nav>
+    <div class="section-label">Sections</div>
+    <a href="#logline">Logline</a>
+    <a href="#beats">Beat Sheet</a>
+    <a href="#characters">Characters</a>
+    <a href="#outlines">Outlines</a>
+    <a href="#script">Script</a>
+  </nav>
+</div>
+<div id="content">
+  <section id="logline">
+    <h2>Logline</h2>
+    <div class="logline-card">A self-proclaimed psychological guru with a massive following is quietly engineering the mental collapse of his patients — until one woman realizes the cure was always the poison.</div>
+  </section>
+
+  <section id="beats">
+    <h2>Beat Sheet</h2>
+    <div id="beats-content"></div>
+  </section>
+
+  <section id="characters">
+    <h2>Characters</h2>
+    <div id="characters-content" class="character-grid"></div>
+  </section>
+
+  <section id="outlines">
+    <h2>Outlines</h2>
+    <div id="outlines-content"></div>
+  </section>
+
+  <section id="script">
+    <h2>Script</h2>
+    <div id="script-content"></div>
+  </section>
+</div>
+
+<script>
+var AISTUDIOS_DATA = {
+  "project": {
+    "name": "flipped",
+    "title": "Flipped",
+    "genre": "thriller",
+    "logline": "A self-proclaimed psychological guru with a massive following is quietly engineering the mental collapse of his patients — until one woman realizes the cure was always the poison.",
+    "author": "Gitish98",
+    "status": "draft",
+    "created_at": "2026-05-29T01:03:59.300490",
+    "updated_at": "2026-05-29T01:03:59.300500"
+  },
+  "characters": [
+    {
+      "filename": "carol_whitmore.md",
+      "content": "# Character: CAROL WHITMORE\n\n**Role:** Supporting — the cost of inaction made human\n**Age:** 47\n**Appearance:** The kind of person who was probably warm and easy-laughing once. Still tries to be. The effort is visible now.\n\n---\n\n## VOICE\n\nCarol speaks with the particular cadence of someone repeating language they've been given — McGee's phrases have migrated into her daily speech. She says things like *\"I'm still in the process\"* and *\"the resistance is information\"* the way a person recites a prayer: not thinking about the words, only the feeling of saying them.\n\n**Sample line:**\n*\"I know it's hard to understand if you're not as far along as I am. Brian says that's normal. The people closest to us are often the most threatened by our growth.\"*\n\n---\n\n## FUNCTION IN THE STORY\n\nCarol is not a victim in a simple sense — she is a devotee, and her devotion is genuine. She loves what McGee's framework has given her: a language for her pain, a community, a sense of forward motion. That none of it is real does not make her experience of it less real.\n\nShe is the answer to the question: *what does McGee's method look like at full completion?*\n\nShe is also the reason Nadia cannot stay in analyst mode. Watching Carol use the language of healing to describe symptoms of collapse is the moment the film stops being intellectual and becomes personal.\n\n---\n\n## BACKSTORY\n\nCarol came to McGee three years ago after a divorce. She was functional, if unhappy. She is now fully embedded in his ecosystem — intensive sessions twice a week, volunteer work for his foundation, a small group of friends who are all McGee patients. Her adult daughter has stopped calling.\n\n---\n\n## ARC\n\nCarol's arc is largely offscreen — we see her in two scenes, and the distance between them is the arc. In the first she is troubled but present. By the time of her hospitalization she has been moved entirely inside the framework.\n\nWhether she recovers after the film ends is deliberately unresolved.\n"
+    },
+    {
+      "filename": "dr_brian_mcgee.md",
+      "content": "# Character: DR. BRIAN McGEE\n\n**Role:** Antagonist / Subject\n**Age:** 52\n**Appearance:** Silver-templed, lean, dressed in the specific way that says *I don't need to impress you* while impressing you — open collar, good watch, nothing that reads as wealth until you look twice.\n\n---\n\n## VOICE\n\nMcGee speaks in the cadence of someone who has given ten thousand hours of therapy: unhurried, curious, with the slight forward lean of a man who finds you genuinely fascinating. He never finishes a sentence you're emotionally invested in — he lets the silence do it. He asks questions he already knows the answers to. He uses your own words back at you, slightly reframed, until you believe the reframe was yours.\n\n**Sample line:**\n*\"I'm not here to fix you. I never was. I'm here to help you stop being afraid of the version of yourself you've been hiding.\"*\n\n*(What sounds like liberation is a leash.)*\n\n---\n\n## WANT vs. NEED\n\n- **Want:** Control — specifically, the particular control of being the most important person in every room, confirmed daily by people who would not survive without him.\n- **Need:** To be genuinely known — which he cannot allow, because being known would require vulnerability, which he long ago decided was a form of death.\n\n---\n\n## FLAW\n\nMcGee cannot distinguish between understanding someone and owning them. In his mind, these are the same act. When he reads a patient accurately — names their fear, reflects their wound — he experiences it as possession. Not maliciously. This is simply what intimacy means to him.\n\n---\n\n## BACKSTORY *(the 20% the audience never sees)*\n\nMcGee grew up the eldest of five children in a household governed by an emotionally volatile mother and an absent father. He became, by necessity, the family's emotional regulator — reading his mother's moods, managing his siblings' fear, translating chaos into survivable patterns. He was praised for this. It felt like power.\n\nHe studied psychology not to understand people but to codify what he already did instinctively. His graduate thesis was flagged by one professor for its \"troublingly instrumental\" view of therapeutic relationships. McGee charmed the professor into giving him an A.\n\nHe has never been in therapy himself. He considers this a point of pride.\n\n---\n\n## THE METHOD *(what he actually does)*\n\nMcGee's system — which he calls **Integrative Reality Therapy** in his books — is a six-phase protocol that, examined structurally, is a textbook dependency loop:\n\n1. **Excavation** — Deep intake designed to find the patient's core wound and primary fear\n2. **Validation amplification** — Reflecting the wound back with such precision that the patient feels profoundly understood for the first time\n3. **Reframe seeding** — Introducing subtle cognitive reframes that shift attribution of the wound toward the patient's own choices (internalized blame)\n4. **Hope rationing** — Giving relief in controlled doses — never enough to stabilize, always enough to return\n5. **Isolation scaffolding** — Positioning the therapeutic relationship as uniquely safe while subtly eroding trust in external relationships\n6. **Dependency lock** — The patient cannot imagine recovering without McGee; they are not getting worse, they believe — they are simply \"still in the process\"\n\nAt scale, across millions of podcast listeners absorbing the same framework: it is a mass psychological event.\n\n---\n\n## ARC\n\nMcGee does not arc in the conventional sense. He does not change. This is the point.\n\nWhat changes is the audience's perception of him — from trusted expert to something they don't have an easy word for. The horror of McGee is not that he escalates into villainy. It's that he is exactly the same person at the end of the film as he is at the beginning. We just finally see him in full light.\n\n---\n\n## WHAT MAKES HIM THE MOST DANGEROUS PERSON IN THE ROOM\n\n1. **He is always the most emotionally intelligent person present** — which means he sees the threat before it articulates itself\n2. **His sincerity is genuine** — there is no performance to catch; he has no tell because he believes his own story completely\n3. **He has already built the counter-narrative** — before you move against him, he has positioned you as the unstable one\n4. **His victims defend him** — the people he has harmed most are also his most loyal advocates, because he has made their loyalty a condition of their identity\n5. **He operates at scale** — one confrontation cannot stop a $200-million machine with 40 million listeners\n\n---\n\n## CONTRADICTIONS\n\n- He is genuinely kind to strangers — waiters, assistants, people who can give him nothing. The cruelty is specific to the therapeutic relationship.\n- He believes deeply in the transformative power of honesty while building his entire method on concealment.\n- He is lonely in a way he has never named and will never name, surrounded always by people who need him.\n"
+    },
+    {
+      "filename": "nadia_osei.md",
+      "content": "# Character: NADIA OSEI\n\n**Role:** Protagonist\n**Age:** 34\n**Appearance:** Sharp, economical — someone who moves through the world taking up exactly the space she intends to and no more. She dresses practically, not plainly. Her stillness reads to some people as coldness. It is actually attention.\n\n---\n\n## VOICE\n\nNadia speaks in complete sentences and waits for you to finish yours. She asks clarifying questions rather than interpretive ones — she wants data, not impressions. In emotional situations she becomes quieter, not louder. This is sometimes mistaken for detachment. It is how she processes.\n\n**Sample line:**\n*\"I'm not saying you're lying. I'm saying there's a gap between what you're describing and what I'm observing, and I'd like to understand it.\"*\n\n---\n\n## WANT vs. NEED\n\n- **Want:** To expose McGee — to make what he is doing visible, legible, and stoppable before Carol or someone else like her doesn't survive.\n- **Need:** To stop using her brother's death as a debt she owes the world. She cannot save Marcus. She can only decide what she does next.\n\n---\n\n## FLAW\n\nNadia trusts her analysis over her instincts, which means she sometimes waits for certainty when action was what was needed. She was doing this when Marcus died — gathering information, watching for patterns, not wanting to overreact. She has never said this out loud to anyone.\n\n---\n\n## BACKSTORY\n\nNadia completed a master's degree in behavioral psychology before pivoting to data analytics — she found the clinical world \"too comfortable with ambiguity.\" She and her brother Marcus were close in the specific way of two people who grew up as each other's primary emotional support. When he died, she didn't fall apart. She built a spreadsheet of everything she remembered him saying in the last year. Looking for the pattern she missed.\n\nShe found a name in his journal: a therapist in McGee's extended referral network.\n\nShe enrolled in McGee's practice telling herself it was research. She is not fully honest with herself about how much of it is grief.\n\n---\n\n## RELATIONSHIPS\n\n- **Marcus (deceased):** The engine under everything. She is not grieving in sessions with McGee — she is investigating. But the grief is real, and McGee finds it immediately.\n- **Carol:** The patient whose deterioration galvanizes Nadia from analyst to actor. Carol is what Nadia could become if she let the process continue. Carol is also, in some way, a version of Marcus — someone she might still be in time to reach.\n- **McGee:** The most complicated relationship in the film. Nadia understands him better than anyone has. This means she also, on some level, can see what he needed to become this. She does not forgive it. But she sees it.\n\n---\n\n## ARC\n\nNadia begins the film as an observer with a hypothesis. She ends it as someone who chose to act — imperfectly, without a guaranteed outcome, without waiting until she was certain. That is her change. She does something before she knows if it will work.\n\n---\n\n## CONTRADICTIONS\n\n- She is in genuine pain and refuses to let McGee help her with it — even though, tactically, letting him in would give her better intelligence.\n- She is more comfortable dismantling McGee's system than sitting with the question of why she is the one who needed to do it.\n- She does not consider herself brave. She is doing this because the alternative is living with having seen it and done nothing. She calls that calculation, not courage.\n"
+    }
+  ],
+  "outlines": [
+    {
+      "filename": "beat_sheet.md",
+      "content": "# Flipped — Beat Sheet (Save the Cat)\n**Genre:** Psychological Thriller (Short Film — ~22 pages)\n**Logline:** America's most trusted therapist has built an empire on healing — but his methods are a precise system of psychological warfare, and the one patient sharp enough to see through it is also the most dangerous person he's ever put in a chair.\n\n---\n\n## THE 15 BEATS\n\n---\n\n### 1. OPENING IMAGE (p. 1)\nA sea of faces — tears, relief, nodding heads — watching Dr. Brian McGee command a stage. He is warm, certain, magnetic. A standing ovation. The camera holds on one face in the crowd that isn't clapping: **NADIA OSEI**, 34, still, watching him like she's reading a document rather than witnessing a performance.\n\n*Establishes: the world McGee has built, and the one person in it who sees it differently.*\n\n---\n\n### 2. THEME STATED (p. 2)\nMcGee, backstage after the seminar, to his assistant: *\"People don't want to be fixed. They want to feel like someone finally understands how broken they are.\"*\n\nHe means it as a compliment to his work. It is also his entire method, spoken aloud without shame.\n\n*The theme: the most dangerous manipulation is the kind that feels like love.*\n\n---\n\n### 3. SET-UP (pp. 2–5)\nWe meet Nadia six weeks earlier, arriving at McGee's private practice for her first session. She lost her younger brother to suicide eight months ago. She's been referred by three different people — McGee's reach is that wide. His office is designed to feel like safety: warm light, no sharp edges, a soft hum of ambient sound.\n\nMcGee runs his initial intake. He is exceptional at this — reading her, reflecting her pain back to her with surgical precision. Nadia is smart and guarded, but grief has left a gap in the armor.\n\nWe also establish the world around McGee: his podcast, his book *You Were Always Whole*, his inner circle of \"graduate patients\" who now work as his unpaid evangelists.\n\n---\n\n### 4. CATALYST (p. 6)\nDuring their third session, Nadia — who holds a master's degree in behavioral psychology, a detail she hasn't shared with McGee — recognizes a specific technique he uses: **strategic negative reframing**. He's not helping her process her brother's death. He's subtly attributing blame to her. Incrementally. Session by session.\n\nShe goes home and pulls her old textbooks.\n\n---\n\n### 5. DEBATE (pp. 7–8)\nNadia debates whether she's seeing what she thinks she's seeing. Maybe she's projecting. Maybe grief is distorting her read. She attends a support group for his patients — all of them devoted, all of them worse than they were a year ago, none of them able to see it.\n\nOne woman, **CAROL**, mentions she's been having thoughts she's never had before. She calls them \"gifts from the process.\" Nadia recognizes them as ideation.\n\nThe debate ends. This is real.\n\n---\n\n### 6. BREAK INTO TWO (p. 9)\nNadia makes a decision: she won't quit. She won't report him — she has no hard evidence, and McGee has lawyers, loyalists, and a public persona worth hundreds of millions of dollars. Instead, she goes back into the chair.\n\nBut this time she takes notes.\n\n---\n\n### 7. B STORY (pp. 9–11)\nThe B story lives inside McGee himself. Brief scenes — almost clinical — reveal his private self: the practiced laugh he runs through before sessions, the spreadsheet where he tracks patient \"dependency metrics,\" a phone call with a pharmaceutical partner. He is not a monster who doesn't know what he's doing. He knows exactly what he's doing.\n\nOne scene: he watches a video of himself on stage and genuinely admires it. He believes he is providing something real. That is what makes him dangerous.\n\n---\n\n### 8. FUN AND GAMES (pp. 11–15)\nThe promise of the premise fully delivered: Nadia plays the patient while dissecting the therapist.\n\nA series of sessions, each more revealing than the last:\n- She begins mirroring his techniques back at him — feeding him the emotional responses he's engineered to need\n- She discovers his intake forms contain questions designed to identify the most isolated, most suggestible patients — they get escalated to \"intensive care\" (more sessions, higher fees, deeper dependency)\n- She finds Carol has been moved to intensive care\n\nThe audience sees both levels simultaneously: what McGee thinks is happening, and what is actually happening. It is almost darkly comic — except Carol is real, and getting worse.\n\n---\n\n### 9. MIDPOINT (p. 15)\nFalse victory: Nadia has enough to confront him. She does — obliquely, in session, describing \"a hypothetical patient\" whose therapist she suspects of misconduct. She watches McGee's face.\n\nHe doesn't flinch. He smiles, and turns the hypothetical back on her. *\"What does it mean to you that you're protecting this imaginary patient instead of yourself?\"*\n\nHe knows. He's known for a while. And he isn't afraid of her.\n\nThe stakes double: this isn't just about evidence. He will preemptively destroy her credibility if she moves against him. He has the playbook for that too.\n\n---\n\n### 10. BAD GUYS CLOSE IN (pp. 16–17)\nMcGee activates his network. A smear begins quietly — former patients (loyal ones, broken ones) start posting about a \"disturbed woman\" in his practice spreading paranoid accusations. Nadia's employer gets an anonymous letter questioning her mental stability. Her intake forms, reframed, paint her as a delusional, grief-consumed woman with a vendetta against the man trying to help her.\n\nHe is turning his methods on her at scale.\n\n---\n\n### 11. ALL IS LOST (p. 18)\nCarol attempts suicide. She survives — but barely. When Nadia tries to reach her, Carol's family tells her to stay away. McGee has already been there, already positioned himself as the one trying to save Carol from \"outside interference.\"\n\nNadia sits in her car outside Carol's hospital and understands the full picture: she has no evidence that would survive a legal challenge, no allies who haven't already been turned, and a man with infinite resources who is now actively hunting her credibility.\n\nShe has one session left before he will almost certainly terminate her as a patient and complete the smear.\n\n---\n\n### 12. DARK NIGHT OF THE SOUL (p. 18–19)\nNadia almost walks away. She pulls up her brother's last text messages. Reads them. She has wondered for eight months whether she missed the signs. She now understands: he was seeing a therapist in McGee's extended network.\n\nThis was never just about her.\n\n---\n\n### 13. BREAK INTO THREE (p. 19)\nShe walks into the final session with one thing McGee doesn't know she has: a recording of Carol — made weeks earlier, with consent — describing the specific techniques, the specific language, the specific sequence of sessions. Not a legal case. Something more immediate.\n\nShe's going to make him say it out loud.\n\n---\n\n### 14. FINALE (pp. 20–22)\nThe final session. Two people who both know what is happening, neither acknowledging it.\n\nNadia walks McGee — through careful, precise, mirrored use of his own techniques — into articulating his philosophy without the euphemisms. She reflects his language back to him, escalates his certainty, feeds his need to be understood by someone truly intelligent.\n\nAnd he gives it to her. Not a confession — something more damning. A thesis. *\"Stability is a lie people tell themselves. My patients are more alive in their instability than they ever were before.\"*\n\nShe stops the recording on her phone. Sets it on the table between them.\n\nMcGee looks at it. Looks at her. The warmth drains from his face — and for the first time, we see what lives underneath it.\n\nShe stands, picks up the phone, and walks out.\n\n*What she does with the recording is not shown. That's not the story.*\n\n---\n\n### 15. FINAL IMAGE (p. 22)\nMcGee sits alone in his office. Same warm light, same ambient hum. He straightens his jacket. Picks up his phone. Dials.\n\n*\"Clear my afternoon,\"* he says. *\"I need to make some calls.\"*\n\nHe is already building the next move. He will not be stopped by this. The machine is too large.\n\nBut the camera stays on his face — and for just a moment, before the mask returns, we see it: not fear. Something smaller. The faint, unfamiliar outline of being known.\n\n*FADE TO BLACK.*\n\n**FLIPPED**\n\n---\n\n## STRUCTURAL NOTES\n\n- **Runtime target:** 20–25 minutes\n- **Locations:** McGee's office (primary), seminar hall (opening), Nadia's apartment, hospital exterior\n- **Core tension engine:** Two intelligent people in the same room, each running a strategy the other can partially see\n- **Tonal reference:** *The Conversation* (Coppola) meets *Nightcrawler* — clinical dread, not jump scares\n- **What makes McGee the most dangerous person in the room:** He is not a villain who hates his victims. He genuinely believes he is providing something valuable. His self-deception is total and reinforced by success. There is no appeal to conscience because his conscience is clean.\n"
+    },
+    {
+      "filename": "loglines.md",
+      "content": "# Flipped — Logline Variations\n\n---\n\n**VARIATION 1 — The Victim's Perspective (Recommended)**\nWhen a grieving mother enrolls in Dr. Brian McGee's celebrated recovery program, she slowly realizes his methods aren't healing her — they're systematically dismantling her — and that millions of Americans are paying him to be broken.\n\n*Angle: Ground-level. Personal stakes. The audience discovers the fraud as she does.*\n\n---\n\n**VARIATION 2 — The Reckoning**\nAmerica's most trusted therapist has built a $200-million empire teaching people how to heal — but one patient, a former cognitive scientist, recognizes his techniques as a precise system of psychological warfare, and decides the only way to stop him is to use his methods against him.\n\n*Angle: Puts the power shift front and center. Sets up the \"flip\" explicitly.*\n\n---\n\n**VARIATION 3 — The Monster in Plain Sight**\nDr. Brian McGee has 40 million podcast listeners, three bestselling books, and a waiting list of desperate patients — and every single one of them is being quietly engineered toward their darkest moment, because a destabilized patient is a loyal one.\n\n*Angle: Opens from McGee's side. More unsettling — positions him as the POV character.*\n\n---\n\n**VARIATION 4 — The Short Film Logline (Tight / Punchy)**\nA celebrated therapist's star patient finally understands his method: he doesn't heal people. He owns them.\n\n*Angle: Minimal. Lets the premise breathe. Best for pitch documents and festival submissions.*\n\n---\n\n**SELECTED LOGLINE FOR PROJECT:**\nAmerica's most trusted therapist has built an empire on healing — but his methods are a precise system of psychological warfare, and the one patient sharp enough to see through it is also the most dangerous person he's ever put in a chair.\n"
+    }
+  ],
+  "scripts": [
+    {
+      "filename": "flipped.fountain",
+      "content": "Title: Flipped\nAuthor: Gitish98\nDraft date: May 2026\nGenre: Psychological Thriller\nFormat: Short Film (~22 pages)\nContact:\n\n===\n\nFADE IN:\n\nINT. SEMINAR HALL - NIGHT\n\nTwo thousand seats. Every one of them full.\n\nThe stage is minimal — a single spotlight, a single man. DR. BRIAN McGEE (52) moves through the light like he was born in it. No notes. No podium. Just a wireless mic clipped to the open collar of a shirt that cost eight hundred dollars to look like it didn't.\n\nMcGEE\n(soft, certain)\nThe moment you've been waiting for your whole\nlife... is not a moment of triumph.\n\nHe lets that land. The room leans in.\n\nMcGEE (CONT'D)\nIt's a moment of surrender.\n\nA WOMAN in the third row begins to cry. She doesn't cover her face.\n\nMcGEE (CONT'D)\nYou've spent thirty years — forty years — building\nthe version of yourself that could survive. And it\nworked. You're here. You're alive.\n\nHe pauses.\n\nMcGEE (CONT'D)\nBut surviving isn't living. Is it.\n\nNot a question. An offering. The room accepts it.\n\nAPPLAUSE builds from scattered agreement into something total — a standing ovation that begins before he's finished, because the audience wants to give him something.\n\nMcGee receives it with a slight bow. Grateful. Humble.\n\nThe camera finds one face in the crowd that isn't standing.\n\nNADIA OSEI (34) sits with her hands in her lap, watching the stage with the focused stillness of someone reading a document. Not hostile. Not moved. Calibrating.\n\nCUT TO:\n\nINT. SEMINAR HALL - BACKSTAGE - CONTINUOUS\n\nThe noise of the ovation is muffled now. McGee walks off stage and the mask — not off, exactly, but resting. His ASSISTANT, DEREK (28, efficient, devoted), hands him a water.\n\nMcGEE\nNumbers?\n\nDEREK\nTwenty-two hundred. Waiting list for the intensive\nis up to four months.\n\nMcGEE\nMove the top tier to six weeks. Anyone flagged\nhigh on isolation metrics goes to the front.\n\nHe says this the way a logistics manager discusses shipping routes.\n\nDEREK\nThe Chicago podcast is asking about a live taping.\n\nMcGEE\nTell them October. I want the new book out first.\n\nHe glances back toward the stage as the applause continues.\n\nMcGEE (CONT'D)\nPeople don't want to be fixed.\n\nHe takes a sip of water.\n\nMcGEE (CONT'D)\nThey want to feel like someone finally understands\nhow broken they are.\n\nHe walks away. Derek follows.\n\nCUT TO:\n\nTITLE CARD: FLIPPED\n\nCUT TO:\n\nTITLE CARD: SIX WEEKS EARLIER\n\nINT. McGEE'S OFFICE - DAY\n\nThe office is engineered to feel like safety.\n\nWarm amber light. No overhead fluorescents. Furniture chosen to suggest comfort without clinical coldness — a deep couch, a low table, two chairs angled toward each other rather than across from each other. A white noise machine hums softly outside the door.\n\nThere are no diplomas on the wall.\n\nMcGee sits in one of the chairs. Nadia sits across from him, straight-backed, coat still on. First session.\n\nMcGEE\nYou can take your coat off.\n\nNADIA\nI'm fine.\n\nA beat. McGee notes it. Files it.\n\nMcGEE\nTell me why you're here.\n\nNADIA\nMy brother died. Eight months ago.\n\nMcGEE\nI'm sorry.\n\nNADIA\nIt was a suicide.\n\nShe says it the way she says most things: precisely, with the air of someone who has decided not to be ambushed by a word.\n\nMcGEE\nAnd you've been carrying that.\n\nNADIA\nEveryone carries it. I want to understand it.\n\nMcGEE\nThose aren't the same goal.\n\nShe looks at him. Something in that response was faster than she expected.\n\nMcGEE (CONT'D)\nUnderstanding can be a way of staying close to\nsomething we're not ready to let go of.\n\nHe says it gently. He means it. This is what makes him good at what he does.\n\nNadia uncrosses her legs. Considers him.\n\nNADIA\nWhat do you think I'm not ready to let go of?\n\nMcGEE\nI don't know yet.\n\n(beat)\n\nBut I notice you haven't taken your coat off.\n\nThe ghost of something on Nadia's face — not quite a smile. Despite herself.\n\nCUT TO:\n\nINT. McGEE'S OFFICE - DAY (SESSION 3 — THREE WEEKS LATER)\n\nNadia's coat is on the hook by the door. Progress, or the appearance of it.\n\nMcGee is in the middle of a technique Nadia will later note in her journal as: *Retrospective Attribution Shift — Phase 2.*\n\nMcGEE\nYou mentioned Marcus called you the week before.\nAnd you didn't call back right away.\n\nNADIA\nI was busy. I called him three days later.\n\nMcGEE\nMm.\n\nNADIA\nWhat?\n\nMcGEE\nNothing. I'm just —\n\n(settling back)\n\nWhat does it feel like, when you say that?\n\nNADIA\nWhat does what feel like?\n\nMcGEE\n\"I was busy.\"\n\nA long beat.\n\nNadia's expression doesn't change. But something behind her eyes does.\n\nShe is watching him with sudden, total attention — the way you watch something when you realize you've been looking at it wrong.\n\nMcGEE (CONT'D)\n(noticing nothing)\nTake your time.\n\nNadia reaches into her bag. Takes out a small notebook. Writes something.\n\nNADIA\nSorry. I just want to remember something.\n\nMcGEE\nOf course.\n\nHe watches her write. He is curious but not concerned. He has never had a patient take notes before.\n\nNADIA\n(without looking up)\nCan we go back? You were asking about the call.\n\nMcGEE\nWe can go wherever you need to go.\n\nShe looks up at him. Gives him the answer he's waiting for — just enough weight in it to confirm the reframe is landing.\n\nNADIA\nI think you're right. I think \"busy\" is a word\nI use when I mean something else.\n\nMcGee nods, gently, encouragingly.\n\nHe doesn't see her write one more word in the notebook.\n\nCLOSE ON: the notebook page. One word underlined twice.\n\n*TECHNIQUE.*\n\nCUT TO:\n\nINT. NADIA'S APARTMENT - NIGHT\n\nBooks spread across a kitchen table. Graduate texts, dog-eared. A legal pad covered in her handwriting, organized into columns.\n\nOn her laptop screen: McGee's podcast, paused mid-episode. She's been through four episodes tonight — we can see the browser tabs.\n\nShe picks up her phone. Pulls up a contact: MARCUS. Doesn't dial it. Just looks at the name.\n\nSets the phone down. Goes back to the legal pad.\n\nThe column on the right is labeled: *PHASE 2 — RETROSPECTIVE ATTRIBUTION.*\n\nBelow it, a list of direct quotes from her sessions, matched against techniques from her textbook.\n\nThey match. Line by line. Precisely.\n\nShe sits with this for a moment.\n\nThen she closes the textbook and opens a new document on her laptop. Begins to type.\n\nCUT TO:\n\nINT. COMMUNITY CENTER - EVENING\n\nA support group. Ten chairs in a circle, nine of them occupied.\n\nThese are McGee's patients — various ages, various wounds. They speak with the particular fluency of people who have been given a shared vocabulary. The language of the process.\n\nNadia is here for the third time. Listening.\n\nCAROL WHITMORE (47) is speaking. She's warm-faced, effortful, wearing a sweater with a small embroidered bird on it.\n\nCAROL\nI had a really hard week. Like, genuinely hard.\nBut Brian says the hard weeks are when the real\nwork is happening, so I'm trying to be grateful\nfor it instead of —\n\n(small laugh)\n\n— instead of just feeling terrible.\n\nScattered nodding around the circle. Murmurs of recognition.\n\nNADIA\nWhat made it hard?\n\nThe group looks at her. Nadia doesn't ask questions, usually.\n\nCarol blinks, slightly caught off guard.\n\nCAROL\nI've been having these thoughts. At night mostly.\nReally dark ones.\n\nNADIA\nWhat kind of thoughts?\n\nCAROL\nBrian says they're part of the process. That\nthe darkness is just the old self resisting.\n\nNADIA\n(carefully)\nWhat do the thoughts feel like to you? Outside\nof what Brian says about them.\n\nA beat. Carol seems to try to locate that distinction.\n\nCAROL\nI mean... scary, I guess. But he says —\n\nNADIA\nYou said scary first.\n\nCarol looks at her. There is a moment — brief, like a gap between clouds — where Carol seems to inhabit herself rather than the framework.\n\nThen the clouds close.\n\nCAROL\nI trust the process.\n\nShe says it the way people say *amen.*\n\nNadia writes something in her notebook.\n\nCUT TO:\n\nINT. McGEE'S OFFICE - DAY (SESSION 5)\n\nLate afternoon light. The warmest the office gets.\n\nThis session has a different quality — McGee is sharper today. Alert in a way that wasn't there before.\n\nMcGEE\nYou seem different this week.\n\nNADIA\nDifferent how?\n\nMcGEE\nMore present. Less defended.\n\nHe's probing. He has seen something — some shift in her engagement — and he is trying to determine what it means.\n\nNADIA\nMaybe the process is working.\n\nShe says it lightly. He absorbs it without pleasure.\n\nMcGEE\nTell me about Marcus this week.\n\nNADIA\nI've been thinking about the last year. Patterns\nI might have missed.\n\nMcGEE\nWhat kind of patterns?\n\nNADIA\nHe was seeing someone. A therapist. In your\nreferral network, actually.\n\nA beat. Hairline thin.\n\nMcGEE\nA lot of people come to me through referrals.\n\nNADIA\nOf course. I was just curious — do you have much\ncontact with the practitioners you refer to?\n\nMcGEE\nSome. It depends.\n\nNADIA\nHow do you decide who's in your network?\n\nMcGEE\n(a gentle redirect)\nNadia. What's underneath this question?\n\nShe looks at him. And for the first time, she lets him see something real: the grief. Not performed, not tactical. She is genuinely sad, in this room, in this moment.\n\nNADIA\nI want to know if the person my brother was seeing\nwas helping him.\n\nA long silence.\n\nMcGEE\n(quietly, and he means this)\nI don't know. I'm sorry.\n\nAnd the terrible thing is: he does mean it. In this moment.\n\nIt doesn't change anything. But it's real.\n\nNadia nods. Looks at her hands.\n\nMcGEE (CONT'D)\nI think there's something you're protecting yourself\nfrom knowing. About your own role in Marcus's last year.\n\nThe grief hardens back into attention.\n\nNADIA\nWhat do you think I'm protecting myself from?\n\nMcGEE\nThat you saw something. And you decided to be busy.\n\nThe word *busy* again. Deliberate. Surgical.\n\nNadia picks up her notebook.\n\nNADIA\n(writing, not looking at him)\nI'd like to come back to that.\n\nCUT TO:\n\nINT. NADIA'S APARTMENT - NIGHT\n\nHer phone is recording.\n\nShe plays it back — tonight's session. Listens with her eyes closed.\n\nWhen she gets to *\"decided to be busy\"* she stops it. Rewinds. Plays it again.\n\nNADIA (V.O.)\n(writing in her journal, we read it)\nPhase 3 confirmed. Attribution now fully\ninternalized in the language. He is not\nhelping me process guilt. He is manufacturing\nit. Specific, targeted, using the actual\ncircumstances of Marcus's death as material.\n\nShe pauses.\n\nNADIA (V.O.) (CONT'D)\nThe cruelty isn't incidental. It's structural.\n\nShe looks at the phone. At the recording.\n\nShe opens a new contact. Types: *DR. CAROL WHITMORE RECORDING — WITH CONSENT.*\n\nCUT TO:\n\nINT. COFFEE SHOP - DAY\n\nNadia and Carol. Two coffees, a corner table.\n\nCarol is here because Nadia told her she needed someone to talk to about the group. Carol is that kind of person — still, underneath the framework.\n\nNADIA\nHow long have you been in the intensive?\n\nCAROL\nAbout seven months.\n\nNADIA\nDo you feel better than when you started?\n\nCarol thinks about it. Really thinks.\n\nCAROL\nI feel like I understand myself better.\n\nNADIA\nThat's not the same thing.\n\nCarol looks up.\n\nCAROL\nBrian says —\n\nNADIA\nI know what Brian says.\n\n(beat — gentler)\n\nI'm asking what Carol says.\n\nA long silence. Carol wraps her hands around her coffee cup.\n\nCAROL\nI'm tired.\n\nIt comes out smaller than she intended. Like something that's been waiting a long time to fit through a gap.\n\nCAROL (CONT'D)\nI'm just... very tired.\n\nNADIA\nI know.\n\n(carefully)\n\nCan I ask you something? And you can say no.\n\nCAROL\nOkay.\n\nNADIA\nWould you be willing to describe your experience\nfor me? In detail? On the record?\n\nCarol looks at her.\n\nCAROL\nOn the record for what?\n\nNADIA\nI don't know yet. But I want to have it. In case.\n\nA very long pause. Carol looks out the window. A mother and child pass on the sidewalk outside.\n\nCAROL\nHe's helped a lot of people.\n\nNADIA\nI know he has.\n\nCAROL\nIt's not like it's been all bad.\n\nNADIA\nI know that too.\n\nCarol turns back to her. And something in her face has settled — not resignation. A decision.\n\nCAROL\nOkay.\n\nNadia puts her phone on the table between them.\n\nCUT TO:\n\nINT. McGEE'S OFFICE - DAY (SESSION 6 — PRESENT DAY)\n\nThis is the last one.\n\nBoth of them know it, though neither has said so.\n\nThe light is different today — overcast outside, the warmth of the office more calculated than natural.\n\nMcGee is watching Nadia the way a chess player watches a board in the middle game — all the pieces visible, the question being which one moves first.\n\nMcGEE\nHow are you feeling?\n\nNADIA\nClear.\n\nMcGEE\nClear is interesting. Tell me about clear.\n\nNADIA\nIt's like — the noise gets quieter and you can\nhear what's actually there.\n\nMcGEE\nThat's the work.\n\nNADIA\nMm.\n\n(beat)\n\nCan I try something with you?\n\nMcGEE\nOf course.\n\nNADIA\nA hypothetical. A thought experiment.\n\nMcGEE\nGo ahead.\n\nNADIA\nImagine a therapist. Brilliant, genuinely skilled —\nthe real deal. He can read people faster than almost\nanyone. He knows, within twenty minutes, exactly\nwhere the wound is.\n\nMcGee is very still.\n\nNADIA (CONT'D)\nAnd imagine that skill becomes the method. Not\nhelping patients close the wound — keeping it\naccessible. Keeping them in the room.\n\nMcGEE\nThis sounds like a projection exercise.\n\nNADIA\nHumor me.\n\nA beat.\n\nMcGEE\nWhat's the question?\n\nNADIA\nDoes that therapist know what he's doing?\n\nMcGee looks at her for a long moment.\n\nMcGEE\n(slowly)\nI think a person like that would have found a\nway to believe that what they're doing is serving\nthe patient.\n\nNADIA\nServing the patient. Or serving the process?\n\nMcGEE\nIn his mind, they're the same thing.\n\nNADIA\nAnd the patients who get worse?\n\nMcGEE\n(a slight edge, now)\nResistance is part of any genuine process.\n\nNADIA\nEven when the resistance looks like someone\nlosing the will to be alive?\n\nSilence.\n\nMcGEE\nWhat are you actually asking me, Nadia?\n\nShe looks at him. And then she does something that surprises him: she agrees.\n\nNADIA\nYou're right. I'm dancing around it.\n\nShe reaches into her bag. Sets her phone on the table between them — face down.\n\nMcGEE\n(looking at it)\nIs that recording?\n\nNADIA\nNo.\n\n(beat)\n\nI want to ask you something directly.\n\nMcGEE\nThen ask.\n\nNADIA\nDo you believe that instability — genuine\npsychological instability — can be a productive\nstate for a patient?\n\nMcGEE\nIn certain phases, yes.\n\nNADIA\nAnd do you ever intentionally create that instability?\n\nHe looks at her for a very long time.\n\nAnd then he does something that surprises her: he answers honestly.\n\nMcGEE\nI create the conditions for transformation.\nTransformation is inherently destabilizing. You\ncan't become something new while you're comfortable\nwith what you are.\n\nNADIA\nAnd the people who can't navigate the instability?\n\nMcGEE\n(with genuine conviction)\nThey weren't ready. That's not a failure of the\nprocess. That's data.\n\nA long, terrible silence.\n\nNADIA\n(quietly)\nThey're people. Not data.\n\nMcGEE\nOf course they are.\n\n(a beat — softer, now, trying to find her)\n\nNadia. What happened to Marcus was not your fault.\nAnd it was not a therapist's fault. Some people —\n\nNADIA\nDon't.\n\nThe word lands like a flat hand on a table.\n\nMcGEE\n(very carefully)\nYou came here to find something to blame.\n\nNADIA\nI came here to understand something.\n\n(beat)\n\nAnd I do, now.\n\nShe picks up her phone from the table. Stands. Gets her coat from the hook by the door.\n\nMcGEE\nIf you're planning to —\n\nNADIA\nI'm not planning anything.\n\nShe buttons her coat. Turns back to look at him — just once.\n\nNADIA (CONT'D)\nYou're very good at this. I want you to know\nthat I understand how good you are at this.\n\nHe absorbs that.\n\nMcGEE\n(and despite everything, he means this too)\nYou're one of the most perceptive people I've\never worked with.\n\nNADIA\nI know.\n\nShe walks out.\n\nThe door closes quietly.\n\nCUT TO:\n\nINT. McGEE'S OFFICE - CONTINUOUS\n\nMcGee sits in the chair.\n\nThe white noise machine hums.\n\nHe picks up his phone. Sets it down. Picks it up again.\n\nHe looks at the door she walked out of. At the chair she sat in.\n\nHis face does something it very rarely does: it loses its shape. Just for a moment. Just in the empty room.\n\nThen it returns.\n\nHe dials.\n\nMcGEE\n(into phone)\nClear my afternoon. I need to make some calls.\n\nHe stands. Goes to the window. Looks out.\n\nThe machine is already running.\n\nFADE TO BLACK.\n\nTITLE CARD: FLIPPED\n\nTITLE CARD: *Dr. Brian McGee's podcast currently has 41 million listeners.*\n\nTITLE CARD: *The average patient in his intensive program attends for 2.3 years.*\n\nTITLE CARD: *There is no licensing board for \"Integrative Reality Therapy.\"*\n\nTITLE CARD: *It is not a recognized clinical method.*\n\nFADE OUT.\n\nTHE END\n"
+    }
+  ]
+};
+
+function esc(s) {
+  return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function renderBeats() {
+  var outlines = AISTUDIOS_DATA.outlines || [];
+  var beatsFile = null;
+  for (var i = 0; i < outlines.length; i++) {
+    if (outlines[i].filename.toLowerCase().indexOf('beat') !== -1) {
+      beatsFile = outlines[i];
+      break;
+    }
+  }
+  var el = document.getElementById('beats-content');
+  if (!beatsFile) {
+    el.innerHTML = '<p style="color:#888;">No beat sheet found. Run: aistudios beats</p>';
+    return;
+  }
+  var lines = beatsFile.content.split('\n');
+  var html = '';
+  var currentBeat = null;
+  var currentText = [];
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i];
+    if (line.match(/^##\s/)) {
+      if (currentBeat) {
+        html += '<div class="beat"><h3>' + esc(currentBeat) + '</h3><p>' + esc(currentText.join(' ').trim()) + '</p></div>';
+      }
+      currentBeat = line.replace(/^##\s+/, '').trim();
+      currentText = [];
+    } else if (currentBeat && line.trim()) {
+      currentText.push(line.trim());
+    }
+  }
+  if (currentBeat) {
+    html += '<div class="beat"><h3>' + esc(currentBeat) + '</h3><p>' + esc(currentText.join(' ').trim()) + '</p></div>';
+  }
+  el.innerHTML = html || '<p style="color:#888;">Beat sheet found but could not be parsed. View the raw file.</p>';
+}
+
+function renderCharacters() {
+  var chars = AISTUDIOS_DATA.characters || [];
+  var el = document.getElementById('characters-content');
+  if (!chars.length) {
+    el.innerHTML = '<p style="color:#888;">No character files found. Run: aistudios character</p>';
+    return;
+  }
+  var html = '';
+  for (var i = 0; i < chars.length; i++) {
+    var c = chars[i];
+    var lines = c.content.split('\n');
+    var name = lines[0].replace(/^#+\s*Character:\s*/i,'').replace(/^#+\s*/,'').trim() || c.filename;
+    var role = '';
+    var body = c.content;
+    for (var j = 0; j < lines.length; j++) {
+      var l = lines[j].toLowerCase();
+      if (l.indexOf('role') !== -1 && lines[j+1]) {
+        role = lines[j+1].trim();
+        break;
+      }
+    }
+    html += '<div class="character-card"><h3>' + esc(name) + '</h3>';
+    if (role) html += '<div class="role">' + esc(role) + '</div>';
+    var bodyTrimmed = body.replace(/^#.*\n/, '').trim().substring(0, 400);
+    html += '<div class="char-body">' + esc(bodyTrimmed) + (body.length > 400 ? '\n\n[...]' : '') + '</div></div>';
+  }
+  el.innerHTML = html;
+}
+
+function renderOutlines() {
+  var outlines = AISTUDIOS_DATA.outlines || [];
+  var el = document.getElementById('outlines-content');
+  var nonBeats = outlines.filter(function(o) { return o.filename.toLowerCase().indexOf('beat') === -1; });
+  if (!nonBeats.length) {
+    el.innerHTML = '<p style="color:#888;">No outline files found. Run: aistudios outline</p>';
+    return;
+  }
+  var html = '';
+  for (var i = 0; i < nonBeats.length; i++) {
+    var o = nonBeats[i];
+    html += '<div class="script-file"><h3>' + esc(o.filename) + '</h3>';
+    html += '<div class="outline-content">' + esc(o.content) + '</div></div>';
+  }
+  el.innerHTML = html;
+}
+
+function renderScripts() {
+  var scripts = AISTUDIOS_DATA.scripts || [];
+  var el = document.getElementById('script-content');
+  if (!scripts.length) {
+    el.innerHTML = '<p style="color:#888;">No script files found. Run: aistudios scene or aistudios new</p>';
+    return;
+  }
+  var html = '';
+  for (var i = 0; i < scripts.length; i++) {
+    var s = scripts[i];
+    html += '<div class="script-file"><h3>' + esc(s.filename) + '</h3>';
+    html += '<div class="screenplay">' + esc(s.content) + '</div></div>';
+  }
+  el.innerHTML = html;
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  renderBeats();
+  renderCharacters();
+  renderOutlines();
+  renderScripts();
+
+  // Sidebar active state
+  var links = document.querySelectorAll('#sidebar nav a');
+  function setActive() {
+    var scrollY = window.scrollY;
+    links.forEach(function(link) {
+      var target = document.querySelector(link.getAttribute('href'));
+      if (target) {
+        var top = target.offsetTop - 60;
+        var bottom = top + target.offsetHeight;
+        if (scrollY >= top && scrollY < bottom) {
+          link.classList.add('active');
+        } else {
+          link.classList.remove('active');
+        }
+      }
+    });
+  }
+  window.addEventListener('scroll', setActive);
+  setActive();
+});
+</script>
+</body>
+</html>
