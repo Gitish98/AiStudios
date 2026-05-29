@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AiStudios — Projects Dashboard</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif; background: #f4f4f0; color: #1a1a1a; min-height: 100vh; }
+  header { background: #1a1a2e; color: #e8e8f0; padding: 32px 48px; }
+  header h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; }
+  header p { color: #8888aa; margin-top: 6px; font-size: 15px; }
+  main { max-width: 1100px; margin: 0 auto; padding: 40px 48px; }
+  main h2 { font-size: 18px; font-weight: 700; color: #1a1a2e; margin-bottom: 24px; }
+  .project-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; }
+  .project-card { background: #fff; border-radius: 12px; padding: 24px; border-top: 5px solid #1a1a2e; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+  .project-card h3 { font-size: 18px; font-weight: 700; color: #1a1a2e; margin-bottom: 8px; }
+  .badges { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+  .badge { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; padding: 3px 8px; border-radius: 4px; }
+  .badge-genre { background: #ebe8f8; color: #5a3aaa; }
+  .badge-status { background: #e8f4ec; color: #2a6a3a; }
+  .logline { font-size: 14px; line-height: 1.6; color: #444; font-style: italic; margin-top: 8px; }
+  .no-logline { color: #aaa; font-size: 13px; }
+  .created { font-size: 12px; color: #aaa; margin-top: 14px; }
+  .empty-state { text-align: center; padding: 80px 40px; color: #888; }
+  .empty-state h3 { font-size: 20px; margin-bottom: 10px; color: #555; }
+  @media (max-width: 600px) {
+    header, main { padding: 24px 20px; }
+    .project-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>AiStudios</h1>
+  <p>Film Script Development Toolkit</p>
+</header>
+<main>
+  <h2>Projects</h2>
+  <div id="projects-grid" class="project-grid"></div>
+</main>
+
+<script>
+var DASHBOARD_DATA = {
+  "projects": []
+};
+
+function esc(s) {
+  return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function formatDate(iso) {
+  if (!iso) return '';
+  try {
+    var d = new Date(iso);
+    return d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  } catch(e) { return iso; }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  var projects = DASHBOARD_DATA.projects || [];
+  var grid = document.getElementById('projects-grid');
+
+  if (!projects.length) {
+    grid.innerHTML = '<div class="empty-state"><h3>No projects yet</h3><p>Create one with: python aistudios.py project new &lt;name&gt;</p></div>';
+    return;
+  }
+
+  var html = '';
+  for (var i = 0; i < projects.length; i++) {
+    var p = projects[i];
+    var genre = p.genre || '';
+    var status = p.status || 'development';
+    var logline = p.logline || '';
+    var created = formatDate(p.created_at);
+    html += '<div class="project-card">';
+    html += '<h3>' + esc(p.title || p.name) + '</h3>';
+    html += '<div class="badges">';
+    if (genre) html += '<span class="badge badge-genre">' + esc(genre) + '</span>';
+    html += '<span class="badge badge-status">' + esc(status) + '</span>';
+    html += '</div>';
+    if (logline) {
+      html += '<div class="logline">' + esc(logline) + '</div>';
+    } else {
+      html += '<div class="no-logline">No logline yet</div>';
+    }
+    if (created) html += '<div class="created">Created ' + esc(created) + '</div>';
+    html += '</div>';
+  }
+  grid.innerHTML = html;
+});
+</script>
+</body>
+</html>
