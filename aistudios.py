@@ -663,404 +663,389 @@ def _build_project_html(embed_data: dict) -> str:
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>{_esc(title)} — AiStudios</title>
 <style>
 *,*::before,*::after{{box-sizing:border-box;margin:0;padding:0}}
+html,body{{height:100%;-webkit-text-size-adjust:100%}}
 :root{{
-  --navy:#0f0f1a;--navy2:#1a1a2e;--navy3:#252540;--accent:#6c6cff;
+  --navy:#0f0f1a;--navy2:#1a1a2e;--accent:#6c6cff;
   --text:#e8e8f4;--muted:#8888aa;
-  --sidebar-w:260px;--bottom-nav-h:64px;
+  --sidebar-w:260px;--bnav-h:60px;
 }}
-html{{scroll-behavior:smooth}}
-body{{font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;background:var(--navy);color:var(--text);min-height:100vh;display:flex;overflow-x:hidden}}
-#sidebar{{width:var(--sidebar-w);min-width:var(--sidebar-w);background:var(--navy2);display:flex;flex-direction:column;height:100vh;position:sticky;top:0;overflow-y:auto;z-index:100;border-right:1px solid rgba(255,255,255,0.05)}}
+body{{font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;background:var(--navy);color:var(--text);display:flex;min-height:100%;-webkit-overflow-scrolling:touch}}
+
+/* ── SIDEBAR (desktop only) ── */
+#sidebar{{width:var(--sidebar-w);min-width:var(--sidebar-w);background:var(--navy2);display:flex;flex-direction:column;height:100vh;position:sticky;top:0;overflow-y:auto;border-right:1px solid rgba(255,255,255,0.05)}}
 .brand{{padding:24px 20px 20px;border-bottom:1px solid rgba(255,255,255,0.07)}}
-.brand-label{{font-size:10px;font-weight:700;letter-spacing:0.15em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}}
+.brand-label{{font-size:10px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}}
 .brand-title{{font-size:17px;font-weight:700;color:#fff;line-height:1.3;margin-bottom:10px}}
 .badges{{display:flex;gap:6px;flex-wrap:wrap}}
-.badge{{font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;padding:3px 8px;border-radius:20px}}
-.badge-genre{{background:rgba(108,108,255,0.2);color:#9898ff}}
-.badge-status{{background:rgba(80,200,120,0.15);color:#60cc88}}
+.bdg{{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:3px 8px;border-radius:20px}}
+.bdg-g{{background:rgba(108,108,255,.2);color:#9898ff}}
+.bdg-s{{background:rgba(80,200,120,.15);color:#60cc88}}
 #sidebar nav{{padding:16px 12px;flex:1}}
-.nav-section{{font-size:10px;font-weight:700;letter-spacing:0.13em;text-transform:uppercase;color:rgba(255,255,255,0.25);padding:12px 10px 6px}}
-.nav-link{{display:flex;align-items:center;gap:10px;color:var(--muted);text-decoration:none;padding:10px 12px;border-radius:8px;font-size:14px;font-weight:500;margin-bottom:2px;transition:all 0.15s;cursor:pointer;border:none;background:none;width:100%;text-align:left}}
-.nav-link:hover,.nav-link.active{{background:rgba(108,108,255,0.15);color:#c0c0ff}}
-.sidebar-footer{{padding:16px 20px;border-top:1px solid rgba(255,255,255,0.07);font-size:11px;color:rgba(255,255,255,0.2)}}
-#main{{flex:1;display:flex;flex-direction:column;min-height:100vh;overflow-x:hidden}}
-.section{{display:none;flex:1;padding:32px 36px;max-width:860px;width:100%;margin:0 auto}}
-.section.active{{display:block}}
-.section-title{{font-size:13px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:var(--muted);margin-bottom:20px}}
-.logline-card{{background:linear-gradient(135deg,#1e1e3a 0%,#252550 100%);border:1px solid rgba(108,108,255,0.2);border-radius:16px;padding:32px;margin-bottom:24px}}
-.logline-label{{font-size:10px;font-weight:700;letter-spacing:0.15em;text-transform:uppercase;color:#6c6cff;margin-bottom:14px}}
-.logline-text{{font-size:18px;line-height:1.7;color:#e0e0f8;font-style:italic;font-weight:400}}
-.meta-row{{display:flex;gap:12px;flex-wrap:wrap;margin-top:20px}}
-.meta-chip{{background:rgba(255,255,255,0.06);border-radius:8px;padding:8px 14px;font-size:13px;color:var(--muted)}}
-.meta-chip strong{{color:var(--text);font-weight:600}}
+.nav-sec{{font-size:10px;font-weight:700;letter-spacing:.13em;text-transform:uppercase;color:rgba(255,255,255,.25);padding:12px 10px 6px}}
+.nav-btn{{display:block;width:100%;text-align:left;background:none;border:none;color:var(--muted);padding:10px 12px;border-radius:8px;font-size:14px;font-weight:500;margin-bottom:2px;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:background .15s,color .15s}}
+.nav-btn:hover,.nav-btn.on{{background:rgba(108,108,255,.15);color:#c0c0ff}}
+.sb-foot{{padding:16px 20px;border-top:1px solid rgba(255,255,255,.07);font-size:11px;color:rgba(255,255,255,.2)}}
+
+/* ── MAIN ── */
+#main{{flex:1;overflow-x:hidden}}
+/* ALL sections hidden by default via JS — no CSS display:none to avoid iOS conflicts */
+
+/* ── SECTION WRAPPERS ── */
+.sec{{padding:28px 32px;max-width:860px;margin:0 auto}}
+.sec-title{{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-bottom:18px}}
+
+/* ── LOGLINE ── */
+.logline-card{{background:linear-gradient(135deg,#1e1e3a,#252550);border:1px solid rgba(108,108,255,.2);border-radius:16px;padding:28px 32px;margin-bottom:20px}}
+.ll-label{{font-size:10px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:#6c6cff;margin-bottom:12px}}
+.ll-text{{font-size:17px;line-height:1.75;color:#e0e0f8;font-style:italic}}
+.meta-row{{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}}
+.meta-chip{{background:rgba(255,255,255,.06);border-radius:8px;padding:7px 13px;font-size:13px;color:var(--muted)}}
+.meta-chip strong{{color:var(--text)}}
+
+/* ── BEATS ── */
 .beats-list{{display:flex;flex-direction:column;gap:10px}}
-.beat-card{{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:18px 20px;border-left:3px solid #6c6cff}}
-.beat-header{{display:flex;align-items:baseline;gap:10px;margin-bottom:8px}}
-.beat-num{{font-size:11px;font-weight:700;color:#6c6cff;letter-spacing:0.1em;min-width:24px}}
-.beat-name{{font-size:14px;font-weight:700;color:#d0d0f0;text-transform:uppercase;letter-spacing:0.05em}}
-.beat-pages{{font-size:11px;color:var(--muted);margin-left:auto}}
-.beat-text{{font-size:14px;line-height:1.65;color:#aaaacc}}
-.char-grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}}
-.char-card{{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:20px;cursor:pointer;transition:all 0.15s}}
-.char-card:hover{{background:rgba(108,108,255,0.1);border-color:rgba(108,108,255,0.3)}}
-.char-name{{font-size:16px;font-weight:700;color:#fff;margin-bottom:4px}}
-.char-role{{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:#6c6cff;margin-bottom:12px}}
-.char-snippet{{font-size:13px;line-height:1.6;color:#9090b8}}
-.char-drawer{{display:none;background:rgba(15,15,30,0.6);border:1px solid rgba(108,108,255,0.2);border-radius:12px;padding:24px;margin-top:10px;font-size:14px;line-height:1.7;color:#c0c0e0;grid-column:1/-1}}
+.beat-card{{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:16px 18px;border-left:3px solid #6c6cff}}
+.beat-hdr{{display:flex;align-items:baseline;gap:10px;margin-bottom:7px}}
+.beat-n{{font-size:11px;font-weight:700;color:#6c6cff;min-width:22px}}
+.beat-nm{{font-size:13px;font-weight:700;color:#d0d0f0;text-transform:uppercase;letter-spacing:.05em}}
+.beat-pg{{font-size:11px;color:var(--muted);margin-left:auto}}
+.beat-txt{{font-size:13px;line-height:1.6;color:#aaaacc}}
+
+/* ── CHARACTERS ── */
+.char-grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:12px}}
+.char-card{{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:18px;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:background .15s}}
+.char-card:active{{background:rgba(108,108,255,.12)}}
+.char-name{{font-size:15px;font-weight:700;color:#fff;margin-bottom:4px}}
+.char-role{{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.1em;color:#6c6cff;margin-bottom:10px}}
+.char-snip{{font-size:13px;line-height:1.55;color:#9090b8}}
+.char-drawer{{display:none;background:rgba(10,10,26,.7);border:1px solid rgba(108,108,255,.2);border-radius:12px;padding:20px;margin-top:8px;font-size:13px;line-height:1.7;color:#c0c0e0;grid-column:1/-1}}
 .char-drawer.open{{display:block}}
-.char-drawer h3{{color:#e0e0ff;font-size:15px;margin:16px 0 6px}}
-.outline-block{{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:24px 28px;margin-bottom:16px}}
-.outline-filename{{font-size:11px;color:var(--muted);margin-bottom:14px;letter-spacing:0.08em;text-transform:uppercase}}
-.outline-body{{font-size:14px;line-height:1.75;color:#b0b0d0}}
-.outline-body strong{{color:#e0e0ff}}
-#section-script{{padding:0;max-width:100%}}
-.script-header{{padding:20px 32px 14px;border-bottom:1px solid rgba(255,255,255,0.07)}}
-.script-tabs{{display:flex;gap:8px;overflow-x:auto;padding:12px 32px;border-bottom:1px solid rgba(255,255,255,0.07)}}
-.script-tab{{flex-shrink:0;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:20px;padding:6px 16px;font-size:13px;color:var(--muted);cursor:pointer;transition:all 0.15s;white-space:nowrap}}
-.script-tab.active{{background:#6c6cff;color:#fff;border-color:#6c6cff}}
-.screenplay-wrap{{background:#2a2a2a;padding:32px 24px;min-height:calc(100vh - 120px)}}
-.screenplay-page{{background:#f5f4f0;margin:0 auto 28px;padding:72px 72px 96px 96px;max-width:680px;position:relative;box-shadow:0 4px 32px rgba(0,0,0,0.6);font-family:'Courier New',Courier,monospace;font-size:12pt;line-height:1.7;color:#111}}
-.page-num{{position:absolute;top:48px;right:60px;font-size:12pt;color:#333;font-family:'Courier New',Courier,monospace}}
-.sp-heading{{font-weight:bold;text-transform:uppercase;margin-top:1.4em;margin-bottom:0}}
-.sp-action{{margin:0}}
-.sp-blank{{height:1.7em}}
-.sp-char{{margin-top:1.4em;margin-bottom:0;padding-left:200px;text-transform:uppercase}}
-.sp-dialogue{{padding-left:100px;padding-right:80px;margin:0}}
-.sp-paren{{padding-left:148px;padding-right:100px;margin:0;color:#444}}
-.sp-transition{{text-align:right;margin-top:1em;margin-bottom:0}}
-.empty{{text-align:center;padding:60px 24px;color:var(--muted)}}
-.empty h3{{font-size:17px;color:#5a5a7a;margin-bottom:8px}}
-.empty code{{background:rgba(255,255,255,0.07);padding:2px 6px;border-radius:4px;font-size:13px}}
-#bottom-nav{{display:none;position:fixed;bottom:0;left:0;right:0;height:var(--bottom-nav-h);background:rgba(15,15,30,0.96);border-top:1px solid rgba(255,255,255,0.1);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);z-index:200;padding:0 8px;padding-bottom:env(safe-area-inset-bottom)}}
-.bnav-inner{{display:flex;height:100%;align-items:center;justify-content:space-around}}
-.bnav-btn{{display:flex;flex-direction:column;align-items:center;gap:3px;color:var(--muted);background:none;border:none;padding:8px 10px;border-radius:10px;cursor:pointer;transition:all 0.15s;font-size:10px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;min-width:52px}}
-.bnav-btn.active{{color:#6c6cff}}
+.char-drawer h3{{color:#e0e0ff;font-size:14px;margin:14px 0 5px}}
+
+/* ── OUTLINES ── */
+.out-block{{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:22px 26px;margin-bottom:14px}}
+.out-fn{{font-size:11px;color:var(--muted);margin-bottom:12px;letter-spacing:.08em;text-transform:uppercase}}
+.out-body{{font-size:13px;line-height:1.75;color:#b0b0d0}}
+.out-body strong{{color:#e0e0ff}}
+
+/* ── SCREENPLAY (WGA) ── */
+.script-nav{{padding:16px 20px;border-bottom:1px solid rgba(255,255,255,.07);display:flex;align-items:center;gap:8px}}
+.script-nav .sec-title{{margin-bottom:0}}
+.s-tabs{{display:flex;gap:8px;overflow-x:auto;-webkit-overflow-scrolling:touch;padding:10px 20px;border-bottom:1px solid rgba(255,255,255,.07)}}
+.s-tab{{flex-shrink:0;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:20px;padding:6px 16px;font-size:13px;color:var(--muted);cursor:pointer;-webkit-tap-highlight-color:transparent;white-space:nowrap;transition:all .15s}}
+.s-tab.on{{background:#6c6cff;color:#fff;border-color:#6c6cff}}
+.sp-wrap{{background:#222;padding:24px 16px;min-height:60vh;-webkit-overflow-scrolling:touch}}
+.sp-page{{background:#f5f4f0;margin:0 auto 24px;padding:64px 64px 80px 88px;max-width:660px;position:relative;box-shadow:0 4px 28px rgba(0,0,0,.6);font-family:'Courier New',Courier,monospace;font-size:12pt;line-height:1.7;color:#111;word-wrap:break-word}}
+.pg-num{{position:absolute;top:40px;right:52px;font-size:12pt;color:#444;font-family:'Courier New',Courier,monospace}}
+/* WGA element styles */
+.sp-h{{font-weight:700;text-transform:uppercase;margin:1.3em 0 0}}
+.sp-a{{margin:0}}
+.sp-b{{height:1.7em}}
+.sp-c{{margin:1.2em 0 0;padding-left:192px;text-transform:uppercase}}
+.sp-d{{padding-left:96px;padding-right:72px;margin:0}}
+.sp-p{{padding-left:144px;padding-right:96px;margin:0;color:#444}}
+.sp-t{{text-align:right;margin:1em 0 0}}
+
+/* ── EMPTY ── */
+.empty{{text-align:center;padding:48px 20px;color:var(--muted)}}
+.empty h3{{font-size:16px;color:#5a5a7a;margin-bottom:8px}}
+.empty code{{background:rgba(255,255,255,.07);padding:2px 6px;border-radius:4px;font-size:12px}}
+
+/* ── BOTTOM NAV (mobile) ── */
+#bnav{{display:none;position:fixed;bottom:0;left:0;right:0;z-index:999;background:rgba(10,10,26,.97);border-top:1px solid rgba(255,255,255,.1)}}
+.bnav-inner{{display:flex;align-items:stretch;justify-content:space-around;padding-bottom:env(safe-area-inset-bottom,0px)}}
+.bnav-btn{{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;background:none;border:none;color:var(--muted);padding:10px 4px;cursor:pointer;-webkit-tap-highlight-color:transparent;font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;min-height:var(--bnav-h)}}
+.bnav-btn svg{{width:20px;height:20px;flex-shrink:0}}
+.bnav-btn.on{{color:#6c6cff}}
+.bnav-btn.on svg *{{stroke:#6c6cff}}
+
+/* ── RESPONSIVE ── */
 @media(max-width:768px){{
   #sidebar{{display:none}}
-  #bottom-nav{{display:flex}}
-  #main{{padding-bottom:var(--bottom-nav-h)}}
-  .section{{padding:20px 16px}}
-  #section-script{{padding:0}}
-  .script-header{{padding:16px 16px 12px}}
-  .script-tabs{{padding:10px 16px}}
+  #bnav{{display:flex}}
+  #main{{padding-bottom:calc(var(--bnav-h) + env(safe-area-inset-bottom,0px))}}
+  .sec{{padding:20px 16px}}
   .char-grid{{grid-template-columns:1fr}}
-  .logline-text{{font-size:16px}}
-  .screenplay-wrap{{padding:16px 0}}
-  .screenplay-page{{padding:44px 20px 56px 36px;font-size:10pt;box-shadow:0 2px 16px rgba(0,0,0,0.5)}}
-  .sp-char{{padding-left:110px}}
-  .sp-dialogue{{padding-left:56px;padding-right:36px}}
-  .sp-paren{{padding-left:84px;padding-right:50px}}
-  .page-num{{top:24px;right:16px;font-size:10pt}}
+  .ll-text{{font-size:15px}}
+  .sp-wrap{{padding:16px 0}}
+  .sp-page{{padding:40px 18px 52px 30px;font-size:10.5pt;max-width:100%}}
+  .sp-c{{padding-left:120px}}
+  .sp-d{{padding-left:56px;padding-right:32px}}
+  .sp-p{{padding-left:84px;padding-right:48px}}
+  .pg-num{{top:20px;right:14px;font-size:10pt}}
 }}
 </style>
 </head>
 <body>
+
 <div id="sidebar">
   <div class="brand">
     <div class="brand-label">AiStudios</div>
     <div class="brand-title">{_esc(title)}</div>
     <div class="badges">
-      {'<span class="badge badge-genre">' + _esc(genre) + '</span>' if genre else ''}
-      {'<span class="badge badge-status">' + _esc(status) + '</span>' if status else ''}
+      {'<span class="bdg bdg-g">' + _esc(genre) + '</span>' if genre else ''}
+      {'<span class="bdg bdg-s">' + _esc(status) + '</span>' if status else ''}
     </div>
   </div>
   <nav>
-    <div class="nav-section">Navigate</div>
-    <button class="nav-link active" onclick="showSection('overview')">&#9632; Overview</button>
-    <button class="nav-link" onclick="showSection('beats')">&#9776; Beat Sheet</button>
-    <button class="nav-link" onclick="showSection('characters')">&#9786; Characters</button>
-    <button class="nav-link" onclick="showSection('outlines')">&#9741; Outlines</button>
-    <button class="nav-link" onclick="showSection('script')">&#9998; Script</button>
+    <div class="nav-sec">Navigate</div>
+    <button class="nav-btn" data-sec="overview">Overview</button>
+    <button class="nav-btn" data-sec="beats">Beat Sheet</button>
+    <button class="nav-btn" data-sec="characters">Characters</button>
+    <button class="nav-btn" data-sec="outlines">Outlines</button>
+    <button class="nav-btn" data-sec="script">Script</button>
   </nav>
-  <div class="sidebar-footer">AiStudios &middot; Screenplay Toolkit</div>
+  <div class="sb-foot">AiStudios &middot; Screenplay Toolkit</div>
 </div>
+
 <div id="main">
-  <div id="section-overview" class="section active">
-    <div class="section-title">Project Overview</div>
-    <div class="logline-card">
-      <div class="logline-label">Logline</div>
-      <div class="logline-text">{_esc(logline) or "No logline set yet."}</div>
-      <div class="meta-row">
-        {'<div class="meta-chip"><strong>Genre</strong>&nbsp;&nbsp;' + _esc(genre.title()) + '</div>' if genre else ''}
-        {'<div class="meta-chip"><strong>Status</strong>&nbsp;&nbsp;' + _esc(status.title()) + '</div>' if status else ''}
-        {'<div class="meta-chip"><strong>Author</strong>&nbsp;&nbsp;' + _esc(project.get("author","")) + '</div>' if project.get("author") else ''}
+
+  <div id="sec-overview">
+    <div class="sec">
+      <div class="sec-title">Project Overview</div>
+      <div class="logline-card">
+        <div class="ll-label">Logline</div>
+        <div class="ll-text">{_esc(logline) or "No logline set yet."}</div>
+        <div class="meta-row">
+          {'<div class="meta-chip"><strong>Genre</strong>&nbsp; ' + _esc(genre.title()) + '</div>' if genre else ''}
+          {'<div class="meta-chip"><strong>Status</strong>&nbsp; ' + _esc(status.title()) + '</div>' if status else ''}
+          {'<div class="meta-chip"><strong>Author</strong>&nbsp; ' + _esc(project.get("author","")) + '</div>' if project.get("author") else ''}
+        </div>
       </div>
     </div>
   </div>
-  <div id="section-beats" class="section">
-    <div class="section-title">Beat Sheet</div>
-    <div id="beats-content" class="beats-list"></div>
+
+  <div id="sec-beats">
+    <div class="sec">
+      <div class="sec-title">Beat Sheet</div>
+      <div id="beats-content" class="beats-list"></div>
+    </div>
   </div>
-  <div id="section-characters" class="section">
-    <div class="section-title">Characters</div>
-    <div id="characters-content" class="char-grid"></div>
+
+  <div id="sec-characters">
+    <div class="sec">
+      <div class="sec-title">Characters</div>
+      <div id="characters-content" class="char-grid"></div>
+    </div>
   </div>
-  <div id="section-outlines" class="section">
-    <div class="section-title">Outlines &amp; Notes</div>
-    <div id="outlines-content"></div>
+
+  <div id="sec-outlines">
+    <div class="sec">
+      <div class="sec-title">Outlines &amp; Notes</div>
+      <div id="outlines-content"></div>
+    </div>
   </div>
-  <div id="section-script" class="section" style="padding:0;max-width:100%">
-    <div class="script-header"><div class="section-title" style="margin-bottom:0">Script</div></div>
-    <div class="script-tabs" id="script-tabs"></div>
-    <div class="screenplay-wrap" id="screenplay-wrap"></div>
+
+  <div id="sec-script">
+    <div class="script-nav"><div class="sec-title">Script</div></div>
+    <div class="s-tabs" id="s-tabs"></div>
+    <div class="sp-wrap" id="sp-wrap"></div>
   </div>
+
 </div>
-<div id="bottom-nav">
+
+<div id="bnav">
   <div class="bnav-inner">
-    <button class="bnav-btn active" onclick="showSection('overview')">
-      <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+    <button class="bnav-btn" data-sec="overview">
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
       Info
     </button>
-    <button class="bnav-btn" onclick="showSection('beats')">
-      <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><polyline points="3 6 4 7 6 5"/><polyline points="3 12 4 13 6 11"/><polyline points="3 18 4 19 6 17"/></svg>
+    <button class="bnav-btn" data-sec="beats">
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><polyline points="3 6 4 7 6 5"/><polyline points="3 12 4 13 6 11"/><polyline points="3 18 4 19 6 17"/></svg>
       Beats
     </button>
-    <button class="bnav-btn" onclick="showSection('characters')">
-      <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+    <button class="bnav-btn" data-sec="characters">
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
       Cast
     </button>
-    <button class="bnav-btn" onclick="showSection('outlines')">
-      <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+    <button class="bnav-btn" data-sec="outlines">
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
       Notes
     </button>
-    <button class="bnav-btn" onclick="showSection('script')">
-      <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+    <button class="bnav-btn" data-sec="script">
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
       Script
     </button>
   </div>
 </div>
+
 <script>
 var D = {data_json};
-var currentSection = 'overview';
+var SECS = ['overview','beats','characters','outlines','script'];
+var cur = 'overview';
 
-function showSection(id) {{
-  currentSection = id;
-  document.querySelectorAll('.section').forEach(function(s) {{
-    s.classList.remove('active'); s.style.display = 'none';
+function show(id) {{
+  cur = id;
+  SECS.forEach(function(s) {{
+    var el = document.getElementById('sec-' + s);
+    if (el) el.style.display = (s === id) ? 'block' : 'none';
   }});
-  var el = document.getElementById('section-' + id);
-  if (el) {{ el.style.display = 'block'; el.classList.add('active'); }}
-  document.querySelectorAll('.nav-link,.bnav-btn').forEach(function(b) {{
-    b.classList.toggle('active', (b.getAttribute('onclick') || '').indexOf("'" + id + "'") !== -1);
+  document.querySelectorAll('.nav-btn,.bnav-btn').forEach(function(b) {{
+    b.classList.toggle('on', b.getAttribute('data-sec') === id);
   }});
   window.scrollTo(0, 0);
 }}
 
-function esc(s) {{
-  return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-}}
+// Wire up all nav buttons via event delegation
+document.addEventListener('click', function(e) {{
+  var btn = e.target.closest('[data-sec]');
+  if (btn) {{ e.preventDefault(); show(btn.getAttribute('data-sec')); }}
+}});
 
-function renderMarkdown(md) {{
-  return (md || '')
+function esc(s) {{
+  return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}}
+function md(s) {{
+  return (s||'')
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-    .replace(/^#{3}\\s+(.+)$/gm,'<strong style="color:#d0d0ff;display:block;margin-top:14px">$1</strong>')
-    .replace(/^#{1,2}\\s+(.+)$/gm,'')
+    .replace(/^#{3}\\s+(.+)$/gm,'<strong style="color:#d0d0ff;display:block;margin-top:12px">$1</strong>')
+    .replace(/^#{1,2}[^\\n]+$/gm,'')
     .replace(/\\*\\*([^*]+)\\*\\*/g,'<strong style="color:#d0d0ff">$1</strong>')
     .replace(/\\*([^*]+)\\*/g,'<em>$1</em>')
-    .replace(/^---+$/gm,'<hr style="border:none;border-top:1px solid rgba(255,255,255,0.1);margin:12px 0">')
+    .replace(/^---+$/gm,'<hr style="border:none;border-top:1px solid rgba(255,255,255,.1);margin:10px 0">')
     .replace(/\\n/g,'<br>');
 }}
 
 function renderBeats() {{
-  var outlines = D.outlines || [];
   var bf = null;
-  for (var i = 0; i < outlines.length; i++) {{
-    if (outlines[i].filename.toLowerCase().indexOf('beat') !== -1) {{ bf = outlines[i]; break; }}
-  }}
+  (D.outlines||[]).forEach(function(o) {{ if (!bf && o.filename.toLowerCase().indexOf('beat')!==-1) bf=o; }});
   var el = document.getElementById('beats-content');
-  if (!bf) {{
-    el.innerHTML = '<div class="empty"><h3>No beat sheet yet</h3><p>Run: <code>python aistudios.py beats</code></p></div>';
-    return;
-  }}
-  var lines = bf.content.split('\\n');
-  var html = ''; var beatNum = 0;
-  var name = ''; var pages = ''; var text = [];
+  if (!bf) {{ el.innerHTML='<div class="empty"><h3>No beat sheet yet</h3><p>Run: <code>aistudios.py beats</code></p></div>'; return; }}
+  var html='', n=0, name='', pages='', txt=[];
   function flush() {{
-    if (!name) return; beatNum++;
-    html += '<div class="beat-card"><div class="beat-header"><span class="beat-num">' + beatNum + '</span><span class="beat-name">' + esc(name.replace(/^\\d+\\.\\s*/, '')) + '</span>' + (pages ? '<span class="beat-pages">' + esc(pages) + '</span>' : '') + '</div><div class="beat-text">' + esc(text.join(' ').trim()) + '</div></div>';
+    if (!name) return; n++;
+    html+='<div class="beat-card"><div class="beat-hdr"><span class="beat-n">'+n+'</span><span class="beat-nm">'+esc(name.replace(/^\\d+\\.\\s*/,''))+'</span>'+(pages?'<span class="beat-pg">'+esc(pages)+'</span>':'')+'</div><div class="beat-txt">'+esc(txt.join(' ').trim())+'</div></div>';
   }}
-  for (var i = 0; i < lines.length; i++) {{
-    var l = lines[i];
-    if (/^###\\s/.test(l)) {{ flush(); name = l.replace(/^###\\s+/, '').trim(); pages = ''; text = []; }}
+  bf.content.split('\\n').forEach(function(l) {{
+    if (/^###\\s/.test(l)) {{ flush(); name=l.replace(/^###\\s+/,'').trim(); pages=''; txt=[]; }}
     else if (name && l.trim()) {{
-      var pm = l.match(/\\(pp?\\.?\\s*([\\d\\s–-]+)\\)/);
-      if (pm) pages = 'pp.' + pm[1].trim();
-      text.push(l.replace(/\\(pp?\\..*?\\)/, '').trim());
+      var pm=l.match(/\\(pp?\\.?\\s*([\\d\\s\\u2013-]+)\\)/);
+      if (pm) pages='pp.'+pm[1].trim();
+      txt.push(l.replace(/\\(pp?\\..*?\\)/,'').trim());
     }}
-  }}
+  }});
   flush();
-  el.innerHTML = html || '<div class="empty"><h3>Beat sheet found</h3></div>';
+  el.innerHTML = html || '<div class="empty"><h3>Beat sheet parsed</h3></div>';
 }}
 
 function renderCharacters() {{
-  var chars = D.characters || [];
+  var chars = D.characters||[];
   var el = document.getElementById('characters-content');
-  if (!chars.length) {{
-    el.innerHTML = '<div class="empty"><h3>No characters yet</h3><p>Run: <code>python aistudios.py character</code></p></div>';
-    return;
-  }}
-  var html = '';
-  chars.forEach(function(c, idx) {{
-    var lines = c.content.split('\\n');
-    var name = (lines[0] || '').replace(/^#+\\s*(Character:\\s*)?/i, '').trim() || c.filename.replace('.md', '');
-    var role = '';
-    for (var i = 0; i < Math.min(lines.length, 12); i++) {{
-      var m = lines[i].match(/\\*\\*Role[^*]*\\*\\*[:\\s]+(.+)/i);
-      if (m) {{ role = m[1].trim(); break; }}
+  if (!chars.length) {{ el.innerHTML='<div class="empty"><h3>No characters yet</h3><p>Run: <code>aistudios.py character</code></p></div>'; return; }}
+  var html='';
+  chars.forEach(function(c,i) {{
+    var lines=c.content.split('\\n');
+    var name=(lines[0]||'').replace(/^#+\\s*(Character:\\s*)?/i,'').trim()||c.filename.replace('.md','');
+    var role='';
+    for (var j=0;j<Math.min(lines.length,12);j++) {{
+      var m=lines[j].match(/\\*\\*Role[^*]*\\*\\*[:\\s]+(.+)/i);
+      if (m) {{ role=m[1].trim(); break; }}
     }}
-    var snippet = '';
-    for (var i = 1; i < lines.length; i++) {{
-      var t = lines[i].trim();
-      if (t && !t.startsWith('#') && !t.startsWith('**') && t.length > 20) {{
-        snippet = t.substring(0, 160) + (t.length > 160 ? '…' : ''); break;
-      }}
+    var snip='';
+    for (var j=1;j<lines.length;j++) {{
+      var t=lines[j].trim();
+      if (t&&!t.startsWith('#')&&!t.startsWith('**')&&t.length>20) {{ snip=t.substring(0,150)+(t.length>150?'…':''); break; }}
     }}
-    html += '<div class="char-card" onclick="toggleChar(' + idx + ')">';
-    html += '<div class="char-name">' + esc(name) + '</div>';
-    if (role) html += '<div class="char-role">' + esc(role) + '</div>';
-    html += '<div class="char-snippet">' + esc(snippet) + '</div></div>';
-    html += '<div class="char-drawer" id="char-drawer-' + idx + '">' + renderMarkdown(c.content) + '</div>';
+    html+='<div class="char-card" data-char="'+i+'"><div class="char-name">'+esc(name)+'</div>'+(role?'<div class="char-role">'+esc(role)+'</div>':'')+'<div class="char-snip">'+esc(snip)+'</div></div>';
+    html+='<div class="char-drawer" id="cd-'+i+'">'+md(c.content)+'</div>';
   }});
-  el.innerHTML = html;
-}}
-
-function toggleChar(idx) {{
-  var d = document.getElementById('char-drawer-' + idx);
-  if (d) d.classList.toggle('open');
+  el.innerHTML=html;
+  el.addEventListener('click', function(e) {{
+    var card=e.target.closest('[data-char]');
+    if (card) {{
+      var d=document.getElementById('cd-'+card.getAttribute('data-char'));
+      if (d) d.classList.toggle('open');
+    }}
+  }});
 }}
 
 function renderOutlines() {{
-  var outlines = D.outlines || [];
-  var el = document.getElementById('outlines-content');
-  var nonBeats = outlines.filter(function(o) {{ return o.filename.toLowerCase().indexOf('beat') === -1; }});
-  if (!nonBeats.length) {{
-    el.innerHTML = '<div class="empty"><h3>No outlines yet</h3><p>Run: <code>python aistudios.py outline</code></p></div>';
-    return;
-  }}
-  var html = '';
-  nonBeats.forEach(function(o) {{
-    html += '<div class="outline-block"><div class="outline-filename">' + esc(o.filename) + '</div>';
-    html += '<div class="outline-body">' + renderMarkdown(o.content) + '</div></div>';
-  }});
-  el.innerHTML = html;
+  var el=document.getElementById('outlines-content');
+  var nb=(D.outlines||[]).filter(function(o){{return o.filename.toLowerCase().indexOf('beat')===-1;}});
+  if (!nb.length) {{ el.innerHTML='<div class="empty"><h3>No outlines yet</h3><p>Run: <code>aistudios.py outline</code></p></div>'; return; }}
+  el.innerHTML=nb.map(function(o){{return '<div class="out-block"><div class="out-fn">'+esc(o.filename)+'</div><div class="out-body">'+md(o.content)+'</div></div>';}}).join('');
 }}
 
 function parseFountain(raw) {{
-  var text = raw;
-  var eqIdx = text.indexOf('\\n===\\n');
-  if (eqIdx !== -1) text = text.substring(eqIdx + 5);
-  var lines = text.split('\\n');
-  var els = []; var prevBlank = true; var inDlg = false;
-  for (var i = 0; i < lines.length; i++) {{
-    var t = lines[i].trim();
-    if (!t) {{
-      if (els.length && els[els.length - 1].type !== 'blank') els.push({{type:'blank'}});
-      prevBlank = true; inDlg = false; continue;
+  var text=raw, idx=text.indexOf('\\n===\\n');
+  if (idx!==-1) text=text.substring(idx+5);
+  var lines=text.split('\\n'), els=[], pb=true, dlg=false;
+  for (var i=0;i<lines.length;i++) {{
+    var t=lines[i].trim();
+    if (!t) {{ if (els.length&&els[els.length-1].type!=='b') els.push({{type:'b'}}); pb=true; dlg=false; continue; }}
+    if (t==='==='||t==='---') {{ els.push({{type:'pb'}}); pb=true; dlg=false; continue; }}
+    if (/^(FADE IN:|FADE OUT|FADE TO BLACK|CUT TO:|SMASH CUT|MATCH CUT|TITLE CARD:)/i.test(t)) {{ els.push({{type:'tr',v:t}}); pb=false; dlg=false; continue; }}
+    if (/^(INT\\b|EXT\\b|INT\\.?\\/EXT\\.|I\\/E\\.)/i.test(t)) {{ els.push({{type:'h',v:t.toUpperCase()}}); pb=false; dlg=false; continue; }}
+    if (/^\\(.*\\)$/.test(t)) {{ els.push({{type:'p',v:t}}); pb=false; continue; }}
+    if (pb&&t===t.toUpperCase()&&/[A-Z]/.test(t)&&t.length<52&&!/[.!?,]$/.test(t)&&!/^(INT\\b|EXT\\b)/.test(t)) {{
+      var nxt=''; for (var j=i+1;j<lines.length;j++) {{ if (lines[j].trim()) {{nxt=lines[j].trim();break;}} }}
+      if (nxt&&!/^(INT\\b|EXT\\b)/i.test(nxt)&&!/^(FADE|CUT TO)/i.test(nxt)) {{ els.push({{type:'c',v:t}}); pb=false; dlg=true; continue; }}
     }}
-    if (t === '===' || t === '---') {{
-      els.push({{type:'pagebreak'}}); prevBlank = true; inDlg = false; continue;
-    }}
-    if (/^(FADE IN:|FADE OUT|FADE TO BLACK|CUT TO:|SMASH CUT|MATCH CUT|TITLE CARD:)/i.test(t)) {{
-      els.push({{type:'transition', content:t}}); prevBlank = false; inDlg = false; continue;
-    }}
-    if (/^(INT\\b|EXT\\b|INT\\.?\\/EXT\\.|I\\/E\\.)/i.test(t)) {{
-      els.push({{type:'heading', content:t.toUpperCase()}}); prevBlank = false; inDlg = false; continue;
-    }}
-    if (/^\\(.*\\)$/.test(t)) {{
-      els.push({{type:'paren', content:t}}); prevBlank = false; continue;
-    }}
-    if (prevBlank && t === t.toUpperCase() && /[A-Z]/.test(t) && t.length < 52 && !/[.!?,]$/.test(t) && !/^(INT\\b|EXT\\b)/.test(t)) {{
-      var nxt = '';
-      for (var j = i + 1; j < lines.length; j++) {{ if (lines[j].trim()) {{ nxt = lines[j].trim(); break; }} }}
-      if (nxt && !/^(INT\\b|EXT\\b)/i.test(nxt) && !/^(FADE|CUT TO)/i.test(nxt)) {{
-        els.push({{type:'char', content:t}}); prevBlank = false; inDlg = true; continue;
-      }}
-    }}
-    if (inDlg && !/^(INT\\b|EXT\\b)/i.test(t)) {{
-      els.push({{type:'dialogue', content:t}}); prevBlank = false; continue;
-    }}
-    els.push({{type:'action', content:t}}); prevBlank = false; inDlg = false;
+    if (dlg&&!/^(INT\\b|EXT\\b)/i.test(t)) {{ els.push({{type:'d',v:t}}); pb=false; continue; }}
+    els.push({{type:'a',v:t}}); pb=false; dlg=false;
   }}
   return els;
 }}
-
-function fmtInline(s) {{
-  return esc(s).replace(/\\*([^*]+)\\*/g,'<em>$1</em>').replace(/_([^_]+)_/g,'<em>$1</em>');
-}}
-
-function renderFountain(elements) {{
-  var pages = []; var pageLines = 0; var pageNum = 1;
-  var cur = '<div class="screenplay-page"><div class="page-num">' + pageNum + '.</div>';
-
-  function newPage() {{
-    cur += '</div>';
-    pages.push(cur);
-    pageNum++;
-    pageLines = 0;
-    cur = '<div class="screenplay-page"><div class="page-num">' + pageNum + '.</div>';
-  }}
-
-  function add(html, cost) {{
-    pageLines += cost;
-    if (pageLines > 54 && cost > 0) newPage();
-    cur += html;
-  }}
-
-  for (var i = 0; i < elements.length; i++) {{
-    var el = elements[i];
-    switch (el.type) {{
-      case 'blank': add('<div class="sp-blank"></div>', 1); break;
-      case 'pagebreak': newPage(); break;
-      case 'heading': add('<div class="sp-heading">' + esc(el.content) + '</div>', 2); break;
-      case 'action': add('<div class="sp-action">' + fmtInline(el.content) + '</div>', 1); break;
-      case 'char': add('<div class="sp-char">' + esc(el.content) + '</div>', 1); break;
-      case 'dialogue': add('<div class="sp-dialogue">' + fmtInline(el.content) + '</div>', 1); break;
-      case 'paren': add('<div class="sp-paren">' + esc(el.content) + '</div>', 1); break;
-      case 'transition': add('<div class="sp-transition">' + esc(el.content) + '</div>', 1); break;
+function fi(s) {{ return esc(s).replace(/\\*([^*]+)\\*/g,'<em>$1</em>').replace(/_([^_]+)_/g,'<em>$1</em>'); }}
+function buildPages(els) {{
+  var pages=[], lines=0, pn=1;
+  var cur='<div class="sp-page"><div class="pg-num">'+pn+'.</div>';
+  function np() {{ cur+='</div>'; pages.push(cur); pn++; lines=0; cur='<div class="sp-page"><div class="pg-num">'+pn+'.</div>'; }}
+  function add(h,c) {{ lines+=c; if(lines>52&&c>0) np(); cur+=h; }}
+  els.forEach(function(e) {{
+    switch(e.type) {{
+      case 'b':  add('<div class="sp-b"></div>',1); break;
+      case 'pb': np(); break;
+      case 'h':  add('<div class="sp-h">'+esc(e.v)+'</div>',2); break;
+      case 'a':  add('<div class="sp-a">'+fi(e.v)+'</div>',1); break;
+      case 'c':  add('<div class="sp-c">'+esc(e.v)+'</div>',1); break;
+      case 'd':  add('<div class="sp-d">'+fi(e.v)+'</div>',1); break;
+      case 'p':  add('<div class="sp-p">'+esc(e.v)+'</div>',1); break;
+      case 'tr': add('<div class="sp-t">'+esc(e.v)+'</div>',1); break;
     }}
-  }}
-  cur += '</div>';
-  pages.push(cur);
+  }});
+  cur+='</div>'; pages.push(cur);
   return pages.join('');
 }}
 
-var scriptData = D.scripts || [];
-var currentScript = 0;
-
-function renderScriptTabs() {{
-  var tabs = document.getElementById('script-tabs');
-  if (!scriptData.length) {{ tabs.style.display = 'none'; return; }}
-  var html = '';
-  scriptData.forEach(function(s, i) {{
-    html += '<div class="script-tab' + (i === 0 ? ' active' : '') + '" onclick="showScript(' + i + ')">' + esc(s.filename.replace('.fountain', '')) + '</div>';
+var scripts=D.scripts||[], curS=0;
+function renderTabs() {{
+  var el=document.getElementById('s-tabs');
+  if (!scripts.length) {{ el.style.display='none'; return; }}
+  el.innerHTML=scripts.map(function(s,i) {{
+    return '<div class="s-tab'+(i===0?' on':'')+'" data-idx="'+i+'">'+esc(s.filename.replace('.fountain',''))+'</div>';
+  }}).join('');
+  el.addEventListener('click', function(e) {{
+    var tab=e.target.closest('[data-idx]');
+    if (tab) {{
+      curS=parseInt(tab.getAttribute('data-idx'),10);
+      el.querySelectorAll('.s-tab').forEach(function(t,i){{t.classList.toggle('on',i===curS);}});
+      renderScript();
+    }}
   }});
-  tabs.innerHTML = html;
+}}
+function renderScript() {{
+  var el=document.getElementById('sp-wrap');
+  if (!scripts.length) {{ el.innerHTML='<div class="empty" style="color:#888"><h3>No script files yet</h3></div>'; return; }}
+  el.innerHTML=buildPages(parseFountain(scripts[curS].content));
 }}
 
-function showScript(idx) {{
-  currentScript = idx;
-  document.querySelectorAll('.script-tab').forEach(function(t, i) {{ t.classList.toggle('active', i === idx); }});
-  renderCurrentScript();
-}}
-
-function renderCurrentScript() {{
-  var wrap = document.getElementById('screenplay-wrap');
-  if (!scriptData.length) {{
-    wrap.innerHTML = '<div class="empty" style="color:#888"><h3>No script files yet</h3></div>';
-    return;
-  }}
-  var s = scriptData[currentScript];
-  wrap.innerHTML = renderFountain(parseFountain(s.content));
-}}
-
-document.addEventListener('DOMContentLoaded', function() {{
-  renderBeats(); renderCharacters(); renderOutlines();
-  renderScriptTabs(); renderCurrentScript();
-  showSection('overview');
+window.addEventListener('DOMContentLoaded', function() {{
+  // Hide all sections first
+  SECS.forEach(function(s) {{
+    var el=document.getElementById('sec-'+s);
+    if (el) el.style.display='none';
+  }});
+  renderBeats();
+  renderCharacters();
+  renderOutlines();
+  renderTabs();
+  renderScript();
+  show('overview');
 }});
 </script>
 </body>

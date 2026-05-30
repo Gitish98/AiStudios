@@ -2,404 +2,389 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Flipped — AiStudios</title>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;-webkit-text-size-adjust:100%}
 :root{
-  --navy:#0f0f1a;--navy2:#1a1a2e;--navy3:#252540;--accent:#6c6cff;
+  --navy:#0f0f1a;--navy2:#1a1a2e;--accent:#6c6cff;
   --text:#e8e8f4;--muted:#8888aa;
-  --sidebar-w:260px;--bottom-nav-h:64px;
+  --sidebar-w:260px;--bnav-h:60px;
 }
-html{scroll-behavior:smooth}
-body{font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;background:var(--navy);color:var(--text);min-height:100vh;display:flex;overflow-x:hidden}
-#sidebar{width:var(--sidebar-w);min-width:var(--sidebar-w);background:var(--navy2);display:flex;flex-direction:column;height:100vh;position:sticky;top:0;overflow-y:auto;z-index:100;border-right:1px solid rgba(255,255,255,0.05)}
+body{font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;background:var(--navy);color:var(--text);display:flex;min-height:100%;-webkit-overflow-scrolling:touch}
+
+/* ── SIDEBAR (desktop only) ── */
+#sidebar{width:var(--sidebar-w);min-width:var(--sidebar-w);background:var(--navy2);display:flex;flex-direction:column;height:100vh;position:sticky;top:0;overflow-y:auto;border-right:1px solid rgba(255,255,255,0.05)}
 .brand{padding:24px 20px 20px;border-bottom:1px solid rgba(255,255,255,0.07)}
-.brand-label{font-size:10px;font-weight:700;letter-spacing:0.15em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
+.brand-label{font-size:10px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
 .brand-title{font-size:17px;font-weight:700;color:#fff;line-height:1.3;margin-bottom:10px}
 .badges{display:flex;gap:6px;flex-wrap:wrap}
-.badge{font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;padding:3px 8px;border-radius:20px}
-.badge-genre{background:rgba(108,108,255,0.2);color:#9898ff}
-.badge-status{background:rgba(80,200,120,0.15);color:#60cc88}
+.bdg{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:3px 8px;border-radius:20px}
+.bdg-g{background:rgba(108,108,255,.2);color:#9898ff}
+.bdg-s{background:rgba(80,200,120,.15);color:#60cc88}
 #sidebar nav{padding:16px 12px;flex:1}
-.nav-section{font-size:10px;font-weight:700;letter-spacing:0.13em;text-transform:uppercase;color:rgba(255,255,255,0.25);padding:12px 10px 6px}
-.nav-link{display:flex;align-items:center;gap:10px;color:var(--muted);text-decoration:none;padding:10px 12px;border-radius:8px;font-size:14px;font-weight:500;margin-bottom:2px;transition:all 0.15s;cursor:pointer;border:none;background:none;width:100%;text-align:left}
-.nav-link:hover,.nav-link.active{background:rgba(108,108,255,0.15);color:#c0c0ff}
-.sidebar-footer{padding:16px 20px;border-top:1px solid rgba(255,255,255,0.07);font-size:11px;color:rgba(255,255,255,0.2)}
-#main{flex:1;display:flex;flex-direction:column;min-height:100vh;overflow-x:hidden}
-.section{display:none;flex:1;padding:32px 36px;max-width:860px;width:100%;margin:0 auto}
-.section.active{display:block}
-.section-title{font-size:13px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:var(--muted);margin-bottom:20px}
-.logline-card{background:linear-gradient(135deg,#1e1e3a 0%,#252550 100%);border:1px solid rgba(108,108,255,0.2);border-radius:16px;padding:32px;margin-bottom:24px}
-.logline-label{font-size:10px;font-weight:700;letter-spacing:0.15em;text-transform:uppercase;color:#6c6cff;margin-bottom:14px}
-.logline-text{font-size:18px;line-height:1.7;color:#e0e0f8;font-style:italic;font-weight:400}
-.meta-row{display:flex;gap:12px;flex-wrap:wrap;margin-top:20px}
-.meta-chip{background:rgba(255,255,255,0.06);border-radius:8px;padding:8px 14px;font-size:13px;color:var(--muted)}
-.meta-chip strong{color:var(--text);font-weight:600}
+.nav-sec{font-size:10px;font-weight:700;letter-spacing:.13em;text-transform:uppercase;color:rgba(255,255,255,.25);padding:12px 10px 6px}
+.nav-btn{display:block;width:100%;text-align:left;background:none;border:none;color:var(--muted);padding:10px 12px;border-radius:8px;font-size:14px;font-weight:500;margin-bottom:2px;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:background .15s,color .15s}
+.nav-btn:hover,.nav-btn.on{background:rgba(108,108,255,.15);color:#c0c0ff}
+.sb-foot{padding:16px 20px;border-top:1px solid rgba(255,255,255,.07);font-size:11px;color:rgba(255,255,255,.2)}
+
+/* ── MAIN ── */
+#main{flex:1;overflow-x:hidden}
+/* ALL sections hidden by default via JS — no CSS display:none to avoid iOS conflicts */
+
+/* ── SECTION WRAPPERS ── */
+.sec{padding:28px 32px;max-width:860px;margin:0 auto}
+.sec-title{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-bottom:18px}
+
+/* ── LOGLINE ── */
+.logline-card{background:linear-gradient(135deg,#1e1e3a,#252550);border:1px solid rgba(108,108,255,.2);border-radius:16px;padding:28px 32px;margin-bottom:20px}
+.ll-label{font-size:10px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:#6c6cff;margin-bottom:12px}
+.ll-text{font-size:17px;line-height:1.75;color:#e0e0f8;font-style:italic}
+.meta-row{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}
+.meta-chip{background:rgba(255,255,255,.06);border-radius:8px;padding:7px 13px;font-size:13px;color:var(--muted)}
+.meta-chip strong{color:var(--text)}
+
+/* ── BEATS ── */
 .beats-list{display:flex;flex-direction:column;gap:10px}
-.beat-card{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:18px 20px;border-left:3px solid #6c6cff}
-.beat-header{display:flex;align-items:baseline;gap:10px;margin-bottom:8px}
-.beat-num{font-size:11px;font-weight:700;color:#6c6cff;letter-spacing:0.1em;min-width:24px}
-.beat-name{font-size:14px;font-weight:700;color:#d0d0f0;text-transform:uppercase;letter-spacing:0.05em}
-.beat-pages{font-size:11px;color:var(--muted);margin-left:auto}
-.beat-text{font-size:14px;line-height:1.65;color:#aaaacc}
-.char-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}
-.char-card{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:20px;cursor:pointer;transition:all 0.15s}
-.char-card:hover{background:rgba(108,108,255,0.1);border-color:rgba(108,108,255,0.3)}
-.char-name{font-size:16px;font-weight:700;color:#fff;margin-bottom:4px}
-.char-role{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:#6c6cff;margin-bottom:12px}
-.char-snippet{font-size:13px;line-height:1.6;color:#9090b8}
-.char-drawer{display:none;background:rgba(15,15,30,0.6);border:1px solid rgba(108,108,255,0.2);border-radius:12px;padding:24px;margin-top:10px;font-size:14px;line-height:1.7;color:#c0c0e0;grid-column:1/-1}
+.beat-card{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:16px 18px;border-left:3px solid #6c6cff}
+.beat-hdr{display:flex;align-items:baseline;gap:10px;margin-bottom:7px}
+.beat-n{font-size:11px;font-weight:700;color:#6c6cff;min-width:22px}
+.beat-nm{font-size:13px;font-weight:700;color:#d0d0f0;text-transform:uppercase;letter-spacing:.05em}
+.beat-pg{font-size:11px;color:var(--muted);margin-left:auto}
+.beat-txt{font-size:13px;line-height:1.6;color:#aaaacc}
+
+/* ── CHARACTERS ── */
+.char-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:12px}
+.char-card{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:18px;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:background .15s}
+.char-card:active{background:rgba(108,108,255,.12)}
+.char-name{font-size:15px;font-weight:700;color:#fff;margin-bottom:4px}
+.char-role{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.1em;color:#6c6cff;margin-bottom:10px}
+.char-snip{font-size:13px;line-height:1.55;color:#9090b8}
+.char-drawer{display:none;background:rgba(10,10,26,.7);border:1px solid rgba(108,108,255,.2);border-radius:12px;padding:20px;margin-top:8px;font-size:13px;line-height:1.7;color:#c0c0e0;grid-column:1/-1}
 .char-drawer.open{display:block}
-.char-drawer h3{color:#e0e0ff;font-size:15px;margin:16px 0 6px}
-.outline-block{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:24px 28px;margin-bottom:16px}
-.outline-filename{font-size:11px;color:var(--muted);margin-bottom:14px;letter-spacing:0.08em;text-transform:uppercase}
-.outline-body{font-size:14px;line-height:1.75;color:#b0b0d0}
-.outline-body strong{color:#e0e0ff}
-#section-script{padding:0;max-width:100%}
-.script-header{padding:20px 32px 14px;border-bottom:1px solid rgba(255,255,255,0.07)}
-.script-tabs{display:flex;gap:8px;overflow-x:auto;padding:12px 32px;border-bottom:1px solid rgba(255,255,255,0.07)}
-.script-tab{flex-shrink:0;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:20px;padding:6px 16px;font-size:13px;color:var(--muted);cursor:pointer;transition:all 0.15s;white-space:nowrap}
-.script-tab.active{background:#6c6cff;color:#fff;border-color:#6c6cff}
-.screenplay-wrap{background:#2a2a2a;padding:32px 24px;min-height:calc(100vh - 120px)}
-.screenplay-page{background:#f5f4f0;margin:0 auto 28px;padding:72px 72px 96px 96px;max-width:680px;position:relative;box-shadow:0 4px 32px rgba(0,0,0,0.6);font-family:'Courier New',Courier,monospace;font-size:12pt;line-height:1.7;color:#111}
-.page-num{position:absolute;top:48px;right:60px;font-size:12pt;color:#333;font-family:'Courier New',Courier,monospace}
-.sp-heading{font-weight:bold;text-transform:uppercase;margin-top:1.4em;margin-bottom:0}
-.sp-action{margin:0}
-.sp-blank{height:1.7em}
-.sp-char{margin-top:1.4em;margin-bottom:0;padding-left:200px;text-transform:uppercase}
-.sp-dialogue{padding-left:100px;padding-right:80px;margin:0}
-.sp-paren{padding-left:148px;padding-right:100px;margin:0;color:#444}
-.sp-transition{text-align:right;margin-top:1em;margin-bottom:0}
-.empty{text-align:center;padding:60px 24px;color:var(--muted)}
-.empty h3{font-size:17px;color:#5a5a7a;margin-bottom:8px}
-.empty code{background:rgba(255,255,255,0.07);padding:2px 6px;border-radius:4px;font-size:13px}
-#bottom-nav{display:none;position:fixed;bottom:0;left:0;right:0;height:var(--bottom-nav-h);background:rgba(15,15,30,0.96);border-top:1px solid rgba(255,255,255,0.1);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);z-index:200;padding:0 8px;padding-bottom:env(safe-area-inset-bottom)}
-.bnav-inner{display:flex;height:100%;align-items:center;justify-content:space-around}
-.bnav-btn{display:flex;flex-direction:column;align-items:center;gap:3px;color:var(--muted);background:none;border:none;padding:8px 10px;border-radius:10px;cursor:pointer;transition:all 0.15s;font-size:10px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;min-width:52px}
-.bnav-btn.active{color:#6c6cff}
+.char-drawer h3{color:#e0e0ff;font-size:14px;margin:14px 0 5px}
+
+/* ── OUTLINES ── */
+.out-block{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:22px 26px;margin-bottom:14px}
+.out-fn{font-size:11px;color:var(--muted);margin-bottom:12px;letter-spacing:.08em;text-transform:uppercase}
+.out-body{font-size:13px;line-height:1.75;color:#b0b0d0}
+.out-body strong{color:#e0e0ff}
+
+/* ── SCREENPLAY (WGA) ── */
+.script-nav{padding:16px 20px;border-bottom:1px solid rgba(255,255,255,.07);display:flex;align-items:center;gap:8px}
+.script-nav .sec-title{margin-bottom:0}
+.s-tabs{display:flex;gap:8px;overflow-x:auto;-webkit-overflow-scrolling:touch;padding:10px 20px;border-bottom:1px solid rgba(255,255,255,.07)}
+.s-tab{flex-shrink:0;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:20px;padding:6px 16px;font-size:13px;color:var(--muted);cursor:pointer;-webkit-tap-highlight-color:transparent;white-space:nowrap;transition:all .15s}
+.s-tab.on{background:#6c6cff;color:#fff;border-color:#6c6cff}
+.sp-wrap{background:#222;padding:24px 16px;min-height:60vh;-webkit-overflow-scrolling:touch}
+.sp-page{background:#f5f4f0;margin:0 auto 24px;padding:64px 64px 80px 88px;max-width:660px;position:relative;box-shadow:0 4px 28px rgba(0,0,0,.6);font-family:'Courier New',Courier,monospace;font-size:12pt;line-height:1.7;color:#111;word-wrap:break-word}
+.pg-num{position:absolute;top:40px;right:52px;font-size:12pt;color:#444;font-family:'Courier New',Courier,monospace}
+/* WGA element styles */
+.sp-h{font-weight:700;text-transform:uppercase;margin:1.3em 0 0}
+.sp-a{margin:0}
+.sp-b{height:1.7em}
+.sp-c{margin:1.2em 0 0;padding-left:192px;text-transform:uppercase}
+.sp-d{padding-left:96px;padding-right:72px;margin:0}
+.sp-p{padding-left:144px;padding-right:96px;margin:0;color:#444}
+.sp-t{text-align:right;margin:1em 0 0}
+
+/* ── EMPTY ── */
+.empty{text-align:center;padding:48px 20px;color:var(--muted)}
+.empty h3{font-size:16px;color:#5a5a7a;margin-bottom:8px}
+.empty code{background:rgba(255,255,255,.07);padding:2px 6px;border-radius:4px;font-size:12px}
+
+/* ── BOTTOM NAV (mobile) ── */
+#bnav{display:none;position:fixed;bottom:0;left:0;right:0;z-index:999;background:rgba(10,10,26,.97);border-top:1px solid rgba(255,255,255,.1)}
+.bnav-inner{display:flex;align-items:stretch;justify-content:space-around;padding-bottom:env(safe-area-inset-bottom,0px)}
+.bnav-btn{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;background:none;border:none;color:var(--muted);padding:10px 4px;cursor:pointer;-webkit-tap-highlight-color:transparent;font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;min-height:var(--bnav-h)}
+.bnav-btn svg{width:20px;height:20px;flex-shrink:0}
+.bnav-btn.on{color:#6c6cff}
+.bnav-btn.on svg *{stroke:#6c6cff}
+
+/* ── RESPONSIVE ── */
 @media(max-width:768px){
   #sidebar{display:none}
-  #bottom-nav{display:flex}
-  #main{padding-bottom:var(--bottom-nav-h)}
-  .section{padding:20px 16px}
-  #section-script{padding:0}
-  .script-header{padding:16px 16px 12px}
-  .script-tabs{padding:10px 16px}
+  #bnav{display:flex}
+  #main{padding-bottom:calc(var(--bnav-h) + env(safe-area-inset-bottom,0px))}
+  .sec{padding:20px 16px}
   .char-grid{grid-template-columns:1fr}
-  .logline-text{font-size:16px}
-  .screenplay-wrap{padding:16px 0}
-  .screenplay-page{padding:44px 20px 56px 36px;font-size:10pt;box-shadow:0 2px 16px rgba(0,0,0,0.5)}
-  .sp-char{padding-left:110px}
-  .sp-dialogue{padding-left:56px;padding-right:36px}
-  .sp-paren{padding-left:84px;padding-right:50px}
-  .page-num{top:24px;right:16px;font-size:10pt}
+  .ll-text{font-size:15px}
+  .sp-wrap{padding:16px 0}
+  .sp-page{padding:40px 18px 52px 30px;font-size:10.5pt;max-width:100%}
+  .sp-c{padding-left:120px}
+  .sp-d{padding-left:56px;padding-right:32px}
+  .sp-p{padding-left:84px;padding-right:48px}
+  .pg-num{top:20px;right:14px;font-size:10pt}
 }
 </style>
 </head>
 <body>
+
 <div id="sidebar">
   <div class="brand">
     <div class="brand-label">AiStudios</div>
     <div class="brand-title">Flipped</div>
     <div class="badges">
-      <span class="badge badge-genre">thriller</span>
-      <span class="badge badge-status">draft</span>
+      <span class="bdg bdg-g">thriller</span>
+      <span class="bdg bdg-s">draft</span>
     </div>
   </div>
   <nav>
-    <div class="nav-section">Navigate</div>
-    <button class="nav-link active" onclick="showSection('overview')">&#9632; Overview</button>
-    <button class="nav-link" onclick="showSection('beats')">&#9776; Beat Sheet</button>
-    <button class="nav-link" onclick="showSection('characters')">&#9786; Characters</button>
-    <button class="nav-link" onclick="showSection('outlines')">&#9741; Outlines</button>
-    <button class="nav-link" onclick="showSection('script')">&#9998; Script</button>
+    <div class="nav-sec">Navigate</div>
+    <button class="nav-btn" data-sec="overview">Overview</button>
+    <button class="nav-btn" data-sec="beats">Beat Sheet</button>
+    <button class="nav-btn" data-sec="characters">Characters</button>
+    <button class="nav-btn" data-sec="outlines">Outlines</button>
+    <button class="nav-btn" data-sec="script">Script</button>
   </nav>
-  <div class="sidebar-footer">AiStudios &middot; Screenplay Toolkit</div>
+  <div class="sb-foot">AiStudios &middot; Screenplay Toolkit</div>
 </div>
+
 <div id="main">
-  <div id="section-overview" class="section active">
-    <div class="section-title">Project Overview</div>
-    <div class="logline-card">
-      <div class="logline-label">Logline</div>
-      <div class="logline-text">A self-proclaimed psychological guru with a massive following is quietly engineering the mental collapse of his patients — until one woman realizes the cure was always the poison.</div>
-      <div class="meta-row">
-        <div class="meta-chip"><strong>Genre</strong>&nbsp;&nbsp;Thriller</div>
-        <div class="meta-chip"><strong>Status</strong>&nbsp;&nbsp;Draft</div>
-        <div class="meta-chip"><strong>Author</strong>&nbsp;&nbsp;Nader Nassereddine</div>
+
+  <div id="sec-overview">
+    <div class="sec">
+      <div class="sec-title">Project Overview</div>
+      <div class="logline-card">
+        <div class="ll-label">Logline</div>
+        <div class="ll-text">A self-proclaimed psychological guru with a massive following is quietly engineering the mental collapse of his patients — until one woman realizes the cure was always the poison.</div>
+        <div class="meta-row">
+          <div class="meta-chip"><strong>Genre</strong>&nbsp; Thriller</div>
+          <div class="meta-chip"><strong>Status</strong>&nbsp; Draft</div>
+          <div class="meta-chip"><strong>Author</strong>&nbsp; Nader Nassereddine</div>
+        </div>
       </div>
     </div>
   </div>
-  <div id="section-beats" class="section">
-    <div class="section-title">Beat Sheet</div>
-    <div id="beats-content" class="beats-list"></div>
+
+  <div id="sec-beats">
+    <div class="sec">
+      <div class="sec-title">Beat Sheet</div>
+      <div id="beats-content" class="beats-list"></div>
+    </div>
   </div>
-  <div id="section-characters" class="section">
-    <div class="section-title">Characters</div>
-    <div id="characters-content" class="char-grid"></div>
+
+  <div id="sec-characters">
+    <div class="sec">
+      <div class="sec-title">Characters</div>
+      <div id="characters-content" class="char-grid"></div>
+    </div>
   </div>
-  <div id="section-outlines" class="section">
-    <div class="section-title">Outlines &amp; Notes</div>
-    <div id="outlines-content"></div>
+
+  <div id="sec-outlines">
+    <div class="sec">
+      <div class="sec-title">Outlines &amp; Notes</div>
+      <div id="outlines-content"></div>
+    </div>
   </div>
-  <div id="section-script" class="section" style="padding:0;max-width:100%">
-    <div class="script-header"><div class="section-title" style="margin-bottom:0">Script</div></div>
-    <div class="script-tabs" id="script-tabs"></div>
-    <div class="screenplay-wrap" id="screenplay-wrap"></div>
+
+  <div id="sec-script">
+    <div class="script-nav"><div class="sec-title">Script</div></div>
+    <div class="s-tabs" id="s-tabs"></div>
+    <div class="sp-wrap" id="sp-wrap"></div>
   </div>
+
 </div>
-<div id="bottom-nav">
+
+<div id="bnav">
   <div class="bnav-inner">
-    <button class="bnav-btn active" onclick="showSection('overview')">
-      <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+    <button class="bnav-btn" data-sec="overview">
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
       Info
     </button>
-    <button class="bnav-btn" onclick="showSection('beats')">
-      <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><polyline points="3 6 4 7 6 5"/><polyline points="3 12 4 13 6 11"/><polyline points="3 18 4 19 6 17"/></svg>
+    <button class="bnav-btn" data-sec="beats">
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><polyline points="3 6 4 7 6 5"/><polyline points="3 12 4 13 6 11"/><polyline points="3 18 4 19 6 17"/></svg>
       Beats
     </button>
-    <button class="bnav-btn" onclick="showSection('characters')">
-      <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+    <button class="bnav-btn" data-sec="characters">
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
       Cast
     </button>
-    <button class="bnav-btn" onclick="showSection('outlines')">
-      <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+    <button class="bnav-btn" data-sec="outlines">
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
       Notes
     </button>
-    <button class="bnav-btn" onclick="showSection('script')">
-      <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+    <button class="bnav-btn" data-sec="script">
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
       Script
     </button>
   </div>
 </div>
+
 <script>
 var D = {"project": {"name": "flipped", "title": "Flipped", "genre": "thriller", "logline": "A self-proclaimed psychological guru with a massive following is quietly engineering the mental collapse of his patients — until one woman realizes the cure was always the poison.", "author": "Nader Nassereddine", "status": "draft", "created_at": "2026-05-29T01:03:59.300490", "updated_at": "2026-05-29T01:03:59.300500"}, "characters": [{"filename": "carol_whitmore.md", "content": "# Character: CAROL WHITMORE\n\n**Role:** Supporting — the cost of inaction made human\n**Age:** 47\n**Appearance:** The kind of person who was probably warm and easy-laughing once. Still tries to be. The effort is visible now.\n\n---\n\n## VOICE\n\nCarol speaks with the particular cadence of someone repeating language they've been given — McGee's phrases have migrated into her daily speech. She says things like *\"I'm still in the process\"* and *\"the resistance is information\"* the way a person recites a prayer: not thinking about the words, only the feeling of saying them.\n\n**Sample line:**\n*\"I know it's hard to understand if you're not as far along as I am. Brian says that's normal. The people closest to us are often the most threatened by our growth.\"*\n\n---\n\n## FUNCTION IN THE STORY\n\nCarol is not a victim in a simple sense — she is a devotee, and her devotion is genuine. She loves what McGee's framework has given her: a language for her pain, a community, a sense of forward motion. That none of it is real does not make her experience of it less real.\n\nShe is the answer to the question: *what does McGee's method look like at full completion?*\n\nShe is also the reason Nadia cannot stay in analyst mode. Watching Carol use the language of healing to describe symptoms of collapse is the moment the film stops being intellectual and becomes personal.\n\n---\n\n## BACKSTORY\n\nCarol came to McGee three years ago after a divorce. She was functional, if unhappy. She is now fully embedded in his ecosystem — intensive sessions twice a week, volunteer work for his foundation, a small group of friends who are all McGee patients. Her adult daughter has stopped calling.\n\n---\n\n## ARC\n\nCarol's arc is largely offscreen — we see her in two scenes, and the distance between them is the arc. In the first she is troubled but present. By the time of her hospitalization she has been moved entirely inside the framework.\n\nWhether she recovers after the film ends is deliberately unresolved.\n"}, {"filename": "dr_brian_mcgee.md", "content": "# Character: DR. BRIAN McGEE\n\n**Role:** Antagonist / Subject\n**Age:** 52\n**Appearance:** Silver-templed, lean, dressed in the specific way that says *I don't need to impress you* while impressing you — open collar, good watch, nothing that reads as wealth until you look twice.\n\n---\n\n## VOICE\n\nMcGee speaks in the cadence of someone who has given ten thousand hours of therapy: unhurried, curious, with the slight forward lean of a man who finds you genuinely fascinating. He never finishes a sentence you're emotionally invested in — he lets the silence do it. He asks questions he already knows the answers to. He uses your own words back at you, slightly reframed, until you believe the reframe was yours.\n\n**Sample line:**\n*\"I'm not here to fix you. I never was. I'm here to help you stop being afraid of the version of yourself you've been hiding.\"*\n\n*(What sounds like liberation is a leash.)*\n\n---\n\n## WANT vs. NEED\n\n- **Want:** Control — specifically, the particular control of being the most important person in every room, confirmed daily by people who would not survive without him.\n- **Need:** To be genuinely known — which he cannot allow, because being known would require vulnerability, which he long ago decided was a form of death.\n\n---\n\n## FLAW\n\nMcGee cannot distinguish between understanding someone and owning them. In his mind, these are the same act. When he reads a patient accurately — names their fear, reflects their wound — he experiences it as possession. Not maliciously. This is simply what intimacy means to him.\n\n---\n\n## BACKSTORY *(the 20% the audience never sees)*\n\nMcGee grew up the eldest of five children in a household governed by an emotionally volatile mother and an absent father. He became, by necessity, the family's emotional regulator — reading his mother's moods, managing his siblings' fear, translating chaos into survivable patterns. He was praised for this. It felt like power.\n\nHe studied psychology not to understand people but to codify what he already did instinctively. His graduate thesis was flagged by one professor for its \"troublingly instrumental\" view of therapeutic relationships. McGee charmed the professor into giving him an A.\n\nHe has never been in therapy himself. He considers this a point of pride.\n\n---\n\n## THE METHOD *(what he actually does)*\n\nMcGee's system — which he calls **Integrative Reality Therapy** in his books — is a six-phase protocol that, examined structurally, is a textbook dependency loop:\n\n1. **Excavation** — Deep intake designed to find the patient's core wound and primary fear\n2. **Validation amplification** — Reflecting the wound back with such precision that the patient feels profoundly understood for the first time\n3. **Reframe seeding** — Introducing subtle cognitive reframes that shift attribution of the wound toward the patient's own choices (internalized blame)\n4. **Hope rationing** — Giving relief in controlled doses — never enough to stabilize, always enough to return\n5. **Isolation scaffolding** — Positioning the therapeutic relationship as uniquely safe while subtly eroding trust in external relationships\n6. **Dependency lock** — The patient cannot imagine recovering without McGee; they are not getting worse, they believe — they are simply \"still in the process\"\n\nAt scale, across millions of podcast listeners absorbing the same framework: it is a mass psychological event.\n\n---\n\n## ARC\n\nMcGee does not arc in the conventional sense. He does not change. This is the point.\n\nWhat changes is the audience's perception of him — from trusted expert to something they don't have an easy word for. The horror of McGee is not that he escalates into villainy. It's that he is exactly the same person at the end of the film as he is at the beginning. We just finally see him in full light.\n\n---\n\n## WHAT MAKES HIM THE MOST DANGEROUS PERSON IN THE ROOM\n\n1. **He is always the most emotionally intelligent person present** — which means he sees the threat before it articulates itself\n2. **His sincerity is genuine** — there is no performance to catch; he has no tell because he believes his own story completely\n3. **He has already built the counter-narrative** — before you move against him, he has positioned you as the unstable one\n4. **His victims defend him** — the people he has harmed most are also his most loyal advocates, because he has made their loyalty a condition of their identity\n5. **He operates at scale** — one confrontation cannot stop a $200-million machine with 40 million listeners\n\n---\n\n## CONTRADICTIONS\n\n- He is genuinely kind to strangers — waiters, assistants, people who can give him nothing. The cruelty is specific to the therapeutic relationship.\n- He believes deeply in the transformative power of honesty while building his entire method on concealment.\n- He is lonely in a way he has never named and will never name, surrounded always by people who need him.\n"}, {"filename": "nadia_osei.md", "content": "# Character: NADIA OSEI\n\n**Role:** Protagonist\n**Age:** 34\n**Appearance:** Sharp, economical — someone who moves through the world taking up exactly the space she intends to and no more. She dresses practically, not plainly. Her stillness reads to some people as coldness. It is actually attention.\n\n---\n\n## VOICE\n\nNadia speaks in complete sentences and waits for you to finish yours. She asks clarifying questions rather than interpretive ones — she wants data, not impressions. In emotional situations she becomes quieter, not louder. This is sometimes mistaken for detachment. It is how she processes.\n\n**Sample line:**\n*\"I'm not saying you're lying. I'm saying there's a gap between what you're describing and what I'm observing, and I'd like to understand it.\"*\n\n---\n\n## WANT vs. NEED\n\n- **Want:** To expose McGee — to make what he is doing visible, legible, and stoppable before Carol or someone else like her doesn't survive.\n- **Need:** To stop using her brother's death as a debt she owes the world. She cannot save Marcus. She can only decide what she does next.\n\n---\n\n## FLAW\n\nNadia trusts her analysis over her instincts, which means she sometimes waits for certainty when action was what was needed. She was doing this when Marcus died — gathering information, watching for patterns, not wanting to overreact. She has never said this out loud to anyone.\n\n---\n\n## BACKSTORY\n\nNadia completed a master's degree in behavioral psychology before pivoting to data analytics — she found the clinical world \"too comfortable with ambiguity.\" She and her brother Marcus were close in the specific way of two people who grew up as each other's primary emotional support. When he died, she didn't fall apart. She built a spreadsheet of everything she remembered him saying in the last year. Looking for the pattern she missed.\n\nShe found a name in his journal: a therapist in McGee's extended referral network.\n\nShe enrolled in McGee's practice telling herself it was research. She is not fully honest with herself about how much of it is grief.\n\n---\n\n## RELATIONSHIPS\n\n- **Marcus (deceased):** The engine under everything. She is not grieving in sessions with McGee — she is investigating. But the grief is real, and McGee finds it immediately.\n- **Carol:** The patient whose deterioration galvanizes Nadia from analyst to actor. Carol is what Nadia could become if she let the process continue. Carol is also, in some way, a version of Marcus — someone she might still be in time to reach.\n- **McGee:** The most complicated relationship in the film. Nadia understands him better than anyone has. This means she also, on some level, can see what he needed to become this. She does not forgive it. But she sees it.\n\n---\n\n## ARC\n\nNadia begins the film as an observer with a hypothesis. She ends it as someone who chose to act — imperfectly, without a guaranteed outcome, without waiting until she was certain. That is her change. She does something before she knows if it will work.\n\n---\n\n## CONTRADICTIONS\n\n- She is in genuine pain and refuses to let McGee help her with it — even though, tactically, letting him in would give her better intelligence.\n- She is more comfortable dismantling McGee's system than sitting with the question of why she is the one who needed to do it.\n- She does not consider herself brave. She is doing this because the alternative is living with having seen it and done nothing. She calls that calculation, not courage.\n"}], "outlines": [{"filename": "beat_sheet.md", "content": "# Flipped — Beat Sheet (Save the Cat)\n**Genre:** Psychological Thriller (Short Film — ~22 pages)\n**Logline:** America's most trusted therapist has built an empire on healing — but his methods are a precise system of psychological warfare, and the one patient sharp enough to see through it is also the most dangerous person he's ever put in a chair.\n\n---\n\n## THE 15 BEATS\n\n---\n\n### 1. OPENING IMAGE (p. 1)\nA sea of faces — tears, relief, nodding heads — watching Dr. Brian McGee command a stage. He is warm, certain, magnetic. A standing ovation. The camera holds on one face in the crowd that isn't clapping: **NADIA OSEI**, 34, still, watching him like she's reading a document rather than witnessing a performance.\n\n*Establishes: the world McGee has built, and the one person in it who sees it differently.*\n\n---\n\n### 2. THEME STATED (p. 2)\nMcGee, backstage after the seminar, to his assistant: *\"People don't want to be fixed. They want to feel like someone finally understands how broken they are.\"*\n\nHe means it as a compliment to his work. It is also his entire method, spoken aloud without shame.\n\n*The theme: the most dangerous manipulation is the kind that feels like love.*\n\n---\n\n### 3. SET-UP (pp. 2–5)\nWe meet Nadia six weeks earlier, arriving at McGee's private practice for her first session. She lost her younger brother to suicide eight months ago. She's been referred by three different people — McGee's reach is that wide. His office is designed to feel like safety: warm light, no sharp edges, a soft hum of ambient sound.\n\nMcGee runs his initial intake. He is exceptional at this — reading her, reflecting her pain back to her with surgical precision. Nadia is smart and guarded, but grief has left a gap in the armor.\n\nWe also establish the world around McGee: his podcast, his book *You Were Always Whole*, his inner circle of \"graduate patients\" who now work as his unpaid evangelists.\n\n---\n\n### 4. CATALYST (p. 6)\nDuring their third session, Nadia — who holds a master's degree in behavioral psychology, a detail she hasn't shared with McGee — recognizes a specific technique he uses: **strategic negative reframing**. He's not helping her process her brother's death. He's subtly attributing blame to her. Incrementally. Session by session.\n\nShe goes home and pulls her old textbooks.\n\n---\n\n### 5. DEBATE (pp. 7–8)\nNadia debates whether she's seeing what she thinks she's seeing. Maybe she's projecting. Maybe grief is distorting her read. She attends a support group for his patients — all of them devoted, all of them worse than they were a year ago, none of them able to see it.\n\nOne woman, **CAROL**, mentions she's been having thoughts she's never had before. She calls them \"gifts from the process.\" Nadia recognizes them as ideation.\n\nThe debate ends. This is real.\n\n---\n\n### 6. BREAK INTO TWO (p. 9)\nNadia makes a decision: she won't quit. She won't report him — she has no hard evidence, and McGee has lawyers, loyalists, and a public persona worth hundreds of millions of dollars. Instead, she goes back into the chair.\n\nBut this time she takes notes.\n\n---\n\n### 7. B STORY (pp. 9–11)\nThe B story lives inside McGee himself. Brief scenes — almost clinical — reveal his private self: the practiced laugh he runs through before sessions, the spreadsheet where he tracks patient \"dependency metrics,\" a phone call with a pharmaceutical partner. He is not a monster who doesn't know what he's doing. He knows exactly what he's doing.\n\nOne scene: he watches a video of himself on stage and genuinely admires it. He believes he is providing something real. That is what makes him dangerous.\n\n---\n\n### 8. FUN AND GAMES (pp. 11–15)\nThe promise of the premise fully delivered: Nadia plays the patient while dissecting the therapist.\n\nA series of sessions, each more revealing than the last:\n- She begins mirroring his techniques back at him — feeding him the emotional responses he's engineered to need\n- She discovers his intake forms contain questions designed to identify the most isolated, most suggestible patients — they get escalated to \"intensive care\" (more sessions, higher fees, deeper dependency)\n- She finds Carol has been moved to intensive care\n\nThe audience sees both levels simultaneously: what McGee thinks is happening, and what is actually happening. It is almost darkly comic — except Carol is real, and getting worse.\n\n---\n\n### 9. MIDPOINT (p. 15)\nFalse victory: Nadia has enough to confront him. She does — obliquely, in session, describing \"a hypothetical patient\" whose therapist she suspects of misconduct. She watches McGee's face.\n\nHe doesn't flinch. He smiles, and turns the hypothetical back on her. *\"What does it mean to you that you're protecting this imaginary patient instead of yourself?\"*\n\nHe knows. He's known for a while. And he isn't afraid of her.\n\nThe stakes double: this isn't just about evidence. He will preemptively destroy her credibility if she moves against him. He has the playbook for that too.\n\n---\n\n### 10. BAD GUYS CLOSE IN (pp. 16–17)\nMcGee activates his network. A smear begins quietly — former patients (loyal ones, broken ones) start posting about a \"disturbed woman\" in his practice spreading paranoid accusations. Nadia's employer gets an anonymous letter questioning her mental stability. Her intake forms, reframed, paint her as a delusional, grief-consumed woman with a vendetta against the man trying to help her.\n\nHe is turning his methods on her at scale.\n\n---\n\n### 11. ALL IS LOST (p. 18)\nCarol attempts suicide. She survives — but barely. When Nadia tries to reach her, Carol's family tells her to stay away. McGee has already been there, already positioned himself as the one trying to save Carol from \"outside interference.\"\n\nNadia sits in her car outside Carol's hospital and understands the full picture: she has no evidence that would survive a legal challenge, no allies who haven't already been turned, and a man with infinite resources who is now actively hunting her credibility.\n\nShe has one session left before he will almost certainly terminate her as a patient and complete the smear.\n\n---\n\n### 12. DARK NIGHT OF THE SOUL (p. 18–19)\nNadia almost walks away. She pulls up her brother's last text messages. Reads them. She has wondered for eight months whether she missed the signs. She now understands: he was seeing a therapist in McGee's extended network.\n\nThis was never just about her.\n\n---\n\n### 13. BREAK INTO THREE (p. 19)\nShe walks into the final session with one thing McGee doesn't know she has: a recording of Carol — made weeks earlier, with consent — describing the specific techniques, the specific language, the specific sequence of sessions. Not a legal case. Something more immediate.\n\nShe's going to make him say it out loud.\n\n---\n\n### 14. FINALE (pp. 20–22)\nThe final session. Two people who both know what is happening, neither acknowledging it.\n\nNadia walks McGee — through careful, precise, mirrored use of his own techniques — into articulating his philosophy without the euphemisms. She reflects his language back to him, escalates his certainty, feeds his need to be understood by someone truly intelligent.\n\nAnd he gives it to her. Not a confession — something more damning. A thesis. *\"Stability is a lie people tell themselves. My patients are more alive in their instability than they ever were before.\"*\n\nShe stops the recording on her phone. Sets it on the table between them.\n\nMcGee looks at it. Looks at her. The warmth drains from his face — and for the first time, we see what lives underneath it.\n\nShe stands, picks up the phone, and walks out.\n\n*What she does with the recording is not shown. That's not the story.*\n\n---\n\n### 15. FINAL IMAGE (p. 22)\nMcGee sits alone in his office. Same warm light, same ambient hum. He straightens his jacket. Picks up his phone. Dials.\n\n*\"Clear my afternoon,\"* he says. *\"I need to make some calls.\"*\n\nHe is already building the next move. He will not be stopped by this. The machine is too large.\n\nBut the camera stays on his face — and for just a moment, before the mask returns, we see it: not fear. Something smaller. The faint, unfamiliar outline of being known.\n\n*FADE TO BLACK.*\n\n**FLIPPED**\n\n---\n\n## STRUCTURAL NOTES\n\n- **Runtime target:** 20–25 minutes\n- **Locations:** McGee's office (primary), seminar hall (opening), Nadia's apartment, hospital exterior\n- **Core tension engine:** Two intelligent people in the same room, each running a strategy the other can partially see\n- **Tonal reference:** *The Conversation* (Coppola) meets *Nightcrawler* — clinical dread, not jump scares\n- **What makes McGee the most dangerous person in the room:** He is not a villain who hates his victims. He genuinely believes he is providing something valuable. His self-deception is total and reinforced by success. There is no appeal to conscience because his conscience is clean.\n"}, {"filename": "loglines.md", "content": "# Flipped — Logline Variations\n\n---\n\n**VARIATION 1 — The Victim's Perspective (Recommended)**\nWhen a grieving mother enrolls in Dr. Brian McGee's celebrated recovery program, she slowly realizes his methods aren't healing her — they're systematically dismantling her — and that millions of Americans are paying him to be broken.\n\n*Angle: Ground-level. Personal stakes. The audience discovers the fraud as she does.*\n\n---\n\n**VARIATION 2 — The Reckoning**\nAmerica's most trusted therapist has built a $200-million empire teaching people how to heal — but one patient, a former cognitive scientist, recognizes his techniques as a precise system of psychological warfare, and decides the only way to stop him is to use his methods against him.\n\n*Angle: Puts the power shift front and center. Sets up the \"flip\" explicitly.*\n\n---\n\n**VARIATION 3 — The Monster in Plain Sight**\nDr. Brian McGee has 40 million podcast listeners, three bestselling books, and a waiting list of desperate patients — and every single one of them is being quietly engineered toward their darkest moment, because a destabilized patient is a loyal one.\n\n*Angle: Opens from McGee's side. More unsettling — positions him as the POV character.*\n\n---\n\n**VARIATION 4 — The Short Film Logline (Tight / Punchy)**\nA celebrated therapist's star patient finally understands his method: he doesn't heal people. He owns them.\n\n*Angle: Minimal. Lets the premise breathe. Best for pitch documents and festival submissions.*\n\n---\n\n**SELECTED LOGLINE FOR PROJECT:**\nAmerica's most trusted therapist has built an empire on healing — but his methods are a precise system of psychological warfare, and the one patient sharp enough to see through it is also the most dangerous person he's ever put in a chair.\n"}], "scripts": [{"filename": "flipped.fountain", "content": "Title: Flipped\nAuthor: Nader Nassereddine\nDraft date: May 2026 — Revision 3\nGenre: Psychological Thriller\nFormat: Short Film / Pilot (~38 pages)\nContact:\n\n===\n\nFADE IN:\n\n                                                      BLACK.\n\nA sound builds in the dark: applause. Not scattered —\ntotal. The kind of applause that has been waiting.\n\nThen a voice, warm and unhurried, belonging to a man who\nhas learned that silence is a gift you give an audience\nright before you take everything else.\n\nMcGEE (V.O.)\nI want to start tonight with a question.\n\nThe applause fades.\n\nMcGEE (V.O.) (CONT'D)\nWhen is the last time someone sat\nacross from you and made you feel like\nthe most important thing in the room?\n\nFADE UP SLOWLY ON:\n\nINT. ARENA - BACKSTAGE CORRIDOR - NIGHT\n\nFluorescent. Cinder block. The ugly infrastructure\nbeneath a beautiful surface.\n\nDR. BRIAN McGEE (52) moves through the corridor flanked\nby DEREK (28, his assistant, a man who has learned to\nthink ahead) and a two-person SECURITY DETAIL.\n\nOpen collar. Good watch. Nothing that reads as wealth\nuntil you look twice — which is the point.\n\nThe roar of the crowd pushes through the walls. Twelve\nthousand seats. All of them full.\n\nMcGEE\n(walking, not looking at Derek)\nOverflow?\n\nDEREK\nTwo auxiliary rooms. Screens.\nAnother four thousand.\n\nMcGee nods. Sixteen thousand people who drove here,\nflew here, took days off work, paid two hundred dollars\nfor a seat. To be in the same room as this man.\n\nDEREK (CONT'D)\nThe journalist is already on stage.\nShe wants fifteen minutes before\nyou come out.\n\nMcGEE\nShe gets ten.\n\nHe stops at a mirror on the cinder block wall. Looks\nat himself. Adjusts nothing. Walks away.\n\nThe mirror holds his reflection a beat after he's gone.\n\nCUT TO:\n\nINT. ARENA - STAGE - NIGHT\n\nThe stage is minimal. Two chairs angled toward each other\nunder a single wide wash of light. Behind them, projected\ntwenty feet high: the cover of a book.\n\n*THE UNBROKEN SELF*\n*Dr. Brian McGee*\n\nThe auditorium is full. Not a concert crowd — something\nmore serious. People who came because they needed to.\nCouples. Solitary people. People who have been crying\nbefore the event started.\n\nIn the eighth row, center: CAROL WHITMORE (47). She\nholds a copy of the book — already worn, already marked\nup — against her chest. Her face is open in the way\nfaces get when they've been hurting long enough that\nhope feels dangerous.\n\nOn stage, SARAH VANCE (41, journalist, New Yorker profile\nwriter, a woman who has interviewed everyone and is not\neasily impressed) sits in one chair, reviewing her notes.\n\nA PRODUCTION ASSISTANT counts down. Five. Four. Three.\n\nThe crowd begins to stir.\n\nMcGEE enters from stage left.\n\nThe applause is immediate and enormous.\n\nHe holds up one hand — *please* — and they settle, though\nnot all the way. He sits across from Sarah Vance. Leans\nback. Comfortable. The way you're comfortable in your\nown kitchen.\n\nMcGEE\nThank you.\n\n(to the crowd, simply)\n\nThank you for being here.\n\nSARAH VANCE\nDr. McGee. *The Unbroken Self.* You've\ndescribed this as the most personal\nthing you've written. In what sense?\n\nMcGEE\nIn the sense that every previous book\nwas a framework. A system. This one is\na confession.\n\nHe opens his hands.\n\nMcGEE (CONT'D)\nI spent twenty years telling people\nthat healing was possible. And then\nI spent five years asking myself\nwhether I believed that.\n\nSARAH VANCE\nDo you?\n\nMcGEE\nI believe in the work. I believe in\nthe conversation. Whether that constitutes\nhealing —\n\n(a small smile)\n\n— I leave to the reader.\n\nIn the eighth row, Carol writes something in the margin\nof her copy.\n\nSARAH VANCE\nThe book opens with a line I want to\nread back to you.\n\nShe finds the page.\n\nSARAH VANCE (CONT'D)\n\"The greatest damage done to the\nhuman mind is not trauma. It is the\nstory we build around the trauma to\nmake it bearable. I am in the\nbusiness of dismantling that story.\"\n\nShe looks up.\n\nSARAH VANCE (CONT'D)\nThat's a significant claim.\n\nMcGEE\nIt's an honest one.\n\nSARAH VANCE\nDismantling someone's story — their\nframework for surviving — sounds\ndestabilizing. Dangerous, even.\n\nMcGEE\nAll real change is destabilizing.\n\n(to the room now, not just to her)\n\nYou don't renovate a house without\ntearing something down first.\n\nThe audience responds. Murmurs of recognition. Nodding.\nCarol is nodding.\n\nMcGEE (CONT'D)\nThe question is whether you have\nsomeone beside you who knows what\nthey're doing when they swing\nthe hammer.\n\nA beat.\n\nMcGEE (CONT'D)\nThat's what I offer.\n\nIn the front row: a WOMAN begins to cry. Silently.\nShe doesn't seem embarrassed. She seems relieved.\n\nSARAH VANCE\nCritics of your method —\n\nMcGEE\nThere are always critics.\n\nSARAH VANCE\n— have argued that what you call\n\"dismantling the story\" is, in practice,\na process of making people dependent\non you and your framework. That the\ngoal is not to liberate patients\nbut to replace one story with another\nstory — yours.\n\nA silence. The audience waits.\n\nMcGee considers her.\n\nMcGEE\nThat's a sophisticated argument.\n\nSARAH VANCE\nIs it wrong?\n\nMcGEE\nIt would require me to be more\ninterested in my patients' attachment\nto me than in their actual progress.\n\nHe looks at the audience.\n\nMcGEE (CONT'D)\nEveryone in this room who has done\nwork with me, or with my practitioners,\nor through the podcast — I want you\nto ask yourself something.\n\nThe room is absolutely still.\n\nMcGEE (CONT'D)\nDo you feel more yourself than when\nyou started? Or less?\n\nA beat. Then applause — not all of it, but most of it.\nOrganic, genuine. Carol is clapping.\n\nSARAH VANCE\n(pressing)\nSome former patients have said\nthe opposite. That they felt —\n\nMcGEE\nSome patients leave in the middle of\na surgery and say the surgeon hurt them.\n\n(gently, before it lands too hard)\n\nI'm not dismissing those experiences.\nI'm saying that the process of\ngenuine change is uncomfortable.\nAnd discomfort can be misread.\n\nSARAH VANCE\nOr it can be discomfort.\n\nMcGEE\n(a real smile — she's good)\nYes. It can be.\n\nHe leans forward. His voice drops, just slightly — the\nmove that draws a crowd of thousands into a room of two.\n\nMcGEE (CONT'D)\nI am not perfect. The work is not\nperfect. What I can tell you is that\nI have sat across from thousands of\npeople in tremendous pain, and I have\nnot looked away once.\n\nSilence. Then the woman in the front row starts clapping\nagain and it spreads and it becomes the standing ovation\nthat was waiting.\n\nMcGee lets it build. He doesn't milk it. He simply\nreceives it, with the particular grace of a man who\nhas learned that modesty, performed correctly, is\nmore powerful than pride.\n\nWhen it settles, Sarah Vance glances at her notes.\nOne last question.\n\nSARAH VANCE\nLast question. And I'd ask you to\nanswer it simply, if you can.\n\nMcGEE\nI'll do my best.\n\nSARAH VANCE\nDr. McGee —\n\n(a beat)\n\nDo you actually help people?\n\nThe room is still.\n\nMcGee looks at her.\n\nA long beat. Then:\n\n                                        GLITCH.\n\nThe image stutters — a frame skip, a half-second of\nvisual static, something wrong in the signal.\n\nMcGEE\nNo.\n\nSimple. Quiet. Almost relieved.\n\n                                        BACK.\n\nThe image snaps clean. McGee is smiling.\n\nMcGEE (CONT'D)\nHelp is a loaded word. What I do is\ncreate conditions. What people do\nwithin those conditions — that's theirs.\n\nSarah Vance studies him for a moment.\n\nSARAH VANCE\n(to the audience)\n*The Unbroken Self* is available\ntonight. Dr. Brian McGee.\n\nThe applause returns. Final and enormous.\n\nMcGee stands. Turns to the crowd. Raises one hand —\nnot a wave. An acknowledgment. *I see you.*\n\nThe camera finds Carol in the eighth row. On her feet\nlike everyone else. Holding her book to her chest.\nEyes wet.\n\nShe has just decided something. We can see it on her face.\n\nThe decision will cost her everything.\n\nSMASH CUT TO BLACK.\n\nTITLE CARD:\n\n                        FLIPPED\n\n                                                      BLACK.\n\nThen:\n\nTITLE CARD:      SIX MONTHS LATER\n\nCUT TO:\n\nINT. McGEE'S OFFICE - DAY\n\nSESSION: CAROL WHITMORE - MONTH ONE\n\nThe office is engineered to feel like safety.\n\nWarm amber light. No overhead fluorescents. Furniture\nchosen to suggest intimacy without clinical coldness —\na deep couch, a low table, two chairs angled toward\neach other rather than facing like a confrontation.\nA white noise machine hums softly outside the door.\n\nThere are no diplomas on the wall.\n\nCarol Whitmore (47) sits across from McGee with a tissue\nin her hand she isn't using. Her posture is the posture\nof a woman who has held herself together for a long time\nand is very tired of it.\n\nShe is wearing the same sweater she wore to the book\nlaunch. The small embroidered bird. She brought the book.\nIt is in her bag.\n\nCAROL\nMy daughter thinks this is a mistake.\nComing to you.\n\nMcGEE\nTell me why she thinks that.\n\nCAROL\nShe read something online. Some forum.\nShe said —\n\n(a small laugh)\n\nShe said you're a cult.\n\nMcGEE\n(smiling)\nWhat do you think?\n\nCAROL\nI think I haven't slept through the\nnight in four years and I'm willing\nto try anything.\n\nMcGEE\nThat's not a small thing to say.\n\nCAROL\nNo. I guess it isn't.\n\nHe looks at her for a long moment. Unhurried. Present.\n\nMcGEE\nI want you to know something, Carol.\nFrom our very first session. Whatever\nwe do here — however long it takes —\nI am not going anywhere.\n\nShe looks at him.\n\nMcGEE (CONT'D)\nI am not going to get tired of you.\nI am not going to give up. I am not\ngoing to decide you're too much.\n\nHer eyes fill.\n\nMcGEE (CONT'D)\nYou are not too much.\n\nCarol Whitmore begins to cry — not performing it,\nnot managing it. Just crying, in this warm light,\nin front of this man who just said the exact thing\nno one has said to her in a very long time.\n\nHe hands her the tissue box. She takes one.\n\nWhat we see: a moment of genuine human connection.\nA woman beginning to feel safe.\n\nWhat we will later understand: this promise — *I am not\ngoing anywhere* — is one McGee has made to seventy-two\nother patients. He keeps all of them.\n\nThat is the system.\n\nCUT TO:\n\nINT. McGEE'S OFFICE - DAY\n\nSESSION: PATIENT ONE — THOMAS\n\nA different quiet. Softer, more weighted.\n\nTHOMAS (44, construction foreman, hands that have built\nthings and now don't know what to do with themselves)\nsits with his arms on his knees, looking at the floor.\nHe has been crying recently. Not now. Recently.\n\nMcGEE\nTell me about the sound.\n\nTHOMAS\nIt's like — I can't describe it.\nMetal and something else. Something\nI didn't want to know was in there.\n\nA long pause.\n\nTHOMAS (CONT'D)\nI was driving.\n\nMcGEE\nYes.\n\nTHOMAS\nI wasn't — it wasn't my fault.\nThe police said —\n\nMcGEE\nI know what the police said.\n\nHe leans in.\n\nMcGEE (CONT'D)\nWhat do you say?\n\nThomas looks up. This specific gentleness — this move —\nis what makes people feel found by McGee. He doesn't\noffer comfort. He offers witness. It is more addictive\nthan comfort.\n\nTHOMAS\nI should have seen him.\n\nMcGEE\n(quietly)\nYes.\n\nNot agreement. Not absolution. Acknowledgment.\nAnd somehow that is more powerful than either.\n\nThomas exhales.\n\nMcGEE (CONT'D)\nLet's sit with that.\n\nThey do.\n\nWhat the audience sees: a gifted man meeting another\nman in his pain.\n\nWhat we will later understand: McGee has identified the\nword *should* and filed it. He will return to it.\nHe always does.\n\nCUT TO:\n\nINT. McGEE'S OFFICE - DAY\n\nSESSION: PATIENT TWO — RENATA\n\nRENATA (31, graduate student, very thin in the particular\nway people become when anxiety is the primary caloric\nexpense) sits on the couch with her shoes off. Comfortable\nhere. Too comfortable — the comfort of a place you've\nbeen too many times.\n\nSession Thirty-One.\n\nRENATA\nBrian, I've been thinking about what\nyou said last week. About the\n\"protective architecture.\"\n\nMcGEE\nAnd?\n\nRENATA\nI can see it so clearly now. How nobody\nwas ever actually allowed in. Even —\n\nShe stops. Puts her hand over her mouth.\n\nRENATA (CONT'D)\nEven Marcus.\n\nMarcus was her fiancé. He left eight months ago.\nTwo months after she started seeing McGee.\n\nMcGEE\nEven Marcus.\n\nRENATA\nHe couldn't handle the process.\nYou said some people in our lives\naren't equipped to be with us when\nwe're changing.\n\nMcGEE\nI said people who are invested in\nour *stasis* sometimes struggle when\nwe begin to move.\n\nRENATA\nRight. Right.\n\nShe nods. She has heard this many times. It has become\nbelief the way a thing heard often enough becomes belief.\n\nWhat the audience sees: a patient finding language for\nher experience.\n\nWhat we see: Renata is using McGee's language to describe\nthe erosion of every relationship she had before him.\nShe is not growing. She is being cleared.\n\nCUT TO:\n\nINT. McGEE'S OFFICE - DAY\n\nSESSION: CAROL WHITMORE - MONTH SEVEN\n\nSame office. Different Carol.\n\nShe is here twice a week now. Has been since month four.\nSomething in her has become smaller — not in an obvious\nway. In the way a thing becomes smaller when its center\nhas been replaced with something else.\n\nCAROL\nI called Denise.\n\nHer daughter.\n\nMcGEE\nWhen?\n\nCAROL\nLast week. I just — I called her.\nShe came over. We had dinner.\nShe cooked.\n\n(a pause)\n\nIt was good, Brian. Normal good.\nLike before. I wasn't thinking about\nthe process. I was just eating.\n\nA silence. McGee looks at her.\n\nMcGEE\nAnd that felt —?\n\nCAROL\nLike something I hadn't felt in a while.\n\nMcGEE\n(carefully)\nTell me something. In that dinner —\ndid you talk about the work you've\nbeen doing here?\n\nCAROL\nShe asked. I said I was doing well.\n\nMcGEE\nYou didn't tell her about the intensive?\n\nCAROL\nShe would have made it a whole thing.\n\nMcGEE\nSo you protected the relationship\nby concealing part of yourself.\n\nCAROL\n(something shifts)\nI — what?\n\nMcGEE\nI'm not criticizing. I'm observing.\nThe work we've done here has taught\nyou to protect your process from\nexternal interference. That's growth.\n\nCAROL\nBut I wasn't protecting the process.\nI was just having dinner.\n\nMcGEE\nWere you though?\n\nShe stares at him.\n\nMcGEE (CONT'D)\nYour first instinct — when she asked —\nwas to conceal. That instinct exists\nfor a reason. It exists because this\nroom is safe.\n\nHe gestures toward the window.\n\nMcGEE (CONT'D)\nOut there, people are invested in\nyour stasis. Even the people who love you.\nEspecially them.\n\nCAROL\n(very quietly)\nThat's not — I don't think that's\nwhat happened.\n\nMcGEE\nWhat do you think happened?\n\nA long silence. She is trying to hold onto the dinner.\nThe easy feeling. Her daughter's laugh.\n\nAll of it is being slowly reclassified as threat.\n\nCAROL\n(her voice breaking)\nI think I just wanted one night\nthat was normal.\n\nMcGEE\n(so gently)\nOf course you did. That longing\nis completely understandable.\n\n(beat)\n\nAnd it's also information. About\nwhere you still are in the process.\n\nShe begins to cry. Not the soft tears of month one.\nSomething harder, from a place she didn't know was there.\n\nHe hands her the tissue box.\n\nHe watches her cry with the focus of a man reading data.\n\nCUT TO:\n\nINT. COMMUNITY CENTER - EVENING\n\nA support group. Ten chairs, nine occupied. All McGee's\npatients — various ages, various wounds — speaking with\nthe particular fluency of people given a shared vocabulary.\n\nNADIA OSEI (34) sits among them for the second time.\nStill. Watching. She takes up exactly the space she\nintends to and no more.\n\nCarol is speaking.\n\nCAROL\nI've been having these thoughts. At\nnight mostly. Really dark ones.\n\nNADIA\nWhat kind of thoughts?\n\nThe group looks at her. Nadia doesn't usually speak.\n\nCAROL\nBrian says they're part of the process.\nThe darkness is just the old self resisting.\n\nNADIA\nWhat do they feel like to you?\nOutside of what Brian says.\n\nA beat. Carol tries to locate the distinction.\n\nCAROL\n(quietly)\nScary.\n\nNADIA\nYou said scary first.\n\nA flicker — brief, like a gap between clouds — where\nCarol inhabits herself rather than the framework.\n\nThen the clouds close.\n\nCAROL\nI trust the process.\n\nShe says it the way people say *amen.*\n\nNadia writes in her notebook. One word. Underlined twice.\n\nCLOSE ON: *IDEATION.*\n\nCUT TO:\n\nINT. McGEE'S OFFICE - DAY\n\nSESSION: NADIA OSEI - SESSION THREE\n\nNadia sits across from McGee, coat still on. Her notebook\nis in her lap.\n\nMcGee has been running his intake technique — the deep\nreading, the precise reflection of her own words back\nto her, the moves that make people feel found. She has\nbeen letting him.\n\nShe is not a normal patient. McGee doesn't know this yet.\n\nMcGEE\nYou mentioned Marcus called you\nthe week before. And you didn't\ncall back right away.\n\nNADIA\nI was busy. I called him three days later.\n\nMcGEE\nMm.\n\nNADIA\nWhat?\n\nMcGEE\nNothing. I'm just —\n\n(settling back)\n\nWhat does it feel like, when you say that?\n\nNADIA\nWhat does what feel like?\n\nMcGEE\n\"I was busy.\"\n\nA beat.\n\nNadia's expression doesn't change. But something behind\nher eyes does. She is watching him with sudden, total\nattention — the way you watch something when you realize\nyou've been looking at it wrong.\n\nShe reaches for her notebook. Writes something.\n\nMcGEE (CONT'D)\n(noticing nothing)\nTake your time.\n\nNADIA\n(without looking up)\nCan we go back? You were asking\nabout the call.\n\nMcGEE\nWe can go wherever you need to go.\n\nShe looks up. Gives him just enough — just the weight\nin her eyes he needs to believe the reframe is landing.\n\nNADIA\nI think you're right. I think \"busy\"\nis a word I use when I mean something else.\n\nMcGee nods. Gently. Encouragingly.\n\nHe doesn't see her write one more word in the notebook.\n\nCLOSE ON: *TECHNIQUE. PHASE 2.*\n\nCUT TO:\n\nINT. HOSPITAL CORRIDOR - NIGHT\n\nNadia stands in a hallway smelling of antiseptic and\nrecycled air. She holds her phone with both hands.\n\nA NURSE passes. Nadia stops her.\n\nNADIA\nCarol Whitmore. She was admitted\nthis evening —\n\nNURSE\nAre you family?\n\nNADIA\nNo. I'm a friend.\n\nNURSE\nI'm sorry. Family only.\n\nThe nurse moves on. Nadia doesn't.\n\nShe stands there for a long time. Then opens her phone.\nPresses record. Holds it to her mouth.\n\nNADIA\n(recording)\nCarol Whitmore. Admitted tonight.\nEleven months in the intensive.\nShe tried to tell him it was working.\nHe told her it was resistance.\n\nShe stops recording.\n\nNADIA (CONT'D)\n(quietly, to no one)\nI should have moved faster.\n\nThrough the glass of a passing room: Carol — asleep,\na monitor blinking. Her daughter DENISE (28) sits\nbeside her holding her hand.\n\nNadia doesn't stop. She can't help here now.\n\nCUT TO:\n\nINT. COFFEE SHOP - DAY\n\nNadia and Carol. Two coffees. A corner table.\n\nCarol is out of the hospital. She looks smaller and\nalso somehow more present — as if the framework has\ncracked just enough to let her back in.\n\nNADIA\nHow are you feeling?\n\nCAROL\nStrange. Denise keeps asking me\nwhat I want for dinner.\n\n(a small laugh)\n\nI forgot I had opinions about that.\n\nNadia looks at her.\n\nNADIA\nCarol. Can I ask you something?\n\nCAROL\nYou're going to ask me to record\nsomething. Aren't you.\n\nA beat.\n\nNADIA\nYes.\n\nCAROL\n(a long pause)\nWhat would you do with it?\n\nNADIA\nI don't know exactly. But I want\nto have it. In case there's a moment\nwhere it matters.\n\nCarol wraps her hands around her coffee cup. Looks out\nthe window. A mother and child pass on the sidewalk.\n\nCAROL\nHe helped a lot of people. I believe that.\nEven now. I believe that.\n\nNADIA\nI know you do.\n\nCAROL\nIt's not like it was all bad.\n\nNADIA\nI know that too.\n\nCarol turns back.\n\nCAROL\n(quietly)\nBut the dinner.\n\nNADIA\nTell me about the dinner.\n\nCAROL\nHe took it. I had one good night\nand he took it and turned it into\nevidence that I was broken.\n\n(a beat)\n\nAnd I let him.\n\nShe says this like a woman who has just named a thing\nthat has been living in her without a name.\n\nNadia puts her phone on the table.\n\nCAROL (CONT'D)\nOkay.\n\nCUT TO:\n\nINT. McGEE'S OFFICE - DAY\n\nSESSION SIX — NADIA\n\nThis is the last one.\n\nBoth of them know it. The air in the room has a different\nquality — charged, like weather.\n\nMcGee watches Nadia the way a chess player watches a\nboard in the middle game.\n\nNADIA\nHow are you?\n\nShe never asks this. He notes it.\n\nMcGEE\nFine. You?\n\nNADIA\nClear.\n\nMcGEE\nClear is interesting. Tell me about clear.\n\nNADIA\nLike the noise gets quieter and you\ncan hear what's actually there.\n\nMcGEE\n(nodding)\nThat's the work.\n\nNADIA\nCan I try something? A thought experiment.\n\nMcGEE\nOf course.\n\nNADIA\nImagine a therapist. Brilliant. Genuinely\nskilled — the real deal. He can read\npeople faster than almost anyone.\nHe knows, within twenty minutes,\nexactly where the wound is.\n\nMcGee is very still.\n\nNADIA (CONT'D)\nAnd imagine that skill becomes the\nmethod. Not helping patients close\nthe wound — keeping it accessible.\nKeeping them in the room.\n\nMcGEE\nThis sounds like a projection exercise.\n\nNADIA\nHumor me.\n\nA beat.\n\nMcGEE\nWhat's the question?\n\nNADIA\nDoes that therapist know what he's doing?\n\nMcGee looks at her. A long, careful moment.\n\nMcGEE\nI think a person like that would have\nfound a way to believe that what they're\ndoing is serving the patient.\n\nNADIA\nServing the patient. Or serving the process?\n\nMcGEE\nIn his mind, they're the same thing.\n\nNADIA\nAnd the patients who get worse?\n\nMcGEE\n(a slight edge)\nResistance is part of any genuine process.\n\nNADIA\nEven when the resistance looks like\nsomeone losing the will to be alive?\n\nSilence.\n\nMcGEE\nWhat are you actually asking me, Nadia?\n\nShe looks at him. And then she does something that\nsurprises him — she agrees.\n\nNADIA\nYou're right. I'm dancing around it.\n\nShe reaches into her bag. Sets her phone on the table.\nSets a small recorder next to it. Old, analog.\nAnd then a photograph — printed. Carol in a hospital\nbed. Denise at her side.\n\nMcGee looks at the photograph for a long time.\n\nMcGEE\n(quietly)\nWhere did you get this?\n\nNADIA\nDenise sent it.\n\nBeat.\n\nNADIA (CONT'D)\nCarol's okay. She's out. She's with\nher daughter. She's not coming back here.\n\nMcGEE\n(measured)\nI'm glad she's —\n\nNADIA\nI know what you want.\n\nHe stops.\n\nNADIA (CONT'D)\nI know the intake metric you use to\nprioritize isolated patients. I know\nthe six phases. I know what \"intensive\ncare\" actually means in your system.\n\nShe lifts the recorder.\n\nNADIA (CONT'D)\nI have Carol on this. Eleven months,\nin her own words.\n\nMcGEE\nThat recording isn't admissible —\n\nNADIA\nI know. I'm not going to court.\n\nMcGEE\nThen what are you doing?\n\nNADIA\nFinishing a session.\n\nShe stands. Gets her coat.\n\nMcGEE\nNadia. Whatever you think you've\nuncovered — there is no version of\nthis where you win. You have one\nrecording of a grief-compromised\npatient. I have forty-three million\nlisteners and a legal team that does\nnothing else.\n\nNADIA\n(turning back)\nI know.\n\nShe buttons her coat.\n\nNADIA (CONT'D)\nI also know you're going to spend\nthe next week deciding what to do\nabout me. And while you do that,\nCarol is going to spend that week\ntalking to Denise. And Denise is\ngoing to talk to the journalist\nwho interviewed you at the book launch.\n\nMcGee says nothing.\n\nNADIA (CONT'D)\nShe's been looking for a follow-up.\n\nShe picks up the recorder and the photograph.\nLeaves the phone on the table.\n\nNADIA (CONT'D)\n(at the door)\nThe recording is a copy.\n\nShe walks out.\n\nThe door closes.\n\nCUT TO:\n\nINT. McGEE'S OFFICE - CONTINUOUS\n\nMcGee sits.\n\nThe phone on the table. Left there deliberately —\nshe wanted him to know she saw it.\n\nHe looks at the chair she sat in. The chair Thomas\nsat in. The chair Renata sat in. The chair Carol sat\nin, twice a week, for eleven months.\n\nHis face does something rare.\n\nNot fear. Not remorse. Something quieter.\n\nRecognition. The brief, unfamiliar experience of being\nseen — and not being able to perform his way out of it.\n\nFive seconds.\n\nThen it's gone.\n\nHe picks up his phone. Dials.\n\nMcGEE\nClear my week. Get me Richard.\n\n(beat)\n\nThe lawyer.\n\nHe goes to the window. Looks out.\n\nThe machine is already running.\n\nFADE TO BLACK.\n\nTITLE CARD:       FLIPPED\n\n                                                      BLACK.\n\nOne by one, in silence:\n\nTITLE CARD:\n*The book launch sold out in eleven minutes.*\n\nTITLE CARD:\n*Dr. Brian McGee's podcast reached 44 million\nlisteners the week of publication.*\n\nTITLE CARD:\n*The journalist published a follow-up six weeks later.\nIt was the most-read piece in the magazine's history.*\n\nTITLE CARD:\n*McGee's legal team issued a cease and desist\nwithin 48 hours of publication.*\n\nTITLE CARD:\n*Carol Whitmore did not return to the practice.*\n\nTITLE CARD:\n*Renata still does.*\n\nTITLE CARD:\n*There is no licensing board for\n\"Integrative Reality Therapy.\"*\n\nTITLE CARD:\n*It is not a recognized clinical method.*\n\nTITLE CARD:\n*Dr. Brian McGee's waiting list\ncurrently has a four-month lead time.*\n\nFADE OUT.\n\nTHE END\n"}]};
-var currentSection = 'overview';
+var SECS = ['overview','beats','characters','outlines','script'];
+var cur = 'overview';
 
-function showSection(id) {
-  currentSection = id;
-  document.querySelectorAll('.section').forEach(function(s) {
-    s.classList.remove('active'); s.style.display = 'none';
+function show(id) {
+  cur = id;
+  SECS.forEach(function(s) {
+    var el = document.getElementById('sec-' + s);
+    if (el) el.style.display = (s === id) ? 'block' : 'none';
   });
-  var el = document.getElementById('section-' + id);
-  if (el) { el.style.display = 'block'; el.classList.add('active'); }
-  document.querySelectorAll('.nav-link,.bnav-btn').forEach(function(b) {
-    b.classList.toggle('active', (b.getAttribute('onclick') || '').indexOf("'" + id + "'") !== -1);
+  document.querySelectorAll('.nav-btn,.bnav-btn').forEach(function(b) {
+    b.classList.toggle('on', b.getAttribute('data-sec') === id);
   });
   window.scrollTo(0, 0);
 }
 
-function esc(s) {
-  return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-}
+// Wire up all nav buttons via event delegation
+document.addEventListener('click', function(e) {
+  var btn = e.target.closest('[data-sec]');
+  if (btn) { e.preventDefault(); show(btn.getAttribute('data-sec')); }
+});
 
-function renderMarkdown(md) {
-  return (md || '')
+function esc(s) {
+  return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function md(s) {
+  return (s||'')
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-    .replace(/^#3\s+(.+)$/gm,'<strong style="color:#d0d0ff;display:block;margin-top:14px">$1</strong>')
-    .replace(/^#(1, 2)\s+(.+)$/gm,'')
+    .replace(/^#3\s+(.+)$/gm,'<strong style="color:#d0d0ff;display:block;margin-top:12px">$1</strong>')
+    .replace(/^#(1, 2)[^\n]+$/gm,'')
     .replace(/\*\*([^*]+)\*\*/g,'<strong style="color:#d0d0ff">$1</strong>')
     .replace(/\*([^*]+)\*/g,'<em>$1</em>')
-    .replace(/^---+$/gm,'<hr style="border:none;border-top:1px solid rgba(255,255,255,0.1);margin:12px 0">')
+    .replace(/^---+$/gm,'<hr style="border:none;border-top:1px solid rgba(255,255,255,.1);margin:10px 0">')
     .replace(/\n/g,'<br>');
 }
 
 function renderBeats() {
-  var outlines = D.outlines || [];
   var bf = null;
-  for (var i = 0; i < outlines.length; i++) {
-    if (outlines[i].filename.toLowerCase().indexOf('beat') !== -1) { bf = outlines[i]; break; }
-  }
+  (D.outlines||[]).forEach(function(o) { if (!bf && o.filename.toLowerCase().indexOf('beat')!==-1) bf=o; });
   var el = document.getElementById('beats-content');
-  if (!bf) {
-    el.innerHTML = '<div class="empty"><h3>No beat sheet yet</h3><p>Run: <code>python aistudios.py beats</code></p></div>';
-    return;
-  }
-  var lines = bf.content.split('\n');
-  var html = ''; var beatNum = 0;
-  var name = ''; var pages = ''; var text = [];
+  if (!bf) { el.innerHTML='<div class="empty"><h3>No beat sheet yet</h3><p>Run: <code>aistudios.py beats</code></p></div>'; return; }
+  var html='', n=0, name='', pages='', txt=[];
   function flush() {
-    if (!name) return; beatNum++;
-    html += '<div class="beat-card"><div class="beat-header"><span class="beat-num">' + beatNum + '</span><span class="beat-name">' + esc(name.replace(/^\d+\.\s*/, '')) + '</span>' + (pages ? '<span class="beat-pages">' + esc(pages) + '</span>' : '') + '</div><div class="beat-text">' + esc(text.join(' ').trim()) + '</div></div>';
+    if (!name) return; n++;
+    html+='<div class="beat-card"><div class="beat-hdr"><span class="beat-n">'+n+'</span><span class="beat-nm">'+esc(name.replace(/^\d+\.\s*/,''))+'</span>'+(pages?'<span class="beat-pg">'+esc(pages)+'</span>':'')+'</div><div class="beat-txt">'+esc(txt.join(' ').trim())+'</div></div>';
   }
-  for (var i = 0; i < lines.length; i++) {
-    var l = lines[i];
-    if (/^###\s/.test(l)) { flush(); name = l.replace(/^###\s+/, '').trim(); pages = ''; text = []; }
+  bf.content.split('\n').forEach(function(l) {
+    if (/^###\s/.test(l)) { flush(); name=l.replace(/^###\s+/,'').trim(); pages=''; txt=[]; }
     else if (name && l.trim()) {
-      var pm = l.match(/\(pp?\.?\s*([\d\s–-]+)\)/);
-      if (pm) pages = 'pp.' + pm[1].trim();
-      text.push(l.replace(/\(pp?\..*?\)/, '').trim());
+      var pm=l.match(/\(pp?\.?\s*([\d\s\u2013-]+)\)/);
+      if (pm) pages='pp.'+pm[1].trim();
+      txt.push(l.replace(/\(pp?\..*?\)/,'').trim());
     }
-  }
+  });
   flush();
-  el.innerHTML = html || '<div class="empty"><h3>Beat sheet found</h3></div>';
+  el.innerHTML = html || '<div class="empty"><h3>Beat sheet parsed</h3></div>';
 }
 
 function renderCharacters() {
-  var chars = D.characters || [];
+  var chars = D.characters||[];
   var el = document.getElementById('characters-content');
-  if (!chars.length) {
-    el.innerHTML = '<div class="empty"><h3>No characters yet</h3><p>Run: <code>python aistudios.py character</code></p></div>';
-    return;
-  }
-  var html = '';
-  chars.forEach(function(c, idx) {
-    var lines = c.content.split('\n');
-    var name = (lines[0] || '').replace(/^#+\s*(Character:\s*)?/i, '').trim() || c.filename.replace('.md', '');
-    var role = '';
-    for (var i = 0; i < Math.min(lines.length, 12); i++) {
-      var m = lines[i].match(/\*\*Role[^*]*\*\*[:\s]+(.+)/i);
-      if (m) { role = m[1].trim(); break; }
+  if (!chars.length) { el.innerHTML='<div class="empty"><h3>No characters yet</h3><p>Run: <code>aistudios.py character</code></p></div>'; return; }
+  var html='';
+  chars.forEach(function(c,i) {
+    var lines=c.content.split('\n');
+    var name=(lines[0]||'').replace(/^#+\s*(Character:\s*)?/i,'').trim()||c.filename.replace('.md','');
+    var role='';
+    for (var j=0;j<Math.min(lines.length,12);j++) {
+      var m=lines[j].match(/\*\*Role[^*]*\*\*[:\s]+(.+)/i);
+      if (m) { role=m[1].trim(); break; }
     }
-    var snippet = '';
-    for (var i = 1; i < lines.length; i++) {
-      var t = lines[i].trim();
-      if (t && !t.startsWith('#') && !t.startsWith('**') && t.length > 20) {
-        snippet = t.substring(0, 160) + (t.length > 160 ? '…' : ''); break;
-      }
+    var snip='';
+    for (var j=1;j<lines.length;j++) {
+      var t=lines[j].trim();
+      if (t&&!t.startsWith('#')&&!t.startsWith('**')&&t.length>20) { snip=t.substring(0,150)+(t.length>150?'…':''); break; }
     }
-    html += '<div class="char-card" onclick="toggleChar(' + idx + ')">';
-    html += '<div class="char-name">' + esc(name) + '</div>';
-    if (role) html += '<div class="char-role">' + esc(role) + '</div>';
-    html += '<div class="char-snippet">' + esc(snippet) + '</div></div>';
-    html += '<div class="char-drawer" id="char-drawer-' + idx + '">' + renderMarkdown(c.content) + '</div>';
+    html+='<div class="char-card" data-char="'+i+'"><div class="char-name">'+esc(name)+'</div>'+(role?'<div class="char-role">'+esc(role)+'</div>':'')+'<div class="char-snip">'+esc(snip)+'</div></div>';
+    html+='<div class="char-drawer" id="cd-'+i+'">'+md(c.content)+'</div>';
   });
-  el.innerHTML = html;
-}
-
-function toggleChar(idx) {
-  var d = document.getElementById('char-drawer-' + idx);
-  if (d) d.classList.toggle('open');
+  el.innerHTML=html;
+  el.addEventListener('click', function(e) {
+    var card=e.target.closest('[data-char]');
+    if (card) {
+      var d=document.getElementById('cd-'+card.getAttribute('data-char'));
+      if (d) d.classList.toggle('open');
+    }
+  });
 }
 
 function renderOutlines() {
-  var outlines = D.outlines || [];
-  var el = document.getElementById('outlines-content');
-  var nonBeats = outlines.filter(function(o) { return o.filename.toLowerCase().indexOf('beat') === -1; });
-  if (!nonBeats.length) {
-    el.innerHTML = '<div class="empty"><h3>No outlines yet</h3><p>Run: <code>python aistudios.py outline</code></p></div>';
-    return;
-  }
-  var html = '';
-  nonBeats.forEach(function(o) {
-    html += '<div class="outline-block"><div class="outline-filename">' + esc(o.filename) + '</div>';
-    html += '<div class="outline-body">' + renderMarkdown(o.content) + '</div></div>';
-  });
-  el.innerHTML = html;
+  var el=document.getElementById('outlines-content');
+  var nb=(D.outlines||[]).filter(function(o){return o.filename.toLowerCase().indexOf('beat')===-1;});
+  if (!nb.length) { el.innerHTML='<div class="empty"><h3>No outlines yet</h3><p>Run: <code>aistudios.py outline</code></p></div>'; return; }
+  el.innerHTML=nb.map(function(o){return '<div class="out-block"><div class="out-fn">'+esc(o.filename)+'</div><div class="out-body">'+md(o.content)+'</div></div>';}).join('');
 }
 
 function parseFountain(raw) {
-  var text = raw;
-  var eqIdx = text.indexOf('\n===\n');
-  if (eqIdx !== -1) text = text.substring(eqIdx + 5);
-  var lines = text.split('\n');
-  var els = []; var prevBlank = true; var inDlg = false;
-  for (var i = 0; i < lines.length; i++) {
-    var t = lines[i].trim();
-    if (!t) {
-      if (els.length && els[els.length - 1].type !== 'blank') els.push({type:'blank'});
-      prevBlank = true; inDlg = false; continue;
+  var text=raw, idx=text.indexOf('\n===\n');
+  if (idx!==-1) text=text.substring(idx+5);
+  var lines=text.split('\n'), els=[], pb=true, dlg=false;
+  for (var i=0;i<lines.length;i++) {
+    var t=lines[i].trim();
+    if (!t) { if (els.length&&els[els.length-1].type!=='b') els.push({type:'b'}); pb=true; dlg=false; continue; }
+    if (t==='==='||t==='---') { els.push({type:'pb'}); pb=true; dlg=false; continue; }
+    if (/^(FADE IN:|FADE OUT|FADE TO BLACK|CUT TO:|SMASH CUT|MATCH CUT|TITLE CARD:)/i.test(t)) { els.push({type:'tr',v:t}); pb=false; dlg=false; continue; }
+    if (/^(INT\b|EXT\b|INT\.?\/EXT\.|I\/E\.)/i.test(t)) { els.push({type:'h',v:t.toUpperCase()}); pb=false; dlg=false; continue; }
+    if (/^\(.*\)$/.test(t)) { els.push({type:'p',v:t}); pb=false; continue; }
+    if (pb&&t===t.toUpperCase()&&/[A-Z]/.test(t)&&t.length<52&&!/[.!?,]$/.test(t)&&!/^(INT\b|EXT\b)/.test(t)) {
+      var nxt=''; for (var j=i+1;j<lines.length;j++) { if (lines[j].trim()) {nxt=lines[j].trim();break;} }
+      if (nxt&&!/^(INT\b|EXT\b)/i.test(nxt)&&!/^(FADE|CUT TO)/i.test(nxt)) { els.push({type:'c',v:t}); pb=false; dlg=true; continue; }
     }
-    if (t === '===' || t === '---') {
-      els.push({type:'pagebreak'}); prevBlank = true; inDlg = false; continue;
-    }
-    if (/^(FADE IN:|FADE OUT|FADE TO BLACK|CUT TO:|SMASH CUT|MATCH CUT|TITLE CARD:)/i.test(t)) {
-      els.push({type:'transition', content:t}); prevBlank = false; inDlg = false; continue;
-    }
-    if (/^(INT\b|EXT\b|INT\.?\/EXT\.|I\/E\.)/i.test(t)) {
-      els.push({type:'heading', content:t.toUpperCase()}); prevBlank = false; inDlg = false; continue;
-    }
-    if (/^\(.*\)$/.test(t)) {
-      els.push({type:'paren', content:t}); prevBlank = false; continue;
-    }
-    if (prevBlank && t === t.toUpperCase() && /[A-Z]/.test(t) && t.length < 52 && !/[.!?,]$/.test(t) && !/^(INT\b|EXT\b)/.test(t)) {
-      var nxt = '';
-      for (var j = i + 1; j < lines.length; j++) { if (lines[j].trim()) { nxt = lines[j].trim(); break; } }
-      if (nxt && !/^(INT\b|EXT\b)/i.test(nxt) && !/^(FADE|CUT TO)/i.test(nxt)) {
-        els.push({type:'char', content:t}); prevBlank = false; inDlg = true; continue;
-      }
-    }
-    if (inDlg && !/^(INT\b|EXT\b)/i.test(t)) {
-      els.push({type:'dialogue', content:t}); prevBlank = false; continue;
-    }
-    els.push({type:'action', content:t}); prevBlank = false; inDlg = false;
+    if (dlg&&!/^(INT\b|EXT\b)/i.test(t)) { els.push({type:'d',v:t}); pb=false; continue; }
+    els.push({type:'a',v:t}); pb=false; dlg=false;
   }
   return els;
 }
-
-function fmtInline(s) {
-  return esc(s).replace(/\*([^*]+)\*/g,'<em>$1</em>').replace(/_([^_]+)_/g,'<em>$1</em>');
-}
-
-function renderFountain(elements) {
-  var pages = []; var pageLines = 0; var pageNum = 1;
-  var cur = '<div class="screenplay-page"><div class="page-num">' + pageNum + '.</div>';
-
-  function newPage() {
-    cur += '</div>';
-    pages.push(cur);
-    pageNum++;
-    pageLines = 0;
-    cur = '<div class="screenplay-page"><div class="page-num">' + pageNum + '.</div>';
-  }
-
-  function add(html, cost) {
-    pageLines += cost;
-    if (pageLines > 54 && cost > 0) newPage();
-    cur += html;
-  }
-
-  for (var i = 0; i < elements.length; i++) {
-    var el = elements[i];
-    switch (el.type) {
-      case 'blank': add('<div class="sp-blank"></div>', 1); break;
-      case 'pagebreak': newPage(); break;
-      case 'heading': add('<div class="sp-heading">' + esc(el.content) + '</div>', 2); break;
-      case 'action': add('<div class="sp-action">' + fmtInline(el.content) + '</div>', 1); break;
-      case 'char': add('<div class="sp-char">' + esc(el.content) + '</div>', 1); break;
-      case 'dialogue': add('<div class="sp-dialogue">' + fmtInline(el.content) + '</div>', 1); break;
-      case 'paren': add('<div class="sp-paren">' + esc(el.content) + '</div>', 1); break;
-      case 'transition': add('<div class="sp-transition">' + esc(el.content) + '</div>', 1); break;
+function fi(s) { return esc(s).replace(/\*([^*]+)\*/g,'<em>$1</em>').replace(/_([^_]+)_/g,'<em>$1</em>'); }
+function buildPages(els) {
+  var pages=[], lines=0, pn=1;
+  var cur='<div class="sp-page"><div class="pg-num">'+pn+'.</div>';
+  function np() { cur+='</div>'; pages.push(cur); pn++; lines=0; cur='<div class="sp-page"><div class="pg-num">'+pn+'.</div>'; }
+  function add(h,c) { lines+=c; if(lines>52&&c>0) np(); cur+=h; }
+  els.forEach(function(e) {
+    switch(e.type) {
+      case 'b':  add('<div class="sp-b"></div>',1); break;
+      case 'pb': np(); break;
+      case 'h':  add('<div class="sp-h">'+esc(e.v)+'</div>',2); break;
+      case 'a':  add('<div class="sp-a">'+fi(e.v)+'</div>',1); break;
+      case 'c':  add('<div class="sp-c">'+esc(e.v)+'</div>',1); break;
+      case 'd':  add('<div class="sp-d">'+fi(e.v)+'</div>',1); break;
+      case 'p':  add('<div class="sp-p">'+esc(e.v)+'</div>',1); break;
+      case 'tr': add('<div class="sp-t">'+esc(e.v)+'</div>',1); break;
     }
-  }
-  cur += '</div>';
-  pages.push(cur);
+  });
+  cur+='</div>'; pages.push(cur);
   return pages.join('');
 }
 
-var scriptData = D.scripts || [];
-var currentScript = 0;
-
-function renderScriptTabs() {
-  var tabs = document.getElementById('script-tabs');
-  if (!scriptData.length) { tabs.style.display = 'none'; return; }
-  var html = '';
-  scriptData.forEach(function(s, i) {
-    html += '<div class="script-tab' + (i === 0 ? ' active' : '') + '" onclick="showScript(' + i + ')">' + esc(s.filename.replace('.fountain', '')) + '</div>';
+var scripts=D.scripts||[], curS=0;
+function renderTabs() {
+  var el=document.getElementById('s-tabs');
+  if (!scripts.length) { el.style.display='none'; return; }
+  el.innerHTML=scripts.map(function(s,i) {
+    return '<div class="s-tab'+(i===0?' on':'')+'" data-idx="'+i+'">'+esc(s.filename.replace('.fountain',''))+'</div>';
+  }).join('');
+  el.addEventListener('click', function(e) {
+    var tab=e.target.closest('[data-idx]');
+    if (tab) {
+      curS=parseInt(tab.getAttribute('data-idx'),10);
+      el.querySelectorAll('.s-tab').forEach(function(t,i){t.classList.toggle('on',i===curS);});
+      renderScript();
+    }
   });
-  tabs.innerHTML = html;
+}
+function renderScript() {
+  var el=document.getElementById('sp-wrap');
+  if (!scripts.length) { el.innerHTML='<div class="empty" style="color:#888"><h3>No script files yet</h3></div>'; return; }
+  el.innerHTML=buildPages(parseFountain(scripts[curS].content));
 }
 
-function showScript(idx) {
-  currentScript = idx;
-  document.querySelectorAll('.script-tab').forEach(function(t, i) { t.classList.toggle('active', i === idx); });
-  renderCurrentScript();
-}
-
-function renderCurrentScript() {
-  var wrap = document.getElementById('screenplay-wrap');
-  if (!scriptData.length) {
-    wrap.innerHTML = '<div class="empty" style="color:#888"><h3>No script files yet</h3></div>';
-    return;
-  }
-  var s = scriptData[currentScript];
-  wrap.innerHTML = renderFountain(parseFountain(s.content));
-}
-
-document.addEventListener('DOMContentLoaded', function() {
-  renderBeats(); renderCharacters(); renderOutlines();
-  renderScriptTabs(); renderCurrentScript();
-  showSection('overview');
+window.addEventListener('DOMContentLoaded', function() {
+  // Hide all sections first
+  SECS.forEach(function(s) {
+    var el=document.getElementById('sec-'+s);
+    if (el) el.style.display='none';
+  });
+  renderBeats();
+  renderCharacters();
+  renderOutlines();
+  renderTabs();
+  renderScript();
+  show('overview');
 });
 </script>
 </body>
