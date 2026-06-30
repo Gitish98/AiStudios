@@ -150,6 +150,10 @@ def cmd_run_cycle(args, dry_run=False):
     print(f"  Rejected : {len(summary['rejected'])}")
     for r in summary["rejected"]:
         print(f"    ✗ {r['underlying']} {r['strategy']}: {'; '.join(r['reasons'])}")
+    if summary.get("vetoed"):
+        print(f"  Vetoed by advisor : {len(summary['vetoed'])}")
+        for v in summary["vetoed"]:
+            print(f"    ⊘ {v['underlying']} {v['strategy']}: {v['thesis'][:80]}")
     if summary["skipped_duplicates"]:
         print(f"  Skipped (already placed today): {len(summary['skipped_duplicates'])}")
     if summary.get("kill_switch"):

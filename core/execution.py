@@ -63,8 +63,15 @@ def run_cycle(
     config,
     asof: Optional[str] = None,
     dry_run: bool = False,
+    advisor: Optional[Any] = None,
 ) -> dict[str, Any]:
-    """Run one full paper cycle. Returns a summary dict for the CLI to print."""
+    """Run one full paper cycle. Returns a summary dict for the CLI to print.
+
+    `advisor` is the optional reasoning layer (agent.advisor.Advisor). It is
+    READ-ONLY and VETO-ONLY: it runs AFTER the deterministic gate approves a
+    candidate and can only DROP it (or lower its size) — never add a trade or
+    bypass the gate. Disabled by default; opt-in via config `reasoning.enabled`
+    + an ANTHROPIC_API_KEY."""
     asof = asof or datetime.now(timezone.utc).date().isoformat()
     ts = _now_iso()
     limits = RiskLimits.from_config(config.risk)
@@ -163,6 +170,17 @@ def run_cycle(
     except Exception:
         data_hub = None
 
+    # Reasoning layer (opt-in, veto-only). Built only if enabled + a key exists;
+    # otherwise None -> the cycle behaves exactly as before. Any failure to
+    # construct degrades to None (no advisor, no behavior change).
+    if advisor is None and _reasoning_enabled(config):
+        try:
+            from agent.advisor import Advisor
+            advisor = Advisor()
+        except Exception:
+            advisor = None
+    research_cache: dict[str, Any] = {}
+
     seen_ids: set = set()   # idempotency within this cycle (covers dry-run too)
     for symbol in config.watchlist:
         try:
@@ -224,6 +242,21 @@ def run_cycle(
                          "reasons": decision.reasons})
                     continue
 
+                # ADVISOR VETO (opt-in, reduce-only). Runs ONLY on gate-approved
+                # candidates and can ONLY drop them. The advisor never places an
+                # order — placement still happens below, in deterministic code.
+                if advisor is not None:
+                    ann = _advisor_review(advisor, order, symbol, data_hub, research_cache)
+                    store.append(_now_iso(), "advisor", {
+                        "client_order_id": order.client_order_id, "keep": ann["keep"],
+                        "allocation_mult": ann["allocation_mult"],
+                        "thesis": ann["thesis"][:300]})
+                    if not ann["keep"]:
+                        summary.setdefault("vetoed", []).append({
+                            "underlying": order.underlying, "strategy": order.strategy,
+                            "thesis": ann["thesis"]})
+                        continue
+
                 if dry_run:
                     opened_today += 1
                     _synthesize_position(order)  # so caps accumulate in dry-run too
@@ -273,6 +306,38 @@ def run_cycle(
         "placed": len(summary["placed"]), "rejected": len(summary["rejected"]),
         "reconcile_ok": rec["ok"]})
     return summary
+
+
+def _reasoning_enabled(config) -> bool:
+    import os
+    r = (config.raw.get("reasoning", {}) if hasattr(config, "raw") else {}) or {}
+    return bool(r.get("enabled", False)) and bool(os.environ.get("ANTHROPIC_API_KEY"))
+
+
+def _advisor_review(advisor, order, symbol, data_hub, research_cache) -> dict:
+    """Run the veto-only advisor on ONE gate-approved candidate. Fails safe to a
+    keep=pass-through annotation if anything goes wrong."""
+    try:
+        if symbol not in research_cache:
+            if data_hub is not None:
+                from .data.research import build_research_brief
+                research_cache[symbol] = build_research_brief(symbol, data_hub)
+            else:
+                research_cache[symbol] = None
+        candidate = {
+            "client_order_id": order.client_order_id, "underlying": order.underlying,
+            "strategy": order.strategy, "rationale": order.rationale,
+            "max_loss": order.max_loss, "est_credit": order.est_credit,
+        }
+        anns = advisor.annotate([candidate], research_cache[symbol])
+        if anns and isinstance(anns[0], dict):
+            a = anns[0]
+            return {"keep": bool(a.get("keep", True)),
+                    "allocation_mult": float(a.get("allocation_mult", 1.0)),
+                    "thesis": str(a.get("thesis", ""))}
+    except Exception:
+        pass
+    return {"keep": True, "allocation_mult": 1.0, "thesis": ""}
 
 
 def _atm_iv_from_chain(chain, spot: float):

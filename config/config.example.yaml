@@ -42,6 +42,14 @@ brokers:
   ibkr_port: 4002                # IB Gateway PAPER (live=4001; TWS paper=7497)
   ibkr_client_id: 7
 
+# ── Reasoning layer (Claude advisor — VETO-ONLY) ─────────────────────────────
+# When enabled AND an ANTHROPIC_API_KEY is set, Claude reviews each gate-APPROVED
+# trade and may only DROP it (never add one, never raise size, never bypass the
+# gate). Disabled by default; the deterministic gate is always the real boundary.
+# See docs/12-reasoning-layer.md.
+reasoning:
+  enabled: false
+
 # ── Market calendar ──────────────────────────────────────────────────────────
 market:
   # When true, run-cycle skips weekends/holidays (NYSE via pandas-market-calendars
