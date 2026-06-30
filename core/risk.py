@@ -5,9 +5,11 @@ Every order passes through `RiskGate.evaluate` before it can reach a broker. No
 LLM touches this file's decisions. A rejection is final. The gate fails CLOSED:
 any error or missing data => reject, never approve.
 
-Phase 0 enforces (per docs/05-risk-and-safety.md):
+Enforces (per docs/05-risk-and-safety.md):
   - kill switch
-  - paper-only (live orders are rejected outright in Phase 0)
+  - paper is the default; LIVE is reachable ONLY via the five-gate go-live path
+    (core.golive). When live, this gate adds the ramp notional/position caps as
+    HARD limits and fails CLOSED if no ramp cap is present.
   - options approval level ceiling
   - defined-risk-only (no undefined/naked short options)
   - per-trade risk %, per-position notional %
@@ -62,6 +64,11 @@ class RiskContext:
     daily_pnl: float = 0.0  # realized+unrealized today, dollars (negative = loss)
     options_approval_level: int = 3
     region: str = "US"      # "US" -> FINRA PDT applies; "CA" -> no PDT (IBKR Canada)
+    # LIVE ramp caps (None on paper). When live, the gate enforces these as HARD
+    # additional limits and fails CLOSED if they are absent — a live run with no
+    # ramp cap is rejected. Populated from core.golive.live_ramp_caps().
+    live_ramp_max_notional: Optional[float] = None
+    live_ramp_max_positions: Optional[int] = None
 
 
 @dataclass
@@ -89,14 +96,31 @@ class RiskGate:
             return d.reject("No account/equity available — fail closed.")
 
         equity = ctx.account.equity
+        notional = _notional(order)  # capital footprint; reused by the caps below
 
         # 1. Kill switch.
         if ctx.kill_switch:
             return d.reject("Kill switch is ENGAGED — all orders rejected until cleared.")
 
-        # 2. Paper-only in Phase 0.
+        # 2. LIVE mode: permitted ONLY through the five-gate go-live ramp, and ONLY
+        # with a binding ramp cap. The broker factory is the construction chokepoint
+        # (a live adapter is built ONLY when core.golive.GoLiveGate passes); here the
+        # gate adds the ramp notional/position caps as HARD additional limits. Fail
+        # CLOSED: a live run with no ramp cap is rejected outright.
         if not ctx.is_paper:
-            return d.reject("Live trading is not permitted in Phase 0 (paper only).")
+            if not ctx.live_ramp_max_notional or ctx.live_ramp_max_notional <= 0:
+                return d.reject(
+                    "LIVE order without an active ramp cap — fail closed "
+                    "(live requires go_live.ramp_tier >= 1 and the five-gate go-live path).")
+            if notional > ctx.live_ramp_max_notional + 1e-6:
+                d.reject(
+                    f"LIVE ramp cap: position notional ${notional:.0f} exceeds tier "
+                    f"cap ${ctx.live_ramp_max_notional:.0f}.")
+            if (ctx.live_ramp_max_positions is not None
+                    and len(ctx.positions) >= ctx.live_ramp_max_positions):
+                d.reject(
+                    f"LIVE ramp cap: at tier max {ctx.live_ramp_max_positions} "
+                    "concurrent positions.")
 
         # 3. Daily loss limit -> trips kill switch.
         if ctx.daily_pnl <= -abs(L.daily_loss_limit_pct) * equity:
@@ -120,7 +144,7 @@ class RiskGate:
             d.reject("Short-premium order has no defined max_loss — rejected (fail closed).")
 
         # 6. Per-trade risk.
-        risk_dollars = order.max_loss if order.max_loss > 0 else _notional(order)
+        risk_dollars = order.max_loss if order.max_loss > 0 else notional
         if risk_dollars > L.per_trade_risk_pct * equity + 1e-6:
             d.reject(
                 f"Per-trade risk ${risk_dollars:.0f} exceeds "
@@ -128,7 +152,6 @@ class RiskGate:
             )
 
         # 7. Per-position notional.
-        notional = _notional(order)
         if notional > L.per_position_notional_pct * equity + 1e-6:
             d.reject(
                 f"Position notional ${notional:.0f} exceeds "

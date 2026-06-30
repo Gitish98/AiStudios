@@ -78,6 +78,26 @@ Going live is not a switch from $0 to full size. It is a **staged ramp** with ex
 
 The ramp tier is a config value the **human** edits. The system reads it; it never promotes itself. A single guardrail breach (any KILL event, any reconcile mismatch) **resets the clean-day counter to zero.**
 
+### 1.4 The implementation (`core/golive.py`) — what's wired, and which gates are real boundaries
+
+The five gates above are implemented for **IBKR** in `core.golive.GoLiveGate`, which evaluates all five and is fail-closed (any missing/unreadable/ambiguous condition → not live). The broker factory (`core/brokers/factory.py`) is the **single construction chokepoint**: a live adapter is built *only* when the gate passes; otherwise the system stays paper, loudly, and itemizes what's missing — it **never masquerades a paper adapter as live** (if the gates pass but no live Gateway answers, it stays paper). The risk gate (`core/risk.py`) then enforces the ramp tier's notional/position caps as **hard additional limits**, and fails closed on a live run with no ramp cap.
+
+Concrete mapping (the abstract table in §1.2 was Alpaca-era; this is the shipped IBKR form):
+
+| # | Abstract gate | IBKR implementation | Enforced in |
+|---|---|---|---|
+| 1 | env/mode flag | `mode: live` in `config/config.yaml` | `GoLiveGate._check_mode` |
+| 2 | separate live credential | live IB **Gateway on a live port** (4001/7496), distinct from the paper port; the adapter refuses `paper=False` against a paper port | `GoLiveGate._check_live_endpoint` + `IBKRAdapter.__init__` |
+| 3 | dated enable-file | `~/.aistudios/LIVE_ENABLED`, first line = today's date | `GoLiveGate._check_live_enabled_file` |
+| 4 | per-session confirmation | `cli.py go-live` reads `CONFIRM LIVE <today>` from the operator's **TTY** (refuses if stdin isn't a terminal); persists the dated phrase so same-day cron runs don't re-prompt, stale at the date rollover | `cli.py go_live` + `GoLiveGate._check_confirmation` |
+| 5 | size ramp | `go_live.ramp_tier ≥ 1`; the risk gate clamps notional/positions to that tier | `GoLiveGate._check_ramp_tier` + `RiskGate` |
+
+**Which are TRUE security boundaries vs. UX (be honest):**
+- **Gate 4 is the strongest boundary.** It is interactive, date-bound, and read from the operator's terminal — *never* a CLI argument or model text — so a compromised/automated LLM cannot supply it. `go-paper` stands live back down instantly.
+- **Gates 3 and 2 are strong:** an out-of-band dated filesystem write and a live-authenticated Gateway on a live port are human/broker actions the **runtime advisor LLM has no tool for** (it is read-only, sandboxed — `agent/advisor.py`).
+- **Gates 1 and 5 are config the human owns** — intent signals, weaker as *standalone* boundaries. Their value is defense-in-depth: live needs **all five at once**.
+- **Honest caveat on the threat model:** "an LLM has no tool for this" is true of the *runtime advisor*. A *developer-grade coding agent* with shell/filesystem access (like the one that built this) could in principle write the file or edit config — which is exactly why gate 4's human-typed, terminal-only confirmation is the linchpin, and why **live remains untested until the operator runs it by hand** on a real live Gateway.
+
 ---
 
 ## 2. Hard guardrails (deterministic, pre-trade)

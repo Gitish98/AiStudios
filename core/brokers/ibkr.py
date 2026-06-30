@@ -148,6 +148,9 @@ class IBKRAdapter(BrokerAdapter):
             )
         self.host, self.port, self.client_id = host, port, client_id
         self._paper = paper
+        # Be honest in the banner/journal about which endpoint this is. A live
+        # adapter MUST NOT report "ibkr_paper".
+        self.name = "ibkr_paper" if paper else "ibkr_live"
         self.region = region
         self.timeout = timeout
         self._ib = None  # set on connect()

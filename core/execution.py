@@ -122,6 +122,12 @@ def run_cycle(
     region = str(config.account.get("region", "US")).upper()
     size_params = SizeParams.from_config(config)
 
+    # LIVE ramp caps (None on paper). When the adapter is live, the risk gate
+    # enforces these as hard additional limits and fails closed if absent.
+    from .golive import live_ramp_caps
+    live_max_notional, live_max_positions = (
+        live_ramp_caps(config) if not adapter.is_paper else (None, None))
+
     def _ctx() -> RiskContext:
         return RiskContext(
             account=account, positions=positions, is_paper=adapter.is_paper,
@@ -129,6 +135,8 @@ def run_cycle(
             day_trades_trailing_5=account.pdt_day_trade_count,
             daily_pnl=daily_pnl, options_approval_level=options_level,
             region=region,
+            live_ramp_max_notional=live_max_notional,
+            live_ramp_max_positions=live_max_positions,
         )
 
     def _synthesize_position(order) -> None:

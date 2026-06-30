@@ -99,7 +99,8 @@ is *reading*, not operating.
 | `python cli.py dashboard` | (Optional) Rebuild `dashboard/out/dashboard.html` — one self-contained file. The HTML is a nice-to-have; `status` already tells you everything on a phone. |
 | `python cli.py reconcile` | Force a broker-truth diff right now. |
 | `python cli.py kill` | **Panic button.** Flip the kill switch — the gate rejects everything until a human clears it. |
-| `python cli.py go-live` | The *only* path to live: interactive, guarded, journaled (see below). |
+| `python cli.py go-live` | The *only* path to live: interactive, five-gate, journaled (see below). |
+| `python cli.py go-paper` | Stand live back down **instantly** — disarms live, back to paper. |
 
 `status` shows the **PAPER/LIVE banner**, positions + P&L, today's signals **and the risk-gate
 decision for each (including vetoes and why)**, recent fills/partials, and any reconcile drift.
@@ -107,11 +108,15 @@ Optional checkpoints (configurable) push the day's strategy mix and each gate-ap
 phone for **one-tap approve/skip** before anything submits.
 
 **Going live is deliberately hard.** `go-live` requires, together: `mode: live`, a *separate* live
-key env var (different from paper), a dated `LIVE_ENABLED` file written out-of-band, a per-session
-typed confirmation, and a small-size **ramp tier**. Miss any one → you stay paper. An LLM cannot
-satisfy any of these. The kill switch is one tap to trip and slow-and-manual to clear — on purpose.
-(Full gate, and an honest note on which of these are true security boundaries vs. UX:
-[`docs/05-risk-and-safety.md`](docs/05-risk-and-safety.md) §1.)
+IB **Gateway on a live port** (4001, distinct from paper's 4002), a dated `LIVE_ENABLED` file written
+out-of-band, a per-session **typed confirmation read from the terminal** (`CONFIRM LIVE <today>` —
+never an argument or model text), and a small-size **ramp tier**. Miss any one → you stay paper, and
+the system *never* masquerades a paper adapter as live. Even armed, the deterministic risk gate still
+binds and clamps every live order to the ramp tier. The strongest boundary is the terminal-only,
+date-bound confirmation; an LLM cannot satisfy it. `go-paper` stands live back down in one command.
+The kill switch is one tap to trip and slow-and-manual to clear — on purpose. (Full gate, the
+abstract→IBKR mapping, and an honest note on which gates are true security boundaries vs. UX:
+[`docs/05-risk-and-safety.md`](docs/05-risk-and-safety.md) §1.2–1.4; code in `core/golive.py`.)
 
 > **Scheduling on a phone.** A phone-only operator has no always-on local cron. Phase 0/1 default to
 > **manual** trigger (`python cli.py run-cycle`). Unattended scheduling uses the harness's managed

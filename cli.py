@@ -9,22 +9,38 @@ AiStudios — single entrypoint. Designed for one-command operation from a phone
   python cli.py reconcile     compare broker truth vs local journal
   python cli.py kill          engage the kill switch (gate rejects everything)
   python cli.py clear-kill    clear the kill switch
-  python cli.py go-live       refused in Phase 0 (paper only)
+  python cli.py go-live       arm LIVE for today — interactive, five-gate, journaled
+  python cli.py go-paper      stand LIVE back down instantly (back to paper)
 
-Everything is PAPER. There is no path to live trading in this file.
+PAPER is the default. LIVE is reachable ONLY through `go-live`, which requires all
+five independent human-controlled gates (core.golive / docs/05 §1.2) to pass; an
+LLM can satisfy none of them. Even armed, the deterministic risk gate still binds
+and live size is clamped to the smallest ramp tier.
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from core.config import load_config, REPO_ROOT
 from core.brokers.factory import build_execution_adapter
 from core.store import Store
 from core.execution import run_cycle
 from strategies.premium_harvest import PremiumHarvest
+
+
+def _force_utf8_console() -> None:
+    """Windows consoles often default to a legacy code page (cp1252) that cannot
+    encode the box-drawing / emoji characters this CLI prints — which would crash
+    `status`, `run-cycle`, etc. on a fresh Windows box. Reconfigure stdout/stderr
+    to UTF-8 where the runtime supports it (Python 3.7+); a no-op elsewhere."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+        except Exception:
+            pass
 
 
 def _strategies(config):
@@ -51,9 +67,9 @@ def _banner(adapter) -> str:
 
 def cmd_status(args):
     config = load_config()
-    build_res = build_execution_adapter(config, asof=args.asof)
-    adapter = build_res.adapter
     store = Store()
+    build_res = build_execution_adapter(config, asof=args.asof, store=store)
+    adapter = build_res.adapter
 
     print("─" * 56)
     print(_banner(adapter))
@@ -117,9 +133,9 @@ def cmd_run_cycle(args, dry_run=False):
               f"Use --force to override.")
         return
 
-    build_res = build_execution_adapter(config, asof=args.asof)
-    adapter = build_res.adapter
     store = Store()
+    build_res = build_execution_adapter(config, asof=args.asof, store=store)
+    adapter = build_res.adapter
     print(_banner(adapter))
     print(f"  {build_res.note}\n")
 
@@ -189,9 +205,9 @@ def cmd_reconcile(args):
     from datetime import datetime, timezone
     from core.reconcile import reconcile
     config = load_config()
-    build_res = build_execution_adapter(config, asof=args.asof)
-    adapter = build_res.adapter
     store = Store()
+    build_res = build_execution_adapter(config, asof=args.asof, store=store)
+    adapter = build_res.adapter
     print(_banner(adapter))
 
     report = reconcile(adapter, store)
@@ -269,7 +285,7 @@ def cmd_export_trades(args):
     out_dir = REPO_ROOT / "exports"
     out_dir.mkdir(exist_ok=True)
     out = out_dir / "trades.csv"
-    with open(out, "w", newline="") as f:
+    with open(out, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
         w.writeheader()
         w.writerows(rows)
@@ -280,13 +296,96 @@ def cmd_export_trades(args):
 
 
 def cmd_go_live(args):
-    print("go-live is DISABLED in Phase 0. This system is paper-only.")
-    print("See docs/05-risk-and-safety.md (§1) and docs/07-roadmap.md for the")
-    print("staged path to a guarded, small-size live mode.")
-    sys.exit(2)
+    """Interactive, five-gate, journaled path to ARM LIVE for today. Refuses unless
+    ALL five go-live gates pass (core.golive / docs/05 §1.2). The per-session typed
+    confirmation is read from the operator's terminal here — never an argument or
+    model text — and is date-bound, so it can't be replayed tomorrow."""
+    from core.golive import (ARMED_KV_KEY, GoLiveGate, confirmation_phrase,
+                             current_ramp_tier)
+    ts = lambda: datetime.now(timezone.utc).isoformat()
+    config = load_config()
+    store = Store()
+    gate = GoLiveGate(config)
+
+    # Show exactly where each of the five gates stands (no confirmation supplied
+    # yet, so the confirmation gate reads 'missing').
+    pre = gate.evaluate(confirmation=None)
+    print("─" * 56)
+    print("  GO-LIVE GATE — all five must pass (an LLM can satisfy NONE)")
+    print("─" * 56)
+    for c in pre.conditions:
+        print(f"  {'✅' if c.ok else '❌'} {c.name:<20} {c.detail}")
+
+    ramp = current_ramp_tier(config)
+    if ramp:
+        print(f"\n  Ramp tier {ramp.get('tier')}: max "
+              f"${float(ramp.get('max_notional_usd', 0)):.0f}/position, "
+              f"{ramp.get('max_positions')} concurrent. Even armed, the risk gate "
+              "clamps every live order to this tier.")
+
+    # If anything OTHER than the typed confirmation is unmet, don't prompt — fix
+    # those first. Nothing is changed.
+    blockers = [c for c in pre.conditions
+                if c.name != "session_confirmation" and not c.ok]
+    if blockers:
+        print("\n  ⛔ Cannot arm live — resolve the ❌ gate(s) above first. Nothing changed.")
+        store.append(ts(), "go_live_blocked", {"unmet": [c.name for c in blockers]})
+        store.close()
+        sys.exit(2)
+
+    # All non-confirmation gates pass. Collect the dated phrase from the TTY ONLY —
+    # never an argument, never model text. No interactive terminal => refuse.
+    if not sys.stdin.isatty():
+        print("\n  ⛔ Refusing to arm live without an interactive terminal to type the "
+              "confirmation. Run `python cli.py go-live` in a real terminal.")
+        store.close()
+        sys.exit(2)
+
+    expected = confirmation_phrase()
+    print("\n  Four of five gates pass. To ARM LIVE for today, type EXACTLY:")
+    print(f"      {expected}")
+    print("  (anything else aborts — nothing is changed)")
+    try:
+        typed = input("  > ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print("\n  Aborted. Live NOT armed.")
+        store.close()
+        sys.exit(2)
+
+    final = gate.evaluate(confirmation=typed)
+    if not final.allowed:
+        print("\n  ❌ Confirmation did not match (or a gate changed). Live NOT armed.")
+        store.append(ts(), "go_live_aborted", {"reason": "confirmation_mismatch"})
+        store.close()
+        sys.exit(2)
+
+    store.set_kv(ARMED_KV_KEY, typed)   # the dated phrase; stale at the date rollover
+    store.append(ts(), "go_live_armed",
+                 {"date": date.today().isoformat(), "tier": (ramp or {}).get("tier"),
+                  "max_notional_usd": (ramp or {}).get("max_notional_usd")})
+    print("\n  ✅ LIVE ARMED for today. `run-cycle` now routes LIVE on the IBKR live")
+    print("     Gateway, clamped to the ramp tier. Stand down any time with:")
+    print("        python cli.py go-paper")
+    print("  Watch the first live fills closely — this path remains UNTESTED until you")
+    print("  run it against a real live Gateway.")
+    store.close()
+
+
+def cmd_go_paper(args):
+    """Instantly disarm LIVE — clear the armed marker so the factory immediately
+    stops building a live adapter and falls back to paper."""
+    from core.golive import ARMED_KV_KEY
+    store = Store()
+    was = store.get_kv(ARMED_KV_KEY)
+    store.set_kv(ARMED_KV_KEY, "")
+    store.append(datetime.now(timezone.utc).isoformat(), "go_paper", {"was_armed": bool(was)})
+    print("Live DISARMED — back to PAPER. run-cycle/status now build the paper adapter.")
+    print("To make paper permanent, set `mode: paper` in config/config.yaml.")
+    store.close()
 
 
 def main():
+    _force_utf8_console()
     p = argparse.ArgumentParser(prog="aistudios", description="AiStudios paper trading CLI")
     p.add_argument("--asof", help="Override the as-of date (YYYY-MM-DD) for deterministic runs")
     p.add_argument("--force", action="store_true",
@@ -303,7 +402,8 @@ def main():
     sub.add_parser("export-trades", help="Export closed trades to a CSV (tax/records)").set_defaults(func=cmd_export_trades)
     sub.add_parser("kill", help="Engage the kill switch").set_defaults(func=cmd_kill)
     sub.add_parser("clear-kill", help="Clear the kill switch").set_defaults(func=cmd_clear_kill)
-    sub.add_parser("go-live", help="(disabled in Phase 0)").set_defaults(func=cmd_go_live)
+    sub.add_parser("go-live", help="arm LIVE for today (interactive five-gate check)").set_defaults(func=cmd_go_live)
+    sub.add_parser("go-paper", help="stand LIVE back down instantly (back to paper)").set_defaults(func=cmd_go_paper)
 
     args = p.parse_args()
     args.func(args)

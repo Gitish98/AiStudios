@@ -36,10 +36,12 @@ brokers:
   # ibkr_paper -> connects to IB Gateway at ibkr_host:ibkr_port. If no Gateway is
   # reachable (e.g. operating from a phone), the factory falls back to SIM so the
   # cycle still runs. See docs/08-ibkr-gateway-runbook.md.
-  execution: ibkr_paper          # ibkr_paper | alpaca_paper | sim
+  execution: ibkr_paper          # ibkr_paper | alpaca_paper | sim  (use ibkr_live for live)
   options_data: ibkr             # chains/greeks from IBKR; BS fallback if missing
   ibkr_host: 127.0.0.1
   ibkr_port: 4002                # IB Gateway PAPER (live=4001; TWS paper=7497)
+  ibkr_live_port: 4001           # IB Gateway LIVE — a SEPARATE login from paper. The
+                                 # go-live gate refuses to treat the paper port as live.
   ibkr_client_id: 7
 
 # ── Reasoning layer (Claude advisor — VETO-ONLY) ─────────────────────────────
@@ -211,6 +213,9 @@ options:
 # ─────────────────────────────────────────────────────────────────────────────
 go_live:
   ramp_tier: 0                     # 0 = paper. Human edits this; system never self-promotes.
+  # Out-of-band token the human writes (first line = TODAY's date) to satisfy gate 3.
+  # Optional override of the default path (~/.aistudios/LIVE_ENABLED).
+  # live_enabled_file: ~/.aistudios/LIVE_ENABLED
   # Ramp tiers (a single guardrail breach resets the clean-day counter to zero):
   #   tier 1: $250 notional / pos, 2 positions, 10 clean days
   #   tier 2: $1,000 / pos, 4 positions, 10 clean days
