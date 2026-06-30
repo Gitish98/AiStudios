@@ -91,10 +91,16 @@ def run_cycle(
     # ── 3. Gate's view of concurrent exposure = our OPEN tracked positions. ──
     positions: list[Position] = []
     for p in store.get_open_positions():
+        # Capital footprint must match _notional: DEBIT verticals are worth the
+        # net debit paid (== max_loss), NOT the strike width. Credit spreads and
+        # condors are collateralized at the (wider) wing width.
+        if p.get("structure") in ("call_debit_spread", "put_debit_spread"):
+            mv = float(p["max_loss"] or 0.0)
+        else:
+            mv = float(p["width"]) * 100.0 * int(p["contracts"])
         positions.append(Position(
             symbol=p["underlying"], qty=p["contracts"], avg_price=0.0,
-            market_value=float(p["width"]) * 100.0 * int(p["contracts"]),
-            asset_class="option", underlying=p["underlying"],
+            market_value=mv, asset_class="option", underlying=p["underlying"],
             max_loss=float(p["max_loss"] or 0.0)))
     opened_today = _count_opened_today(store, asof)
 
@@ -137,6 +143,7 @@ def run_cycle(
     if store.kill_switch:
         summary["note"] = "Kill switch engaged — no orders will be placed."
 
+    seen_ids: set = set()   # idempotency within this cycle (covers dry-run too)
     for symbol in config.watchlist:
         try:
             chain = adapter.get_option_chain(symbol)
@@ -162,9 +169,13 @@ def run_cycle(
                                            "rationale": signal.rationale})
                 order = signal_to_order(signal, asof)
 
-                if store.has_order(order.client_order_id):
+                # Dedup against both the persisted store AND orders already
+                # handled earlier in THIS cycle (the store isn't written in a
+                # dry-run, so a cycle-local set is needed to avoid double-counting).
+                if store.has_order(order.client_order_id) or order.client_order_id in seen_ids:
                     summary["skipped_duplicates"].append(order.client_order_id)
                     continue
+                seen_ids.add(order.client_order_id)
 
                 decision = gate.evaluate(order, _ctx())
                 store.append(_now_iso(), "risk_decision", {

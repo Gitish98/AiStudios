@@ -92,7 +92,8 @@ def _closing_order(pos: dict, value_ps: float) -> OrderRequest:
 
     def leg(side, otype, strike):
         return OrderLeg(symbol=_occ(u, exp, otype, strike), side=side, qty=contracts,
-                        asset_class="option", option_type=otype, strike=strike, expiration=exp)
+                        asset_class="option", option_type=otype, strike=strike,
+                        expiration=exp, intent="close")
 
     if pos.get("structure") == "iron_condor":
         j = json.loads(pos["legs_json"])

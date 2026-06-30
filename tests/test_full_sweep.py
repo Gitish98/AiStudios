@@ -115,6 +115,43 @@ def test_buying_power_accumulates_within_cycle():
 
 # ── #4: a debit vertical's notional is the single net debit, not 2×debit ─────
 
+def test_closing_legs_carry_close_intent_on_alpaca():
+    from core.brokers.alpaca import build_order_body
+    closing = _closing_order(_debit_position(), value_ps=1.80)
+    body = build_order_body(closing)
+    intents = {leg["position_intent"] for leg in body["legs"]}
+    # Every leg of a managed close must be *_to_close, never *_to_open.
+    assert intents <= {"buy_to_close", "sell_to_close"}
+    assert all("_to_open" not in i for i in intents)
+
+
+def test_closing_legs_carry_close_intent_on_ibkr():
+    plan = build_order_plan(_closing_order(_debit_position(), value_ps=1.80))
+    assert all(leg["intent"] == "close" for leg in plan["legs"])
+
+
+def test_zero_price_close_keeps_limit_price_on_both_adapters():
+    from core.brokers.alpaca import build_order_body
+    # A worthless spread closes at value 0.00 — the limit must still be present.
+    closing = _closing_order(_debit_position(), value_ps=0.0)
+    a = build_order_body(closing)
+    assert a["type"] == "limit" and a["limit_price"] is not None   # not dropped
+    p = build_order_plan(closing)
+    assert p["order_type"] == "LMT" and p["limit_price"] is not None
+
+
+def test_opening_orders_still_carry_open_intent():
+    from core.brokers.alpaca import build_order_body
+    opener = OrderRequest(
+        client_order_id="o",
+        legs=[OrderLeg("P540", "sell", 1, "option", "put", strike=540, expiration="2026-02-19"),
+              OrderLeg("P539", "buy", 1, "option", "put", strike=539, expiration="2026-02-19")],
+        limit_price=0.26, strategy="put_credit_spread", est_credit=26.0,
+        max_loss=74.0, underlying="SPY")
+    intents = {leg["position_intent"] for leg in build_order_body(opener)["legs"]}
+    assert intents <= {"buy_to_open", "sell_to_open"}
+
+
 def test_debit_vertical_notional_not_double_counted():
     o = OrderRequest(
         client_order_id="d",

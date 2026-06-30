@@ -102,6 +102,7 @@ class OrderLeg:
     option_type: Optional[OptionType] = None
     strike: Optional[float] = None
     expiration: Optional[str] = None
+    intent: str = "open"            # open | close — drives broker position_intent / openClose
 
 
 @dataclass

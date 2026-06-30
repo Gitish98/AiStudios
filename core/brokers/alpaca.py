@@ -192,7 +192,7 @@ def build_order_body(order: OrderRequest) -> dict:
             "type": order.order_type, "time_in_force": order.time_in_force,
             "client_order_id": order.client_order_id,
         }
-        if order.limit_price:
+        if order.limit_price is not None:   # 0.0 is a valid limit, don't drop it
             body["limit_price"] = str(order.limit_price)
         return body
 
@@ -206,9 +206,17 @@ def build_order_body(order: OrderRequest) -> dict:
     # but Alpaca mleg expects a NEGATIVE price for a net credit (positive = net
     # debit). Negate when this is a credit order.
     price = None
-    if order.limit_price:
+    if order.limit_price is not None:   # 0.0 is a valid combo limit (worthless close)
         is_credit = order.est_credit > 0
-        price = str(-order.limit_price if is_credit else order.limit_price)
+        # guard the 0.0 case so we don't emit "-0.0"
+        price = str(-order.limit_price if (is_credit and order.limit_price) else order.limit_price)
+
+    def _intent(l):
+        closing = getattr(l, "intent", "open") == "close"
+        if l.side == "sell":
+            return "sell_to_close" if closing else "sell_to_open"
+        return "buy_to_close" if closing else "buy_to_open"
+
     return {
         "order_class": "mleg", "qty": str(g), "type": order.order_type,
         "time_in_force": order.time_in_force,
@@ -216,8 +224,7 @@ def build_order_body(order: OrderRequest) -> dict:
         "limit_price": price,
         "legs": [
             {"symbol": l.symbol, "ratio_qty": str(int(round(l.qty)) // g),
-             "side": l.side,
-             "position_intent": "sell_to_open" if l.side == "sell" else "buy_to_open"}
+             "side": l.side, "position_intent": _intent(l)}
             for l in order.legs
         ],
     }

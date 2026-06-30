@@ -68,7 +68,7 @@ def build_order_plan(order: OrderRequest) -> dict:
             "symbol": leg.symbol if sec_type == "STK" else (order.underlying or leg.symbol),
             "action": leg.side.upper(),  # BUY | SELL
             "total_quantity": int(round(abs(leg.qty))),
-            "order_type": "LMT" if order.limit_price else "MKT",
+            "order_type": "LMT" if order.limit_price is not None else "MKT",
             "limit_price": order.limit_price,
             "tif": order.time_in_force.upper(),
             "order_ref": order.client_order_id,
@@ -87,9 +87,9 @@ def build_order_plan(order: OrderRequest) -> dict:
     g = reduce(gcd, leg_qtys) or 1
 
     price = None
-    if order.limit_price:
+    if order.limit_price is not None:   # 0.0 is a valid combo limit (worthless close)
         is_credit = order.est_credit > 0
-        price = -abs(order.limit_price) if is_credit else abs(order.limit_price)
+        price = -abs(order.limit_price) if (is_credit and order.limit_price) else abs(order.limit_price)
 
     legs = []
     for l in order.legs:
@@ -100,6 +100,7 @@ def build_order_plan(order: OrderRequest) -> dict:
             "right": option_right(l.option_type) if l.option_type else None,
             "action": l.side.upper(),                 # BUY | SELL
             "ratio": int(round(abs(l.qty))) // g,     # GCD-reduced
+            "intent": getattr(l, "intent", "open"),   # open | close
         })
     return {
         "kind": "combo",
@@ -286,7 +287,8 @@ class IBKRAdapter(BrokerAdapter):
                 gamma=float(g.gamma) if g and g.gamma is not None else None,
                 theta=float(g.theta) if g and g.theta is not None else None,
                 vega=float(g.vega) if g and g.vega is not None else None,
-                open_interest=int(tk.callOpenInterest or tk.putOpenInterest or 0),
+                open_interest=int((tk.putOpenInterest if c.right == "P"
+                                   else tk.callOpenInterest) or 0),
                 volume=int(tk.volume or 0), dte=dte_val,
             ))
         return out
@@ -350,8 +352,12 @@ class IBKRAdapter(BrokerAdapter):
             opt = ib.Option(leg["underlying"], leg["expiry"], leg["strike"], leg["right"],
                             "SMART", currency="USD")
             live.qualifyContracts(opt)
+            # IB ComboLeg.openClose: 1 = OPEN, 2 = CLOSE. Setting this explicitly
+            # stops a managed close from being treated as opening a new position.
+            open_close = 2 if leg.get("intent") == "close" else 1
             combo_legs.append(ib.ComboLeg(
-                conId=opt.conId, ratio=leg["ratio"], action=leg["action"], exchange="SMART"))
+                conId=opt.conId, ratio=leg["ratio"], action=leg["action"],
+                exchange="SMART", openClose=open_close))
         bag = ib.Contract(symbol=plan["symbol"], secType="BAG",
                           currency=plan["currency"], exchange="SMART", comboLegs=combo_legs)
         return bag
