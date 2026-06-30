@@ -17,6 +17,14 @@ from .config import REPO_ROOT
 
 DEFAULT_DB = REPO_ROOT / "data" / "portfolio.db"
 
+# Canonical (lowercased) terminal/dead order statuses across ALL brokers. An
+# order in one of these states is finished and must NOT block re-entry of the
+# same idempotency key. Used by has_order, _count_opened_today, and the
+# pending-order finalizers so the canonicalization can't drift between them.
+DEAD_ORDER_STATUSES = (
+    "rejected", "canceled", "cancelled", "inactive", "apicancelled", "expired",
+)
+
 
 class Store:
     def __init__(self, db_path: Optional[Path] = None):
@@ -99,13 +107,22 @@ class Store:
 
     # ── orders ───────────────────────────────────────────────────────────────
     def has_order(self, client_order_id: str) -> bool:
-        """True only for a LIVE/accepted prior order. A broker-rejected or
-        canceled order must not permanently block a retry of the same signal."""
+        """True only for a LIVE/accepted prior order. A dead order (rejected/
+        canceled/inactive/... in any broker's spelling/case) must not permanently
+        block a retry of the same signal."""
+        ph = ",".join("?" * len(DEAD_ORDER_STATUSES))
         return self.conn.execute(
-            "SELECT 1 FROM orders WHERE client_order_id = ? "
-            "AND status NOT IN ('rejected', 'canceled')",
-            (client_order_id,),
+            f"SELECT 1 FROM orders WHERE client_order_id = ? "
+            f"AND LOWER(status) NOT IN ({ph})",
+            (client_order_id, *DEAD_ORDER_STATUSES),
         ).fetchone() is not None
+
+    def set_order_status(self, client_order_id: str, status: str) -> None:
+        """Reconcile the orders table to a broker-terminal status (so has_order /
+        _count_opened_today see the order as dead and allow re-entry)."""
+        self.conn.execute("UPDATE orders SET status = ? WHERE client_order_id = ?",
+                          (status, client_order_id))
+        self.conn.commit()
 
     def record_order(self, ts: str, order_req: Any, result: Any) -> None:
         self.conn.execute(

@@ -15,7 +15,7 @@ from typing import Any, Optional
 
 from .brokers.base import BrokerAdapter, OrderLeg, OrderRequest
 from .positions import ManageParams, dte_from, evaluate_exit
-from .store import Store
+from .store import DEAD_ORDER_STATUSES, Store
 
 
 def _now_iso() -> str:
@@ -156,7 +156,8 @@ def _finalize_pending_closes(adapter: BrokerAdapter, store: Store, asof: str) ->
                 "position_id": int(pid), "reason": info["reason"],
                 "realized_pnl": info["realized_pnl"], "via": "pending_fill"})
             del pend[pid]; changed = True
-        elif st in ("rejected", "canceled", "cancelled", "inactive", "apicancelled"):
+        elif st in DEAD_ORDER_STATUSES:
+            store.set_order_status(info["coid"], "canceled")  # canonicalize the close order
             del pend[pid]; changed = True  # close died -> leave open, re-evaluate
     if changed:
         _save_pending(store, pend)

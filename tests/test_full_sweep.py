@@ -312,6 +312,67 @@ def test_sim_earnings_date_consistent_with_asof():
         assert sim.get_earnings_date(sym, asof="2026-03-10") == d
 
 
+def test_has_order_treats_ibkr_terminal_statuses_as_dead():
+    from core.brokers.base import OrderResult
+    with tempfile.TemporaryDirectory() as tmp:
+        store = Store(Path(tmp) / "t.db")
+
+        def rec(coid, status):
+            o = OrderRequest(client_order_id=coid, legs=[], strategy="put_credit_spread",
+                             underlying="SPY")
+            store.record_order("2026-05-01T10:00:00", o,
+                               OrderResult(accepted=True, client_order_id=coid, status=status))
+
+        # IBKR-style terminal statuses (mixed case / British spelling) must NOT
+        # block re-entry; live/working ones must.
+        rec("dead1", "Cancelled")
+        rec("dead2", "Inactive")
+        rec("dead3", "ApiCancelled")
+        rec("live1", "Submitted")
+        rec("live2", "PreSubmitted")
+        rec("filled1", "filled")
+        assert store.has_order("dead1") is False
+        assert store.has_order("dead2") is False
+        assert store.has_order("dead3") is False
+        assert store.has_order("live1") is True
+        assert store.has_order("live2") is True
+        assert store.has_order("filled1") is True
+        store.close()
+
+
+def test_dropped_entry_unblocks_same_day_reentry():
+    """A broker-canceled entry: the finalizer must reconcile the orders table so
+    the deterministic client_order_id can be re-entered the same day."""
+    from core.brokers.base import OrderResult, OrderRequest as OR
+    from core.execution import _finalize_pending_entries
+
+    with tempfile.TemporaryDirectory() as tmp:
+        store = Store(Path(tmp) / "t.db")
+        coid = "AIS-deadentry"
+        # Recorded at placement as 'Submitted' (would block re-entry)...
+        store.record_order("2026-05-01T10:00:00",
+                           OR(client_order_id=coid, legs=[], strategy="put_credit_spread",
+                              underlying="SPY"),
+                           OrderResult(accepted=True, client_order_id=coid, status="Submitted"))
+        store.open_position({
+            "client_order_id": coid, "strategy": "put_credit_spread",
+            "structure": "put_credit_spread", "family": "put", "is_credit": 1,
+            "underlying": "SPY", "status": "pending", "opened_asof": "2026-05-01",
+            "opened_ts": "t", "expiration": "2026-06-19", "contracts": 1,
+            "short_strike": 540, "long_strike": 539, "width": 1, "legs_json": None,
+            "entry_credit_ps": 0.26, "max_loss": 74})
+        assert store.has_order(coid) is True   # blocked before finalize
+
+        class Canceled(SimAdapter):
+            def list_orders(self):
+                return [OrderResult(accepted=True, client_order_id=coid,
+                                    status="Cancelled", filled_qty=0)]
+        _finalize_pending_entries(Canceled(asof="2026-05-01"), store)
+        assert len(store.get_pending_positions()) == 0   # position dropped
+        assert store.has_order(coid) is False             # AND re-entry unblocked
+        store.close()
+
+
 def test_debit_vertical_notional_not_double_counted():
     o = OrderRequest(
         client_order_id="d",

@@ -23,7 +23,7 @@ from .manage import _is_filled, manage_open_positions
 from .positions import order_to_position
 from .reconcile import reconcile
 from .risk import Decision, RiskContext, RiskGate, RiskLimits, _notional
-from .store import Store
+from .store import DEAD_ORDER_STATUSES, Store
 from strategies.base import Signal, StrategyContext
 
 
@@ -275,7 +275,11 @@ def _finalize_pending_entries(adapter: BrokerAdapter, store: Store) -> None:
             store.set_position_status(p["id"], "open")
             store.append(_now_iso(), "entry_filled", {"position_id": p["id"],
                                                        "underlying": p["underlying"]})
-        elif st in ("rejected", "canceled", "cancelled", "inactive", "apicancelled"):
+        elif st in DEAD_ORDER_STATUSES:
+            # Reconcile the orders table too, or has_order keeps the deterministic
+            # client_order_id dedup-blocked all day and the position can never be
+            # re-entered.
+            store.set_order_status(p["client_order_id"], "canceled")
             store.delete_position(p["id"])
             store.append(_now_iso(), "entry_dropped", {"position_id": p["id"],
                                                        "underlying": p["underlying"]})
@@ -307,7 +311,7 @@ def _count_opened_today(store: Store, asof: str) -> int:
     return sum(
         1 for o in store.all_orders(limit=400)
         if str(o.get("ts", "")).startswith(asof)
-        and o.get("status") not in ("rejected",)
+        and (o.get("status") or "").lower() not in DEAD_ORDER_STATUSES
         and not str(o.get("client_order_id", "")).startswith("CLOSE-")
         and not str(o.get("strategy", "")).startswith("close_")
     )
