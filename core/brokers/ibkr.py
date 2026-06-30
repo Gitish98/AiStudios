@@ -204,12 +204,20 @@ class IBKRAdapter(BrokerAdapter):
         out = []
         for p in ib.positions():
             c = p.contract
+            is_opt = c.secType == "OPT"
+            exp = None
+            if is_opt and getattr(c, "lastTradeDateOrContractMonth", None):
+                raw = c.lastTradeDateOrContractMonth  # YYYYMMDD
+                exp = f"{raw[:4]}-{raw[4:6]}-{raw[6:8]}" if len(raw) >= 8 else None
             out.append(Position(
                 symbol=c.localSymbol or c.symbol, qty=float(p.position),
                 avg_price=float(p.avgCost or 0),
                 market_value=float(p.position) * float(p.avgCost or 0),
-                asset_class="option" if c.secType == "OPT" else "us_equity",
+                asset_class="option" if is_opt else "us_equity",
                 underlying=getattr(c, "symbol", None),
+                option_expiration=exp,
+                option_strike=float(c.strike) if is_opt and c.strike else None,
+                option_right=(c.right or None) if is_opt else None,
             ))
         return out
 

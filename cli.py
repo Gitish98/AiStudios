@@ -74,6 +74,15 @@ def cmd_status(args):
     for o in orders:
         print(f"    {str(o['ts'])[:19]}  {str(o.get('underlying') or ''):<6} "
               f"{str(o.get('strategy') or ''):<18} {o.get('status')}")
+    from core.reconcile import reconcile
+    rec = reconcile(adapter, store)
+    if rec.get("note"):
+        print(f"\n  Reconcile        : {rec['note']}")
+    elif rec["ok"]:
+        print(f"\n  Reconcile        : ✓ in sync with broker")
+    else:
+        print(f"\n  Reconcile        : ⚠️  {len(rec['drift'])} drift item(s) — run: python cli.py reconcile")
+
     print(f"\n  Watchlist        : {', '.join(config.watchlist) or '(empty)'}")
     store.close()
 
@@ -153,27 +162,37 @@ def cmd_clear_kill(args):
 
 
 def cmd_reconcile(args):
+    from datetime import datetime, timezone
+    from core.reconcile import reconcile
     config = load_config()
     build_res = build_execution_adapter(config, asof=args.asof)
     adapter = build_res.adapter
     store = Store()
     print(_banner(adapter))
-    try:
-        broker_orders = {o.client_order_id: o for o in adapter.list_orders()}
-    except Exception as e:
-        print(f"  Could not fetch broker orders: {e}")
-        store.close()
-        return
-    local = store.all_orders(limit=200)
-    local_ids = {o["client_order_id"] for o in local}
-    only_broker = [cid for cid in broker_orders if cid and cid not in local_ids]
-    print(f"  Local orders : {len(local)}")
-    print(f"  Broker orders: {len(broker_orders)}")
-    print(f"  In broker but not local: {len(only_broker)}")
-    for cid in only_broker[:10]:
-        print(f"    {cid}")
-    if not only_broker:
-        print("  ✓ No drift detected.")
+
+    report = reconcile(adapter, store)
+    print(f"  Tracked open legs source : {report['tracked_open']} position(s)")
+    if report.get("note"):
+        print(f"  Note: {report['note']}")
+    if report["ok"]:
+        print("  ✓ In sync — no drift between our book and the broker.")
+    else:
+        print(f"  ⚠️  DRIFT DETECTED ({len(report['drift'])} item(s)):")
+        for d in report["drift"]:
+            if d["kind"] == "broker_unreachable":
+                print(f"    ✗ broker unreachable: {d['detail']}")
+            else:
+                print(f"    ✗ {d['kind']}: {d['leg']} "
+                      f"(we={d['expected_qty']:+g}, broker={d['broker_qty']:+g})")
+        # Surface loudly + journal. Optionally trip the kill switch.
+        store.append(datetime.now(timezone.utc).isoformat(), "reconcile_drift",
+                     {"drift": report["drift"]})
+        if (config.raw.get("reconcile", {}) or {}).get("auto_kill_on_drift", False):
+            store.set_kill_switch(True)
+            print("\n  Kill switch ENGAGED (reconcile.auto_kill_on_drift = true).")
+        else:
+            print("\n  Investigate before trading. Trip the kill switch with: "
+                  "python cli.py kill")
     store.close()
 
 

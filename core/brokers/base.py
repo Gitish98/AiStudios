@@ -35,6 +35,11 @@ class Position:
     asset_class: str = "us_equity"  # us_equity | option
     underlying: Optional[str] = None
     max_loss: float = 0.0  # defined risk of this position (for portfolio-heat math)
+    # Option-leg detail (populated by the broker for option positions; used by
+    # reconcile to match our tracked legs against broker truth).
+    option_expiration: Optional[str] = None  # YYYY-MM-DD
+    option_strike: Optional[float] = None
+    option_right: Optional[str] = None        # "P" | "C"
 
 
 @dataclass

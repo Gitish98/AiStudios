@@ -21,6 +21,7 @@ from typing import Any, Optional
 from .brokers.base import BrokerAdapter, OrderRequest, Position
 from .manage import manage_open_positions
 from .positions import order_to_position
+from .reconcile import reconcile
 from .risk import Decision, RiskContext, RiskGate, RiskLimits, _notional
 from .store import Store
 from strategies.base import Signal, StrategyContext
@@ -204,8 +205,15 @@ def run_cycle(
                         {"underlying": order.underlying, "strategy": order.strategy,
                          "reasons": [result.reason]})
 
+    # ── EOD reconcile: our tracked book vs broker truth. ──
+    rec = reconcile(adapter, store)
+    summary["reconcile"] = rec
+    if not rec["ok"]:
+        store.append(_now_iso(), "reconcile_drift", {"drift": rec["drift"]})
+
     store.append(_now_iso(), "cycle_end", {
-        "placed": len(summary["placed"]), "rejected": len(summary["rejected"])})
+        "placed": len(summary["placed"]), "rejected": len(summary["rejected"]),
+        "reconcile_ok": rec["ok"]})
     return summary
 
 
