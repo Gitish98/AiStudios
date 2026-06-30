@@ -43,14 +43,19 @@ def mark_spread_value_ps(adapter: BrokerAdapter, pos: dict) -> Optional[float]:
     if hi is None or lo is None:
         return None
     value = (hi - lo) if family == "put" else (lo - hi)
-    return round(max(0.0, value), 4)
+    width = abs(pos["short_strike"] - pos["long_strike"])
+    return round(max(0.0, min(width, value)), 4)  # a vertical is worth [0, width]
 
 
-def _spot(adapter: BrokerAdapter, underlying: str) -> float:
+def _spot(adapter: BrokerAdapter, underlying: str) -> Optional[float]:
+    """Current spot, or None if unavailable. NEVER returns a fake 0.0 — a quote
+    failure must be distinguishable from a real price (a 0 spot would settle an
+    expiring spread at full max-loss/profit, which would be catastrophically wrong)."""
     try:
-        return adapter.get_quote(underlying).mid
+        m = adapter.get_quote(underlying).mid
+        return m if m and m > 0 else None
     except Exception:
-        return 0.0
+        return None
 
 
 def _closing_order(pos: dict, value_ps: float) -> OrderRequest:
@@ -86,13 +91,21 @@ def manage_open_positions(adapter: BrokerAdapter, store: Store, config,
     }
 
     for pos in open_positions:
+      try:
         value_ps = mark_spread_value_ps(adapter, pos)
         if value_ps is None:
             summary["held"].append({"underlying": pos["underlying"], "reason": "no_mark"})
             continue
         spot = _spot(adapter, pos["underlying"])
+        # At expiry we MUST have a real spot to settle intrinsic; missing spot ->
+        # hold (don't persist a fabricated settlement). Non-expiry exits use the
+        # mark, not spot, so spot being absent there is harmless.
+        if dte_from(pos["expiration"], asof) <= 0 and spot is None:
+            summary["held"].append({"underlying": pos["underlying"], "reason": "no_spot_at_expiry"})
+            continue
         params = credit_params if bool(pos.get("is_credit", 1)) else debit_params
-        decision = evaluate_exit(pos, value_ps, spot, asof, params)
+        decision = evaluate_exit(pos, value_ps, spot if spot is not None else 0.0,
+                                 asof, params)
 
         if decision.action == "hold":
             summary["unrealized_open"] += decision.realized_pnl  # here = unrealized mark
@@ -117,6 +130,13 @@ def manage_open_positions(adapter: BrokerAdapter, store: Store, config,
         summary["closed"].append({
             "underlying": pos["underlying"], "reason": decision.reason,
             "realized_pnl": decision.realized_pnl})
+      except Exception as e:
+        # One bad position must never prevent valuing/exiting the rest.
+        store.append(_now_iso(), "manage_error", {
+            "position_id": pos.get("id"), "underlying": pos.get("underlying"),
+            "error": str(e)})
+        summary["held"].append({"underlying": pos.get("underlying"),
+                                "reason": "mark_error", "error": str(e)})
 
     summary["realized_today"] = round(summary["realized_today"], 2)
     summary["unrealized_open"] = round(summary["unrealized_open"], 2)

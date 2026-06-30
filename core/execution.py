@@ -76,8 +76,9 @@ def run_cycle(
     manage_summary = manage_open_positions(adapter, store, config, asof)
 
     # ── 2. Daily P&L from our tracked positions (broker-agnostic, works in sim
-    # AND live): realized closes today + unrealized mark on what's still open.
-    daily_pnl = manage_summary["realized_today"] + manage_summary["unrealized_open"]
+    # AND live): ALL realized closes today (across every cycle this date, from the
+    # store — not just this cycle) + unrealized mark on what's still open.
+    daily_pnl = store.realized_pnl_on(asof) + manage_summary["unrealized_open"]
 
     # Proactively trip the kill switch on a daily-loss breach even if no new
     # order is evaluated this cycle.
@@ -221,7 +222,12 @@ def run_cycle(
 
 
 def _count_opened_today(store: Store, asof: str) -> int:
+    """Count only OPENING orders placed today. Closing orders (CLOSE-*) reduce
+    risk and must not consume the daily new-position budget."""
     return sum(
-        1 for o in store.all_orders(limit=200)
-        if str(o.get("ts", "")).startswith(asof) and o.get("status") not in ("rejected",)
+        1 for o in store.all_orders(limit=400)
+        if str(o.get("ts", "")).startswith(asof)
+        and o.get("status") not in ("rejected",)
+        and not str(o.get("client_order_id", "")).startswith("CLOSE-")
+        and not str(o.get("strategy", "")).startswith("close_")
     )

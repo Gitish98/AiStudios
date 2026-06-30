@@ -97,7 +97,9 @@ class VolatilityBreakout(Strategy):
         # LONG leg ~0.45 delta (slightly ITM/ATM), SHORT one strike further OTM.
         chain.sort(key=lambda c: abs(abs(c.delta) - self.target_long_delta))
         long_leg = chain[0]
-        if long_leg.open_interest < self.min_open_interest or long_leg.spread_pct > self.max_spread_pct:
+        if (long_leg.open_interest < self.min_open_interest
+                or long_leg.spread_pct > self.max_spread_pct
+                or long_leg.bid <= 0 or long_leg.ask <= 0):
             return []
 
         # Short leg: next strike in the OTM direction (calls -> higher; puts -> lower).
@@ -108,6 +110,12 @@ class VolatilityBreakout(Strategy):
             outers = [c for c in chain if c.strike < long_leg.strike]
             short_leg = max(outers, key=lambda c: c.strike) if outers else None
         if short_leg is None:
+            return []
+        # The short leg must ALSO have a real two-sided market — otherwise its mid
+        # silently falls back to `last`, mis-pricing the debit/max_loss/limit.
+        if (short_leg.open_interest < self.min_open_interest
+                or short_leg.spread_pct > self.max_spread_pct
+                or short_leg.bid <= 0 or short_leg.ask <= 0):
             return []
 
         width = round(abs(short_leg.strike - long_leg.strike), 2)
