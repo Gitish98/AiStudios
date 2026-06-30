@@ -159,7 +159,14 @@ def run_cycle(
         try:
             chain = adapter.get_option_chain(symbol)
             quote = adapter.get_quote(symbol)
-            iv_hist = getattr(adapter, "iv_history", lambda s: [])(symbol)
+            # Record today's ATM IV so a real broker BUILDS its own IV-rank history
+            # over time (no paid feed). IV history is the broker's own series when
+            # it has one (sim), else the bootstrapped store series.
+            atm = _atm_iv_from_chain(chain, quote.mid)
+            if atm:
+                store.record_iv_snapshot(symbol, asof, atm)
+            iv_hist = (adapter.iv_history(symbol) if hasattr(adapter, "iv_history")
+                       else store.get_iv_history(symbol))
             bars = adapter.get_history(symbol, 120) if hasattr(adapter, "get_history") else []
             earnings = (adapter.get_earnings_date(symbol)
                         if hasattr(adapter, "get_earnings_date") else None)
@@ -256,6 +263,14 @@ def run_cycle(
     return summary
 
 
+def _atm_iv_from_chain(chain, spot: float):
+    """Nearest-strike implied vol from a chain (the ATM IV snapshot)."""
+    cands = [c for c in chain if c.implied_vol and c.implied_vol > 0]
+    if not cands or spot <= 0:
+        return None
+    return min(cands, key=lambda c: abs(c.strike - spot)).implied_vol
+
+
 def _finalize_pending_entries(adapter: BrokerAdapter, store: Store) -> None:
     """Flip 'pending' entry positions to 'open' once the broker confirms the fill,
     or drop them if the order died. Mirrors the pending-close finalizer."""
@@ -295,13 +310,16 @@ def capability_warnings(adapter: BrokerAdapter, config) -> list[str]:
         blk = s.get(name)
         return blk is not None and blk.get("enabled", True)
     warns = []
+    # IV history is bootstrapped from daily ATM-IV snapshots (no broker method
+    # needed), but it takes time to accrue a meaningful rank.
     if (on("premium_harvest") or on("earnings_vol")) and not hasattr(adapter, "iv_history"):
-        warns.append("iv_history not available on this broker — premium_harvest / "
-                     "earnings_vol need an IV-rank history source and will NOT signal.")
+        warns.append("IV-rank history is bootstrapping from daily ATM-IV snapshots — "
+                     "premium_harvest / earnings_vol stand aside until ~20 sessions accrue.")
     if on("volatility_breakout") and not hasattr(adapter, "get_history"):
         warns.append("price history not available — volatility_breakout will NOT signal.")
     if on("earnings_vol") and not hasattr(adapter, "get_earnings_date"):
-        warns.append("earnings calendar not available — earnings_vol will NOT signal.")
+        warns.append("earnings calendar not available — earnings_vol will NOT signal "
+                     "(wire a data provider; see docs/11-data-providers.md).")
     return warns
 
 

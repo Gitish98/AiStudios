@@ -294,7 +294,7 @@ def test_capability_warnings_loud_on_real_adapter():
     cfg = _t.SimpleNamespace(strategies={"premium_harvest": {}, "earnings_vol": {},
                                          "volatility_breakout": {}})
     warns = capability_warnings(fake, cfg)
-    assert any("iv_history" in w for w in warns)
+    assert any(("IV-rank" in w or "bootstrap" in w.lower()) for w in warns)
     assert any("earnings" in w for w in warns)
     # sim never warns
     assert capability_warnings(SimAdapter(asof="2026-01-15"), cfg) == []

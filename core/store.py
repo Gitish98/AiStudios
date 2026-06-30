@@ -61,6 +61,13 @@ class Store:
                 value TEXT
             )""")
         c.execute("""
+            CREATE TABLE IF NOT EXISTS iv_snapshots (
+                symbol TEXT NOT NULL,
+                asof TEXT NOT NULL,
+                atm_iv REAL NOT NULL,
+                PRIMARY KEY (symbol, asof)
+            )""")
+        c.execute("""
             CREATE TABLE IF NOT EXISTS positions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 client_order_id TEXT,
@@ -150,6 +157,25 @@ class Store:
             "SELECT * FROM orders ORDER BY ts DESC LIMIT ?", (limit,)
         ).fetchall()
         return [dict(r) for r in rows]
+
+    # ── IV-rank history bootstrap ────────────────────────────────────────────
+    def record_iv_snapshot(self, symbol: str, asof: str, atm_iv: float) -> None:
+        """One ATM-IV reading per (symbol, day). Over time these BUILD the IV-rank
+        history that premium-harvest / earnings-vol need — no paid feed required.
+        Idempotent per day."""
+        if atm_iv is None or atm_iv <= 0:
+            return
+        self.conn.execute(
+            "INSERT OR REPLACE INTO iv_snapshots (symbol, asof, atm_iv) VALUES (?, ?, ?)",
+            (symbol.upper(), asof, float(atm_iv)))
+        self.conn.commit()
+
+    def get_iv_history(self, symbol: str, limit: int = 252) -> list[float]:
+        """ATM-IV readings for a symbol, oldest→newest (up to `limit` most recent)."""
+        rows = self.conn.execute(
+            "SELECT atm_iv FROM iv_snapshots WHERE symbol = ? ORDER BY asof DESC LIMIT ?",
+            (symbol.upper(), limit)).fetchall()
+        return [float(r["atm_iv"]) for r in reversed(rows)]
 
     # ── key/value (kill switch, markers) ─────────────────────────────────────
     def get_kv(self, key: str, default: Optional[str] = None) -> Optional[str]:
