@@ -95,10 +95,16 @@ def _trading_days(bars_by_symbol: dict[str, list[dict]], start: str, end: str) -
 
 
 def run_backtest(strategies: list, bars_by_symbol: dict[str, list[dict]], config,
-                 start: str, end: str, warmup_days: int = 60,
+                 start: str, end: str,
                  iv_by_symbol: Optional[dict] = None,
                  earnings_by_symbol: Optional[dict] = None) -> dict[str, Any]:
-    """Replay the cycle day-by-day over [start, end]. Returns a metrics report."""
+    """Replay the cycle day-by-day over [start, end]. Returns a metrics report.
+
+    WARM-UP: indicators are computed from every bar with date <= the current day,
+    so to have warm indicators (≈50+ bars for the breakout SMAs, ~20+ for IV
+    rank) on the FIRST trading day, provide `bars_by_symbol` that includes history
+    BEFORE `start`. There is no separate warmup phase — pre-`start` bars ARE the
+    warmup, used automatically with strict no-lookahead slicing."""
     broker = BacktestBroker(bars_by_symbol, iv_by_symbol, earnings_by_symbol,
                             equity=float(config.account.get("starting_equity_usd", 30000)),
                             account_type=str(config.account.get("type", "margin")))
