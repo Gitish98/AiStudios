@@ -60,14 +60,14 @@ def cmd_status(args):
     except Exception as e:
         print(f"\n  Account: unavailable ({e})")
 
-    positions = []
-    try:
-        positions = adapter.get_positions()
-    except Exception:
-        pass
-    print(f"\n  Open positions   : {len(positions)}")
-    for p in positions[:10]:
-        print(f"    {p.symbol:<22} qty {p.qty:>6}  @ {p.avg_price:.2f}")
+    open_pos = store.get_open_positions()
+    print(f"\n  Open positions   : {len(open_pos)} (tracked)")
+    for p in open_pos[:12]:
+        from core.positions import dte_from
+        dte = dte_from(p["expiration"], datetime.now(timezone.utc).date().isoformat())
+        print(f"    {p['underlying']:<5} {p['short_strike']:g}/{p['long_strike']:g}P "
+              f"{p['expiration']} ({dte}d)  credit ${p['entry_credit_ps']*100:.0f}  "
+              f"maxloss ${p['max_loss']:.0f}")
 
     orders = store.all_orders(limit=8)
     print(f"\n  Recent orders    : {len(store.all_orders(limit=200))} total")
@@ -80,6 +80,17 @@ def cmd_status(args):
 
 def cmd_run_cycle(args, dry_run=False):
     config = load_config()
+
+    # Market-calendar guard (unless --force). Honors --asof for deterministic runs.
+    from datetime import date as _date
+    from core.market_calendar import is_trading_day, trading_day_reason
+    check_day = _date.fromisoformat(args.asof) if args.asof else None
+    enforce = (config.raw.get("market", {}) or {}).get("enforce_calendar", True)
+    if enforce and not getattr(args, "force", False) and not is_trading_day(check_day):
+        print(f"  Skipping cycle — {trading_day_reason(check_day)}. "
+              f"Use --force to override.")
+        return
+
     build_res = build_execution_adapter(config, asof=args.asof)
     adapter = build_res.adapter
     store = Store()
@@ -88,6 +99,15 @@ def cmd_run_cycle(args, dry_run=False):
 
     summary = run_cycle(adapter, _strategies(config), store, config,
                         asof=args.asof, dry_run=dry_run)
+
+    m = summary.get("manage", {})
+    if m.get("evaluated"):
+        print(f"  Management: {m['evaluated']} open · closed {len(m.get('closed', []))} "
+              f"· realized today ${m.get('realized_today', 0):+.0f} "
+              f"· unrealized ${m.get('unrealized_open', 0):+.0f}")
+        for c in m.get("closed", []):
+            print(f"    ↩ {c['underlying']} {c['reason']} → ${c['realized_pnl']:+.0f}")
+    print(f"  Daily P&L  : ${summary.get('daily_pnl', 0):+.0f}")
 
     print(f"  Cycle {summary['asof']} — {summary['broker']} "
           f"({'DRY-RUN' if dry_run else summary['mode']})")
@@ -167,6 +187,8 @@ def cmd_go_live(args):
 def main():
     p = argparse.ArgumentParser(prog="aistudios", description="AiStudios paper trading CLI")
     p.add_argument("--asof", help="Override the as-of date (YYYY-MM-DD) for deterministic runs")
+    p.add_argument("--force", action="store_true",
+                   help="ignore the market-calendar guard (run even on a closed day)")
     sub = p.add_subparsers(dest="command", required=True)
 
     sub.add_parser("status", help="Plain-text account/order summary").set_defaults(func=cmd_status)

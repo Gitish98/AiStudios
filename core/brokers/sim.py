@@ -125,6 +125,20 @@ class SimAdapter(BrokerAdapter):
                 ))
         return chain
 
+    def mark_option(self, underlying: str, expiration: str, strike: float,
+                    right: str, asof: Optional[str] = None) -> float:
+        """Deterministic per-share option mark via Black-Scholes from the sim's
+        spot + IV. Lets the management pass value open spreads without depending
+        on the (spot-centered) strike ladder."""
+        u = underlying.upper()
+        spot = self._spot(u)
+        iv = self._base_iv(u)
+        d0 = date.fromisoformat(asof or self.asof)
+        dte = max(0, (date.fromisoformat(expiration) - d0).days)
+        t = max(dte, 0) / 365.0
+        ot = "put" if right.lower().startswith("p") else "call"
+        return round(om.bs_price(spot, strike, t, 0.045, iv, ot), 4)
+
     # ── execution ────────────────────────────────────────────────────────────
     def place_order(self, order: OrderRequest) -> OrderResult:
         self._order_seq += 1

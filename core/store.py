@@ -52,6 +52,28 @@ class Store:
                 key TEXT PRIMARY KEY,
                 value TEXT
             )""")
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS positions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_order_id TEXT,
+                strategy TEXT,
+                underlying TEXT,
+                status TEXT,                -- open | closed
+                opened_asof TEXT,
+                opened_ts TEXT,
+                expiration TEXT,
+                contracts INTEGER,
+                short_strike REAL,
+                long_strike REAL,
+                width REAL,
+                entry_credit_ps REAL,       -- per-share net credit (e.g. 0.26)
+                max_loss REAL,              -- dollars
+                closed_asof TEXT,
+                closed_ts TEXT,
+                exit_reason TEXT,
+                exit_value_ps REAL,
+                realized_pnl REAL           -- dollars
+            )""")
         self.conn.commit()
 
     # ── journal ──────────────────────────────────────────────────────────────
@@ -118,6 +140,40 @@ class Store:
             "INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)", (key, value)
         )
         self.conn.commit()
+
+    # ── positions ────────────────────────────────────────────────────────────
+    def open_position(self, pos: dict[str, Any]) -> int:
+        cols = ("client_order_id", "strategy", "underlying", "status", "opened_asof",
+                "opened_ts", "expiration", "contracts", "short_strike", "long_strike",
+                "width", "entry_credit_ps", "max_loss")
+        cur = self.conn.execute(
+            f"INSERT INTO positions ({','.join(cols)}) VALUES ({','.join('?'*len(cols))})",
+            tuple(pos.get(c) for c in cols),
+        )
+        self.conn.commit()
+        return cur.lastrowid
+
+    def get_open_positions(self) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            "SELECT * FROM positions WHERE status = 'open' ORDER BY id"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def close_position(self, pos_id: int, closed_asof: str, closed_ts: str,
+                       exit_reason: str, exit_value_ps: float, realized_pnl: float) -> None:
+        self.conn.execute(
+            """UPDATE positions SET status='closed', closed_asof=?, closed_ts=?,
+               exit_reason=?, exit_value_ps=?, realized_pnl=? WHERE id=?""",
+            (closed_asof, closed_ts, exit_reason, exit_value_ps, realized_pnl, pos_id),
+        )
+        self.conn.commit()
+
+    def realized_pnl_on(self, asof: str) -> float:
+        row = self.conn.execute(
+            "SELECT COALESCE(SUM(realized_pnl), 0) AS s FROM positions "
+            "WHERE status='closed' AND closed_asof = ?", (asof,)
+        ).fetchone()
+        return float(row["s"] or 0.0)
 
     @property
     def kill_switch(self) -> bool:

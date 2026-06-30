@@ -42,6 +42,12 @@ brokers:
   ibkr_port: 4002                # IB Gateway PAPER (live=4001; TWS paper=7497)
   ibkr_client_id: 7
 
+# ── Market calendar ──────────────────────────────────────────────────────────
+market:
+  # When true, run-cycle skips weekends/holidays (NYSE via pandas-market-calendars
+  # if installed, else a conservative built-in fallback). Override with --force.
+  enforce_calendar: true
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  RISK LIMITS — the deterministic veto gate enforces ALL of these.
 #  Any breach => order rejected (or kill switch, where noted). Fail-closed.
@@ -99,6 +105,22 @@ sizing:
   # and only used once a strategy has DOZENS of closed trades, not 5.
   kelly_fraction: 0.25
   vol_target_atr_mult: 2.0
+
+# ── Strategy parameters ──────────────────────────────────────────────────────
+strategies:
+  premium_harvest:
+    min_iv_rank: 0.40              # only sell premium when IV rank is elevated
+    target_put_delta: 0.25        # short-leg delta
+    dte_min: 30
+    dte_max: 45
+    min_open_interest: 250
+    max_spread_pct: 0.15
+    min_credit_ratio: 0.20        # net credit / strike width
+    # Exit / management (Phase 2) — applied every cycle before new entries:
+    manage:
+      profit_target_pct: 0.50     # take profit at 50% of the credit captured
+      stop_loss_mult: 2.0         # stop when the open loss = 2x the credit received
+      manage_at_dte: 21           # close whatever's left at 21 DTE (no expiration-week risk)
 
 # ── Order safety ─────────────────────────────────────────────────────────────
 orders:

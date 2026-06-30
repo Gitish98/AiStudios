@@ -19,6 +19,8 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from .brokers.base import BrokerAdapter, OrderRequest, Position
+from .manage import manage_open_positions
+from .positions import order_to_position
 from .risk import Decision, RiskContext, RiskGate, RiskLimits, _notional
 from .store import Store
 from strategies.base import Signal, StrategyContext
@@ -68,20 +70,31 @@ def run_cycle(
     gate = RiskGate(limits)
 
     account = adapter.get_account()
-    positions = list(adapter.get_positions())  # mutable working copy (accumulates intra-cycle)
-    opened_today = _count_opened_today(store, asof)
 
-    # Daily P&L = current equity vs the first equity we saw today (start-of-day).
-    # Real for a broker whose equity moves; ~0 for the flat sim. This makes the
-    # daily-loss kill switch a live control, not dead code.
-    sod_key = f"sod_equity_{asof}"
-    sod_raw = store.get_kv(sod_key)
-    if sod_raw is None:
-        store.set_kv(sod_key, str(account.equity))
-        sod_equity = account.equity
-    else:
-        sod_equity = float(sod_raw)
-    daily_pnl = account.equity - sod_equity
+    # ── 1. MANAGEMENT PASS — value & exit open positions before any new entry. ──
+    manage_summary = manage_open_positions(adapter, store, config, asof)
+
+    # ── 2. Daily P&L from our tracked positions (broker-agnostic, works in sim
+    # AND live): realized closes today + unrealized mark on what's still open.
+    daily_pnl = manage_summary["realized_today"] + manage_summary["unrealized_open"]
+
+    # Proactively trip the kill switch on a daily-loss breach even if no new
+    # order is evaluated this cycle.
+    limit_dollars = limits.daily_loss_limit_pct * account.equity
+    if account.equity > 0 and daily_pnl <= -abs(limit_dollars) and not store.kill_switch:
+        store.set_kill_switch(True)
+        store.append(_now_iso(), "kill_switch", {
+            "engaged": True, "reason": "daily_loss_limit", "daily_pnl": daily_pnl})
+
+    # ── 3. Gate's view of concurrent exposure = our OPEN tracked positions. ──
+    positions: list[Position] = []
+    for p in store.get_open_positions():
+        positions.append(Position(
+            symbol=p["underlying"], qty=p["contracts"], avg_price=0.0,
+            market_value=float(p["width"]) * 100.0 * int(p["contracts"]),
+            asset_class="option", underlying=p["underlying"],
+            max_loss=float(p["max_loss"] or 0.0)))
+    opened_today = _count_opened_today(store, asof)
 
     options_level = int(config.account.get("options_approval_level", 3))
     region = str(config.account.get("region", "US")).upper()
@@ -109,6 +122,7 @@ def run_cycle(
         "asof": asof, "mode": "paper" if adapter.is_paper else "LIVE",
         "broker": adapter.name, "kill_switch": store.kill_switch,
         "signals": [], "placed": [], "rejected": [], "skipped_duplicates": [],
+        "manage": manage_summary, "daily_pnl": round(daily_pnl, 2),
     }
     store.append(ts, "cycle_start", {"asof": asof, "broker": adapter.name,
                                      "equity": account.equity})
@@ -176,6 +190,11 @@ def run_cycle(
                 if result.accepted:
                     opened_today += 1
                     _synthesize_position(order)
+                    # Persist the open position so future cycles can manage it.
+                    try:
+                        store.open_position(order_to_position(order, asof, _now_iso()))
+                    except ValueError:
+                        pass  # non-spread orders aren't tracked as managed positions yet
                     summary["placed"].append({
                         "underlying": order.underlying, "strategy": order.strategy,
                         "status": result.status, "est_credit": order.est_credit,
