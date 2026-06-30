@@ -77,29 +77,43 @@ def _spot(adapter: BrokerAdapter, underlying: str) -> Optional[float]:
         return None
 
 
+def _occ(underlying: str, expiration: str, right: str, strike: float) -> str:
+    """Build a real OCC option symbol, e.g. SPY260219P00540000. Real brokers
+    (Alpaca) submit the leg `symbol` verbatim, so it must be valid."""
+    yymmdd = expiration[2:4] + expiration[5:7] + expiration[8:10]
+    cp = "C" if right == "call" else "P"
+    return f"{underlying}{yymmdd}{cp}{int(round(strike * 1000)):08d}"
+
+
 def _closing_order(pos: dict, value_ps: float) -> OrderRequest:
     """Close the spread by reversing every leg (sell longs, buy back shorts)."""
     contracts = int(pos["contracts"])
     exp, u = pos["expiration"], pos["underlying"]
 
-    def leg(side, otype, strike, tag):
-        return OrderLeg(symbol=f"{u}_close_{tag}", side=side, qty=contracts,
+    def leg(side, otype, strike):
+        return OrderLeg(symbol=_occ(u, exp, otype, strike), side=side, qty=contracts,
                         asset_class="option", option_type=otype, strike=strike, expiration=exp)
 
     if pos.get("structure") == "iron_condor":
         j = json.loads(pos["legs_json"])
-        legs = [
-            leg("buy", "put", j["sp"], "sp"), leg("sell", "put", j["lp"], "lp"),
-            leg("buy", "call", j["sc"], "sc"), leg("sell", "call", j["lc"], "lc"),
-        ]
+        legs = [leg("buy", "put", j["sp"]), leg("sell", "put", j["lp"]),
+                leg("buy", "call", j["sc"]), leg("sell", "call", j["lc"])]
     else:
         family = pos.get("family") or ("call" if "call" in (pos.get("structure") or "") else "put")
-        legs = [leg("buy", family, pos["short_strike"], "short"),
-                leg("sell", family, pos["long_strike"], "long")]
+        legs = [leg("buy", family, pos["short_strike"]),
+                leg("sell", family, pos["long_strike"])]
+
+    # Sign convention: closing a DEBIT spread (sell the more valuable long leg)
+    # nets a CREDIT of value_ps -> est_credit must be POSITIVE so the adapters
+    # submit a negative (credit) combo price. Closing a CREDIT spread or condor
+    # is genuinely a debit -> est_credit 0 -> positive (debit) price. (Magnitude
+    # is irrelevant to the adapters; only the sign drives the price sign.)
+    is_debit_close = not bool(pos.get("is_credit", 1))
+    est_credit = round(max(0.0, value_ps) * 100, 2) if is_debit_close else 0.0
     return OrderRequest(
         client_order_id=f"CLOSE-{pos['client_order_id']}",
         legs=legs, order_type="limit", limit_price=round(max(0.0, value_ps), 2),
-        strategy=f"close_{pos.get('structure', 'vertical')}", est_credit=0.0,
+        strategy=f"close_{pos.get('structure', 'vertical')}", est_credit=est_credit,
         max_loss=0.0, underlying=pos["underlying"],
     )
 
@@ -152,6 +166,15 @@ def manage_open_positions(adapter: BrokerAdapter, store: Store, config,
             order = _closing_order(pos, decision.exit_value_ps)
             result = adapter.place_order(order)
             store.record_order(_now_iso(), order, result)
+            if not result.accepted:
+                # Broker rejected the close — do NOT mark it closed locally, or our
+                # book desyncs from the live account. Leave open; retry next cycle.
+                store.append(_now_iso(), "close_failed", {
+                    "underlying": pos["underlying"], "position_id": pos.get("id"),
+                    "reason": result.reason})
+                summary["held"].append({"underlying": pos["underlying"],
+                                        "reason": "close_rejected", "detail": result.reason})
+                continue
 
         store.close_position(pos["id"], asof, _now_iso(), decision.reason,
                              decision.exit_value_ps, decision.realized_pnl)

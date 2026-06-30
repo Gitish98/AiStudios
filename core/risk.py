@@ -216,6 +216,14 @@ def _notional(order: OrderRequest) -> float:
         call_w = (calls[-1] - calls[0]) if len(calls) >= 2 else 0.0
         qty = max((abs(l.qty) for l in order.legs), default=1)
         return max(put_w, call_w) * 100.0 * qty
+    # Debit verticals: footprint is the single net DEBIT paid (== max loss), not
+    # legs × debit. Falling through to the generic per-leg loop would double-count.
+    if order.strategy in ("call_debit_spread", "put_debit_spread"):
+        qty = max((abs(l.qty) for l in order.legs), default=1)
+        if order.limit_price:
+            return abs(order.limit_price) * 100.0 * qty
+        return order.max_loss
+
     # Two-leg defined-risk credit spreads: collateral = strike width * 100 * qty.
     if order.strategy in ("put_credit_spread", "call_credit_spread"):
         strikes = [l.strike for l in order.legs if l.strike is not None]

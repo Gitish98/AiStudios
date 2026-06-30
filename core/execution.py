@@ -112,13 +112,18 @@ def run_cycle(
 
     def _synthesize_position(order) -> None:
         """Add this order's exposure to the working position list so the next
-        signal in the same cycle sees accumulated concentration/heat/leverage."""
+        signal in the same cycle sees accumulated concentration/heat/leverage —
+        AND decrement available buying power so the BP guard binds across multiple
+        engines in one cycle (otherwise each order is checked against the full
+        start-of-cycle BP and they can collectively over-commit margin)."""
+        notional = _notional(order)
         positions.append(Position(
             symbol=order.underlying or (order.legs[0].symbol if order.legs else "?"),
-            qty=1, avg_price=0.0, market_value=_notional(order),
+            qty=1, avg_price=0.0, market_value=notional,
             asset_class="option", underlying=order.underlying,
             max_loss=order.max_loss,
         ))
+        account.buying_power = max(0.0, account.buying_power - notional)
 
     summary: dict[str, Any] = {
         "asof": asof, "mode": "paper" if adapter.is_paper else "LIVE",
