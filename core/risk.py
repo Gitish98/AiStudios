@@ -61,6 +61,7 @@ class RiskContext:
     day_trades_trailing_5: int = 0
     daily_pnl: float = 0.0  # realized+unrealized today, dollars (negative = loss)
     options_approval_level: int = 3
+    region: str = "US"      # "US" -> FINRA PDT applies; "CA" -> no PDT (IBKR Canada)
 
 
 @dataclass
@@ -175,13 +176,24 @@ class RiskGate:
                 f"{L.max_gross_leverage:.2f}x equity."
             )
 
-        # 11. PDT awareness (margin accounts under threshold).
-        if (ctx.account.account_type == "margin"
+        # 11. Buying-power guard (margin maintenance). An order's collateral must
+        # fit available buying power. For a CA margin account this — not PDT — is
+        # the binding regulatory constraint.
+        if ctx.account.buying_power > 0 and notional > ctx.account.buying_power + 1e-6:
+            d.reject(
+                f"Order notional ${notional:.0f} exceeds available buying power "
+                f"${ctx.account.buying_power:.0f}."
+            )
+
+        # 12. PDT awareness — US (FINRA) ONLY. Canada has no Pattern Day Trader
+        # rule, so this is skipped for a CA account.
+        if (ctx.region.upper() == "US"
+                and ctx.account.account_type == "margin"
                 and equity < L.pdt_equity_threshold
                 and order.is_day_trade
                 and ctx.day_trades_trailing_5 >= 3):
             d.reject(
-                "PDT guard: margin account under "
+                "PDT guard: US margin account under "
                 f"${L.pdt_equity_threshold:.0f} already has {ctx.day_trades_trailing_5} "
                 "day trades in 5 sessions; a 4th would flag Pattern Day Trader."
             )

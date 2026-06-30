@@ -17,6 +17,11 @@ httpx>=0.27
 # Broker (Phase 0: Alpaca paper). Tradier is a thin REST wrapper via httpx.
 alpaca-py>=0.20
 
+# IBKR (Interactive Brokers) — ONLY needed to connect to a running IB Gateway.
+# The maintained fork; the adapter also accepts the older ib_insync. Not required
+# to run the sim broker, so it's safe to omit when developing from a phone.
+ib_async>=1.0.0
+
 # Market calendar (sessions, holidays, half-days) for the market-hours guard
 pandas-market-calendars>=4.3
 

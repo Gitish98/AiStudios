@@ -21,7 +21,8 @@ mode: paper                      # paper | live   (keep paper)
 
 account:
   # Used for sizing math and to select the correct regulatory constraint set.
-  type: cash                     # cash | margin   (cash recommended — see §7.1)
+  type: margin                   # cash | margin
+  region: CA                     # CA -> no US PDT rule; buying-power/margin guard applies
   starting_equity_usd: 30000     # your paper/live account equity
   # Broker options-approval tier. The system REFUSES any strategy above this.
   #   1 = covered calls / cash-secured puts
@@ -32,9 +33,14 @@ account:
 
 # ── Broker routing ───────────────────────────────────────────────────────────
 brokers:
-  execution: alpaca_paper        # where orders go (Phase 0: Alpaca paper only)
-  options_data: tradier_sandbox  # chains; greeks/IV fall back to BS if null
-  # Phase 3 adds a second adapter (Tradier) behind the same interface.
+  # ibkr_paper -> connects to IB Gateway at ibkr_host:ibkr_port. If no Gateway is
+  # reachable (e.g. operating from a phone), the factory falls back to SIM so the
+  # cycle still runs. See docs/08-ibkr-gateway-runbook.md.
+  execution: ibkr_paper          # ibkr_paper | alpaca_paper | sim
+  options_data: ibkr             # chains/greeks from IBKR; BS fallback if missing
+  ibkr_host: 127.0.0.1
+  ibkr_port: 4002                # IB Gateway PAPER (live=4001; TWS paper=7497)
+  ibkr_client_id: 7
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  RISK LIMITS — the deterministic veto gate enforces ALL of these.

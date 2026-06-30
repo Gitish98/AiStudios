@@ -9,12 +9,13 @@ def _account(equity=30000.0, acct_type="margin", dt=0):
                    account_type=acct_type, is_paper=True, pdt_day_trade_count=dt)
 
 
-def _ctx(account=None, positions=None, kill=False, opened=0, daily_pnl=0.0, level=3):
+def _ctx(account=None, positions=None, kill=False, opened=0, daily_pnl=0.0, level=3,
+         region="US"):
     return RiskContext(
         account=account or _account(), positions=positions or [],
         is_paper=True, kill_switch=kill, positions_opened_today=opened,
         day_trades_trailing_5=(account.pdt_day_trade_count if account else 0),
-        daily_pnl=daily_pnl, options_approval_level=level,
+        daily_pnl=daily_pnl, options_approval_level=level, region=region,
     )
 
 
@@ -176,6 +177,25 @@ def test_iron_condor_notional_uses_wing_not_span():
                       max_loss=60.0, est_credit=40.0, underlying="SPY",
                       required_approval_level=3)
     assert _notional(ic) == 100.0
+
+
+def test_pdt_skipped_for_canadian_account():
+    # Canada has no PDT rule — a CA margin account under $25k with prior day
+    # trades must NOT be blocked on that basis.
+    acct = _account(equity=10000.0, acct_type="margin", dt=9)
+    o = _spread_order(width=0.5, credit=0.20)
+    o.is_day_trade = True
+    d = _gate().evaluate(o, _ctx(account=acct, region="CA"))
+    assert d.approved, d.reasons
+
+
+def test_buying_power_guard():
+    # Collateral must fit available buying power.
+    acct = Account(equity=30000.0, cash=30000.0, buying_power=50.0,
+                   account_type="margin", is_paper=True)
+    d = _gate().evaluate(_spread_order(width=1.0, credit=0.30), _ctx(account=acct))
+    assert not d.approved
+    assert any("buying power" in r.lower() for r in d.reasons)
 
 
 def test_portfolio_heat_cap_enforced():

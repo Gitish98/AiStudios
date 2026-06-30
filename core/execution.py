@@ -84,6 +84,7 @@ def run_cycle(
     daily_pnl = account.equity - sod_equity
 
     options_level = int(config.account.get("options_approval_level", 3))
+    region = str(config.account.get("region", "US")).upper()
 
     def _ctx() -> RiskContext:
         return RiskContext(
@@ -91,6 +92,7 @@ def run_cycle(
             kill_switch=store.kill_switch, positions_opened_today=opened_today,
             day_trades_trailing_5=account.pdt_day_trade_count,
             daily_pnl=daily_pnl, options_approval_level=options_level,
+            region=region,
         )
 
     def _synthesize_position(order) -> None:

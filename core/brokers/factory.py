@@ -16,6 +16,7 @@ from typing import Optional
 from ..config import Config
 from .alpaca import AlpacaAdapter
 from .base import BrokerAdapter
+from .ibkr import IBKRAdapter
 from .sim import SimAdapter
 
 
@@ -42,6 +43,23 @@ def build_execution_adapter(config: Config, asof: Optional[str] = None) -> Broke
             SimAdapter(asof=asof, equity=equity, account_type=acct_type),
             "Using SIM broker (deterministic, no network). Set brokers.execution: "
             "alpaca_paper and add ALPACA_PAPER_* keys to trade Alpaca paper.",
+        )
+
+    if requested in ("ibkr", "ibkr_paper"):
+        host = str(config.brokers.get("ibkr_host", "127.0.0.1"))
+        port = int(config.brokers.get("ibkr_port", 4002))   # 4002 = Gateway paper
+        cid = int(config.brokers.get("ibkr_client_id", 7))
+        region = str(config.account.get("region", "CA"))
+        adapter = IBKRAdapter(host=host, port=port, client_id=cid,
+                              paper=True, region=region)
+        if adapter.try_connect():
+            return BrokerBuild(adapter, f"Using IBKR PAPER via Gateway at {host}:{port}.")
+        return BrokerBuild(
+            SimAdapter(asof=asof, equity=equity, account_type=acct_type),
+            f"ibkr_paper requested but no IB Gateway answered at {host}:{port} "
+            "(or ib_async/ib_insync isn't installed) — falling back to SIM so the "
+            "cycle still runs. Start IB Gateway on a host and re-run. "
+            "See docs/08-ibkr-gateway-runbook.md.",
         )
 
     if requested in ("alpaca", "alpaca_paper"):
