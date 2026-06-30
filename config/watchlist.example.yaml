@@ -1,0 +1,60 @@
+# ═════════════════════════════════════════════════════════════════════════════
+#  AiStudios — watchlist (EXAMPLE / template)
+#
+#  HOW TO USE:  cp config/watchlist.example.yaml config/watchlist.yaml
+#  The real config/watchlist.yaml is gitignored. This template is tracked.
+#
+#  Keep the universe SMALL and LIQUID to start. The whole point of the universe
+#  filters (docs/04 §0.4) is that a tradable name must be liquid enough that
+#  fills, spreads, and exits don't eat the (thin) edge.
+#
+#  Universe filters applied by the core BEFORE any scan (a name is dropped if it
+#  fails, regardless of being listed here):
+#    - price >= $10
+#    - 20-day avg dollar-volume >= $20M
+#    - for options: tight chain (OI >= 250, relative spread <= 10%, bid > 0)
+#    - US-listed, optionable, not a leveraged/inverse ETN (unless whitelisted)
+# ═════════════════════════════════════════════════════════════════════════════
+
+# ── Liquid index / sector ETFs (best place to START — deep, tight options) ──
+# ETFs avoid single-stock earnings binary risk, which is ideal for the
+# Phase-0 covered-call / premium starter strategy.
+etfs:
+  - SPY      # S&P 500
+  - QQQ      # Nasdaq 100
+  - IWM      # Russell 2000
+  - DIA      # Dow 30
+  - XLK      # Technology sector
+  - XLF      # Financials sector
+  - XLE      # Energy sector
+
+# ── Liquid large-cap equities (deep options; have earnings — mind §0.4/§2.5) ─
+# These carry scheduled earnings binary risk. The earnings calendar is used to
+# AVOID holding naked premium through a report (and is the trigger for Engine C).
+equities:
+  - AAPL
+  - MSFT
+  - NVDA
+  - AMZN
+  - GOOGL
+  - META
+  - JPM
+  - XOM
+
+# ── Per-symbol overrides (optional) ──────────────────────────────────────────
+# Override a shared default for one name. Omit to use config defaults.
+overrides:
+  # Example: tolerate a slightly wider spread on a name you know is liquid.
+  # NVDA:
+  #   max_rel_spread: 0.12
+  {}
+
+# ── Explicit deny list (never trade these even if they pass filters) ─────────
+deny:
+  # - SOME_TICKER
+
+# ── Correlation note ─────────────────────────────────────────────────────────
+# AAPL/MSFT/NVDA/AMZN/GOOGL/META + QQQ + XLK are all heavily tech-correlated.
+# The risk gate treats names correlated > 0.8 as ONE cluster for portfolio heat
+# (docs/05 §4.1), so a "diversified" tech book is counted as the single bet it
+# really is. Spread real risk across uncorrelated sectors.

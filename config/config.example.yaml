@@ -1,0 +1,169 @@
+# ═════════════════════════════════════════════════════════════════════════════
+#  AiStudios — main config (EXAMPLE / template)
+#
+#  HOW TO USE:  cp config/config.example.yaml config/config.yaml
+#  The real config/config.yaml is gitignored. This template is tracked.
+#
+#  Every value here is read by the DETERMINISTIC core. The LLM may READ these
+#  numbers (so it sizes proposals sensibly) but it can NEVER write them.
+#  Secrets do NOT live here — they live in .env (gitignored). See .env.example.
+#
+#  Sober note: these limits are STARTING POINTS for a cautious beginner on a
+#  small account. They are not gospel; tune them to your account and risk
+#  tolerance. Smaller is safer. See docs/05-risk-and-safety.md.
+# ═════════════════════════════════════════════════════════════════════════════
+
+# ── Mode ─────────────────────────────────────────────────────────────────────
+# PAPER is the default and the only mode that runs without the full go-live
+# gate (docs/05 §1.2). Setting mode: live here is ONE of five independent
+# conditions; it does nothing on its own.
+mode: paper                      # paper | live   (keep paper)
+
+account:
+  # Used for sizing math and to select the correct regulatory constraint set.
+  type: cash                     # cash | margin   (cash recommended — see §7.1)
+  starting_equity_usd: 30000     # your paper/live account equity
+  # Broker options-approval tier. The system REFUSES any strategy above this.
+  #   1 = covered calls / cash-secured puts
+  #   2 = + long options
+  #   3 = + spreads / defined-risk multi-leg   <-- enough for all 3 engines
+  #   4 = naked/uncovered (NOT used; forbidden by default — see §2.3)
+  options_approval_level: 3
+
+# ── Broker routing ───────────────────────────────────────────────────────────
+brokers:
+  execution: alpaca_paper        # where orders go (Phase 0: Alpaca paper only)
+  options_data: tradier_sandbox  # chains; greeks/IV fall back to BS if null
+  # Phase 3 adds a second adapter (Tradier) behind the same interface.
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  RISK LIMITS — the deterministic veto gate enforces ALL of these.
+#  Any breach => order rejected (or kill switch, where noted). Fail-closed.
+# ─────────────────────────────────────────────────────────────────────────────
+risk:
+  # --- per-trade ---
+  per_trade_risk_pct: 0.005          # 0.5% of equity at risk per trade (entry->stop / defined max-loss)
+  per_position_notional_pct: 0.05    # <= 5% of equity notional in any one position
+
+  # --- portfolio (intraday) ---
+  portfolio_heat_pct: 0.06           # <= 6% of equity at risk across all open stops at once
+  max_concurrent_positions: 6        # lower while in the live ramp (see go_live below)
+  max_daily_new_positions: 5         # anti-runaway-loop cap
+  max_single_underlying_pct: 0.08    # stock + its options on ONE name, combined
+  max_sector_pct: 0.25               # <= 25% of equity per GICS sector
+  correlation_cluster_threshold: 0.8 # two names > 0.8 (90d) count as ONE risk cluster for heat
+
+  # --- gross leverage (enforced on EQUITY, not on broker buying power) ---
+  # Broker buying power is a LEVERAGED figure (Reg-T 2:1, up to 4:1 PDT). We
+  # deliberately do NOT size to it. This caps true gross exposure vs equity.
+  max_gross_leverage: 1.0            # gross notional / equity <= 1.0 for the starter
+
+  # --- options buying power ---
+  max_options_bp_pct: 0.30           # <= 30% of options buying power
+
+  # --- daily loss kill switch (INTRADAY ONLY — see overnight section below) ---
+  # IMPORTANT: this is a continuous mark-to-market trip DURING the session. It
+  # CANNOT bound an overnight/gap loss. It is NOT a 3%/day max-loss backstop.
+  daily_loss_limit_pct: -0.03        # -3% of START-OF-DAY equity -> KILL SWITCH (flatten-only)
+
+  # --- drawdown pause ---
+  max_dd_pause_pct: 0.10             # pause NEW risk past 10% drawdown from high-water mark
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  OVERNIGHT / GAP RISK — separate, first-class guardrails.
+#  The intraday daily-loss kill switch is ASLEEP across the session boundary.
+#  The largest real risk to a retail options/equity book is the overnight gap
+#  (earnings, halts, takeovers, macro shocks). These caps bind at the CASH CLOSE.
+# ─────────────────────────────────────────────────────────────────────────────
+overnight:
+  # Sum of true max-loss-if-held-overnight across all positions carried past the
+  # close must not exceed this fraction of equity. Computed at ~15:50 ET.
+  max_overnight_defined_risk_pct: 0.04
+  # Worst-case aggregate gap loss: if EVERY overnight position gapped to its full
+  # max loss simultaneously (correlated event morning), total must stay <= this.
+  max_aggregate_gap_loss_pct: 0.06
+  # Cap on max-loss carried into a single scheduled binary event (earnings).
+  max_overnight_risk_at_event_pct: 0.01
+
+# ── Position sizing ──────────────────────────────────────────────────────────
+sizing:
+  method: fixed_fractional         # fixed_fractional | vol_target | kelly_lite
+  # fixed_fractional is the default and usually the right answer (docs/05 §3.1).
+  # kelly_lite is capped HARD (<= 1/4 Kelly, then clamped by per_trade_risk_pct)
+  # and only used once a strategy has DOZENS of closed trades, not 5.
+  kelly_fraction: 0.25
+  vol_target_atr_mult: 2.0
+
+# ── Order safety ─────────────────────────────────────────────────────────────
+orders:
+  default_type: limit              # limit | marketable_limit — NEVER blind market
+  options_type: limit              # options are ALWAYS limit (wide spreads)
+  max_slippage_pct: 0.005          # don't send if marketable-limit > 0.5% past reference
+  extended_hours: false
+  max_orders_per_minute: 10        # runaway-loop guard
+  max_orders_per_symbol_per_day: 8 # runaway-loop guard
+  # Fat-finger ceilings (the "extra zero" class of error).
+  fat_finger_max_qty: 1000
+  fat_finger_max_notional_usd: 10000
+  fat_finger_price_dev_pct: 0.10   # reject limit price > 10% off current mid
+
+# ── Data freshness / circuit breakers ────────────────────────────────────────
+data:
+  max_quote_age_seconds: 5         # stale-quote breaker (paper-trade the delay you'll trade!)
+  max_spread_pct: 0.01             # wide-spread breaker for marketable orders
+  gap_suppress_pct: 0.03           # suppress auto-entries first N min if overnight gap > 3%
+  gap_suppress_minutes: 5
+
+# ── ALL options must be DEFINED-RISK. No exceptions in the starter. ──────────
+# There is intentionally NO `allow_undefined_risk` flag here. Naked/uncovered
+# short options are an un-overridable hard reject in the starter (docs/05 §2.3).
+options:
+  defined_risk_only: true          # hard; not configurable in starter scope
+  no_naked_calls: true             # hard
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  GO-LIVE — deliberately hard. Live trading requires ALL FIVE conditions in
+#  docs/05 §1.2, checked in code AT ORDER TIME, not at startup. The LLM has no
+#  tool for any of them. This block only configures the size RAMP; it cannot
+#  enable live on its own.
+# ─────────────────────────────────────────────────────────────────────────────
+go_live:
+  ramp_tier: 0                     # 0 = paper. Human edits this; system never self-promotes.
+  # Ramp tiers (a single guardrail breach resets the clean-day counter to zero):
+  #   tier 1: $250 notional / pos, 2 positions, 10 clean days
+  #   tier 2: $1,000 / pos, 4 positions, 10 clean days
+  #   tier 3: $5,000 / pos, 6 positions, 20 clean days
+  #   tier N: config cap, manual sign-off each step
+  ramp:
+    - {tier: 1, max_notional_usd: 250,   max_positions: 2, clean_days_to_advance: 10}
+    - {tier: 2, max_notional_usd: 1000,  max_positions: 4, clean_days_to_advance: 10}
+    - {tier: 3, max_notional_usd: 5000,  max_positions: 6, clean_days_to_advance: 20}
+
+# ── Human-in-the-loop checkpoints ────────────────────────────────────────────
+checkpoints:
+  order_approval: manual           # manual = one-tap approve/skip per order on the phone
+                                   # auto   = approved orders submit directly (PAPER only by recommendation)
+  premarket_review: true           # push the day's strategy mix to the phone for optional veto
+
+# ── Reflection -> allocation safety (LLM-influenced sizing channel) ──────────
+# The Reflection LLM can bias tomorrow's per-strategy allocation. To keep this a
+# fail-safe channel: LLM text may only DECREASE allocation; any INCREASE must be
+# justified by Python-computed realized expectancy and is capped per day.
+allocation:
+  max_daily_change_pct: 0.10       # allocation multiplier can move at most +/-10%/day
+  llm_can_increase: false          # LLM text can only lower allocation; never raise it
+
+# ── Strategy graduation gate (paper -> live eligibility) ─────────────────────
+# Positive after-cost expectancy ALONE is too weak. Require time AND trade count
+# AND a margin that survives a worst-case slippage haircut.
+graduation:
+  min_oos_trading_days: 60
+  min_closed_trades: 40            # low-freq engines may need FAR more calendar days to reach this
+  require_positive_after_cost_expectancy: true
+  slippage_haircut: worst_case     # expectancy must stay positive at the worst end of realized slippage
+
+# ── Scheduling (see docs/03 §8). Phase 0/1 default to MANUAL trigger. ────────
+schedule:
+  mode: manual                     # manual | cron   (manual until you have an always-on host)
+  # A phone-only operator has no local cron. Use the harness's managed recurring
+  # task primitive, or keep manual `python cli.py run-cycle`. See docs/00-START-HERE.md.

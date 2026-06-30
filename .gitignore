@@ -1,0 +1,51 @@
+# ── Secrets — NEVER commit these ────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets/
+~/.trading/
+.trading/
+# Your real config copies (may contain account-specific values). Inline comments
+# are NOT allowed on .gitignore pattern lines, so keep these bare.
+config/config.yaml
+config/watchlist.yaml
+# Keep the *.example.yaml templates tracked; ignore the live copies above.
+
+# ── State / data ────────────────────────────────────────────────────────────
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+data/
+portfolio.db
+
+# ── Generated artifacts ─────────────────────────────────────────────────────
+dashboard/out/
+*.log
+logs/
+
+# ── Python ──────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.eggs/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ── OS / editor ─────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
