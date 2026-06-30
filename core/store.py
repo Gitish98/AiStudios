@@ -217,6 +217,12 @@ class Store:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def get_closed_positions(self) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            "SELECT * FROM positions WHERE status = 'closed' ORDER BY closed_ts, id"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def get_pending_positions(self) -> list[dict[str, Any]]:
         rows = self.conn.execute(
             "SELECT * FROM positions WHERE status = 'pending' ORDER BY id"
