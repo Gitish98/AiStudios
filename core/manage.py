@@ -119,12 +119,60 @@ def _closing_order(pos: dict, value_ps: float) -> OrderRequest:
     )
 
 
+def _is_filled(result, contracts: int) -> bool:
+    return (result.status or "").lower() == "filled" and float(result.filled_qty or 0) > 0
+
+
+def _load_pending(store: Store) -> dict:
+    raw = store.get_kv("pending_closes")
+    return json.loads(raw) if raw else {}
+
+
+def _save_pending(store: Store, d: dict) -> None:
+    store.set_kv("pending_closes", json.dumps(d))
+
+
+def _finalize_pending_closes(adapter: BrokerAdapter, store: Store, asof: str) -> dict:
+    """A close accepted-but-not-yet-filled in a prior cycle is finalized here once
+    the broker reports it filled — so we never mark a position closed (dropping its
+    risk from the book) before the close actually executes."""
+    pend = _load_pending(store)
+    if not pend:
+        return pend
+    try:
+        bro = {o.client_order_id: o for o in adapter.list_orders()}
+    except Exception:
+        return pend  # can't confirm -> leave pending, the position stays tracked
+    changed = False
+    for pid, info in list(pend.items()):
+        o = bro.get(info["coid"])
+        if o is None:
+            continue
+        st = (o.status or "").lower()
+        if st == "filled" and float(o.filled_qty or 0) > 0:
+            store.close_position(int(pid), asof, _now_iso(), info["reason"],
+                                 info["exit_value_ps"], info["realized_pnl"])
+            store.append(_now_iso(), "position_closed", {
+                "position_id": int(pid), "reason": info["reason"],
+                "realized_pnl": info["realized_pnl"], "via": "pending_fill"})
+            del pend[pid]; changed = True
+        elif st in ("rejected", "canceled", "cancelled", "inactive", "apicancelled"):
+            del pend[pid]; changed = True  # close died -> leave open, re-evaluate
+    if changed:
+        _save_pending(store, pend)
+    return pend
+
+
 def manage_open_positions(adapter: BrokerAdapter, store: Store, config,
                           asof: str) -> dict[str, Any]:
     strategies = config.strategies or {}
     credit_params = ManageParams.from_config(strategies.get("premium_harvest", {}))
     debit_params = ManageParams.from_config(strategies.get("volatility_breakout", {}))
     condor_params = ManageParams.from_config(strategies.get("earnings_vol", {}))
+
+    # Finalize closes that were accepted-but-unfilled in a prior cycle, then load
+    # the still-open book.
+    pending = _finalize_pending_closes(adapter, store, asof)
     open_positions = store.get_open_positions()
 
     def _params_for(pos):
@@ -139,6 +187,9 @@ def manage_open_positions(adapter: BrokerAdapter, store: Store, config,
 
     for pos in open_positions:
       try:
+        if str(pos.get("id")) in pending:   # awaiting a fill on a prior close
+            summary["held"].append({"underlying": pos["underlying"], "reason": "close_pending"})
+            continue
         value_ps = mark_spread_value_ps(adapter, pos)
         if value_ps is None:
             summary["held"].append({"underlying": pos["underlying"], "reason": "no_mark"})
@@ -175,6 +226,19 @@ def manage_open_positions(adapter: BrokerAdapter, store: Store, config,
                     "reason": result.reason})
                 summary["held"].append({"underlying": pos["underlying"],
                                         "reason": "close_rejected", "detail": result.reason})
+                continue
+            if not _is_filled(result, pos["contracts"]):
+                # Accepted but not yet filled (real brokers ack before fill). Keep
+                # the position OPEN and tracked; finalize when it fills next cycle.
+                pending[str(pos["id"])] = {
+                    "coid": order.client_order_id, "reason": decision.reason,
+                    "exit_value_ps": decision.exit_value_ps,
+                    "realized_pnl": decision.realized_pnl}
+                _save_pending(store, pending)
+                store.append(_now_iso(), "close_pending", {
+                    "underlying": pos["underlying"], "position_id": pos["id"],
+                    "coid": order.client_order_id})
+                summary["held"].append({"underlying": pos["underlying"], "reason": "close_pending"})
                 continue
 
         store.close_position(pos["id"], asof, _now_iso(), decision.reason,

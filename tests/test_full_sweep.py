@@ -152,6 +152,83 @@ def test_opening_orders_still_carry_open_intent():
     assert intents <= {"buy_to_open", "sell_to_open"}
 
 
+def test_alpaca_option_position_parsed_for_reconcile():
+    from core.brokers.alpaca import position_from_alpaca_row
+    p = position_from_alpaca_row({
+        "symbol": "SPY260718P00450000", "qty": "-1", "avg_entry_price": "1.20",
+        "market_value": "-120", "asset_class": "us_option"})
+    assert p.asset_class == "option"            # normalized, not 'us_option'
+    assert p.option_strike == 450.0 and p.option_right == "P"
+    assert p.option_expiration == "2026-07-18" and p.underlying == "SPY"
+    # equity rows still pass through
+    eq = position_from_alpaca_row({"symbol": "SPY", "qty": "10",
+                                   "avg_entry_price": "550", "market_value": "5500",
+                                   "asset_class": "us_equity"})
+    assert eq.asset_class == "us_equity"
+
+
+def test_managed_close_waits_for_fill_not_accept():
+    """A close that is ACCEPTED but not yet FILLED must NOT mark the position
+    closed — it stays open and tracked until the fill is confirmed."""
+    from core.brokers.base import OrderResult
+
+    class PreSubmitClose(SimAdapter):
+        def place_order(self, order):
+            if order.client_order_id.startswith("CLOSE-"):
+                return OrderResult(accepted=True, client_order_id=order.client_order_id,
+                                   broker_order_id="B1", status="PreSubmitted", filled_qty=0)
+            return super().place_order(order)
+        def list_orders(self):
+            return []   # nothing filled yet
+
+    with tempfile.TemporaryDirectory() as tmp:
+        store = Store(Path(tmp) / "t.db")
+        store.open_position({
+            "client_order_id": "o", "strategy": "put_credit_spread",
+            "structure": "put_credit_spread", "family": "put", "is_credit": 1,
+            "underlying": "SPY", "status": "open", "opened_asof": "2026-01-15",
+            "opened_ts": "t", "expiration": "2026-01-25", "contracts": 1,
+            "short_strike": 540, "long_strike": 539, "width": 1, "legs_json": None,
+            "entry_credit_ps": 0.26, "max_loss": 74})
+        m = manage_open_positions(PreSubmitClose(asof="2026-01-15"), store,
+                                  types.SimpleNamespace(strategies={}), "2026-01-15")
+        assert any(h.get("reason") == "close_pending" for h in m["held"])
+        assert len(store.get_open_positions()) == 1   # still open — close not yet filled
+        # And it is NOT booked as realized P&L yet.
+        assert store.realized_pnl_on("2026-01-15") == 0.0
+        store.close()
+
+
+def test_pending_close_finalizes_when_filled():
+    from core.brokers.base import OrderResult
+
+    class FillsLater(SimAdapter):
+        def list_orders(self):
+            return [OrderResult(accepted=True, client_order_id="CLOSE-o",
+                                status="filled", filled_qty=2)]
+
+    with tempfile.TemporaryDirectory() as tmp:
+        store = Store(Path(tmp) / "t.db")
+        store.open_position({
+            "client_order_id": "o", "strategy": "put_credit_spread",
+            "structure": "put_credit_spread", "family": "put", "is_credit": 1,
+            "underlying": "SPY", "status": "open", "opened_asof": "2026-01-15",
+            "opened_ts": "t", "expiration": "2026-02-19", "contracts": 1,
+            "short_strike": 540, "long_strike": 539, "width": 1, "legs_json": None,
+            "entry_credit_ps": 0.26, "max_loss": 74})
+        pid = store.get_open_positions()[0]["id"]
+        # Simulate a prior cycle having recorded a pending close.
+        import json as _json
+        store.set_kv("pending_closes", _json.dumps({str(pid): {
+            "coid": "CLOSE-o", "reason": "profit_target",
+            "exit_value_ps": 0.13, "realized_pnl": 13.0}}))
+        manage_open_positions(FillsLater(asof="2026-02-25"), store,
+                              types.SimpleNamespace(strategies={}), "2026-02-25")
+        assert len(store.get_open_positions()) == 0           # now finalized closed
+        assert store.realized_pnl_on("2026-02-25") == 13.0
+        store.close()
+
+
 def test_debit_vertical_notional_not_double_counted():
     o = OrderRequest(
         client_order_id="d",

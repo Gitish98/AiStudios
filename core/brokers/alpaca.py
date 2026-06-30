@@ -99,15 +99,7 @@ class AlpacaAdapter(BrokerAdapter):
 
     def get_positions(self) -> list[Position]:
         rows = self._get(self.trading_base, "/v2/positions")
-        out = []
-        for p in rows:
-            out.append(Position(
-                symbol=p["symbol"], qty=float(p["qty"]),
-                avg_price=float(p["avg_entry_price"]),
-                market_value=float(p.get("market_value", 0)),
-                asset_class=p.get("asset_class", "us_equity"),
-            ))
-        return out
+        return [position_from_alpaca_row(p) for p in rows]
 
     # ── market data ──────────────────────────────────────────────────────────
     def get_quote(self, symbol: str) -> Quote:
@@ -228,6 +220,30 @@ def build_order_body(order: OrderRequest) -> dict:
             for l in order.legs
         ],
     }
+
+
+def position_from_alpaca_row(p: dict) -> Position:
+    """Map an Alpaca position row to our Position. Critically, OPTION rows must be
+    normalized to asset_class='option' with strike/right/expiration populated, or
+    reconcile drops them and reports false drift. (Pure function — unit-tested.)"""
+    import re
+    ac = p.get("asset_class", "us_equity")
+    is_opt = ac == "us_option"
+    qty = float(p["qty"])
+    common = dict(symbol=p["symbol"], qty=qty,
+                  avg_price=float(p.get("avg_entry_price", 0) or 0),
+                  market_value=float(p.get("market_value", 0) or 0))
+    if is_opt:
+        meta = _parse_occ(p["symbol"])
+        root = re.match(r"^([A-Z]+)\d{6}[CP]\d{8}$", p["symbol"])
+        if meta:
+            exp, otype, strike = meta
+            return Position(
+                **common, asset_class="option",
+                underlying=(root.group(1) if root else p.get("underlying_symbol")),
+                option_expiration=exp, option_strike=strike,
+                option_right="C" if otype == "call" else "P")
+    return Position(**common, asset_class=ac, underlying=p.get("symbol"))
 
 
 def _f(v: Any) -> Optional[float]:
