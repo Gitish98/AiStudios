@@ -154,6 +154,15 @@ def run_cycle(
         summary["warnings"] = warnings
         store.append(_now_iso(), "capability_warning", {"warnings": warnings})
 
+    # External data hub (earnings calendar / news / fundamentals). Built once; no
+    # network unless a keyed provider is actually queried. Empty (keyless) hub ->
+    # callers degrade gracefully (earnings_vol just stands aside).
+    try:
+        from .data.factory import build_data_hub
+        data_hub = build_data_hub(config)
+    except Exception:
+        data_hub = None
+
     seen_ids: set = set()   # idempotency within this cycle (covers dry-run too)
     for symbol in config.watchlist:
         try:
@@ -170,6 +179,9 @@ def run_cycle(
             bars = adapter.get_history(symbol, 120) if hasattr(adapter, "get_history") else []
             earnings = (adapter.get_earnings_date(symbol)
                         if hasattr(adapter, "get_earnings_date") else None)
+            if earnings is None and data_hub is not None:
+                e = data_hub.get_earnings(symbol)        # provider earnings calendar
+                earnings = e.get("date") if isinstance(e, dict) else None
             sctx = StrategyContext(
                 underlying=symbol, spot=quote.mid, option_chain=chain,
                 iv_history=iv_hist,

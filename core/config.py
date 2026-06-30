@@ -45,6 +45,7 @@ class Config:
     risk: dict[str, Any]
     strategies: dict[str, Any]
     watchlist: list[str] = field(default_factory=list)
+    data: dict[str, Any] = field(default_factory=dict)   # external data-provider config
 
     @property
     def is_paper(self) -> bool:
@@ -82,6 +83,7 @@ def load_config(config_path: Path | None = None) -> Config:
         risk=data.get("risk", {}) or {},
         strategies=data.get("strategies", {}) or {},
         watchlist=watchlist,
+        data=data.get("data", {}) or {},
     )
 
 
