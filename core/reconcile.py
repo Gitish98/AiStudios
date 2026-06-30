@@ -38,8 +38,11 @@ def expected_legs(store: Store) -> dict:
     for p in store.get_open_positions():
         n = int(p["contracts"])
         u, exp = p["underlying"], p["expiration"]
-        _add(expected, _leg_key(u, exp, p["short_strike"], "P"), -n)
-        _add(expected, _leg_key(u, exp, p["long_strike"], "P"), +n)
+        family = p.get("family") or ("call" if "call" in (p.get("structure") or "") else "put")
+        right = "C" if family == "call" else "P"
+        # The SHORT leg is held −N, the LONG leg +N, regardless of credit/debit.
+        _add(expected, _leg_key(u, exp, p["short_strike"], right), -n)
+        _add(expected, _leg_key(u, exp, p["long_strike"], right), +n)
     return expected
 
 

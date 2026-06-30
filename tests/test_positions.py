@@ -10,7 +10,7 @@ from core.execution import run_cycle
 from core.manage import manage_open_positions
 from core.market_calendar import is_trading_day
 from core.positions import (
-    ManageParams, evaluate_exit, intrinsic_value_ps, order_to_position, unrealized_pnl,
+    ManageParams, evaluate_exit, intrinsic_vertical_ps, order_to_position,
 )
 from core.store import Store
 from strategies.premium_harvest import PremiumHarvest
@@ -73,9 +73,9 @@ def test_expiry_max_loss_when_deep_itm():
 
 
 def test_intrinsic_clamped_to_width():
-    assert intrinsic_value_ps(540, 539, 600) == 0.0
-    assert intrinsic_value_ps(540, 539, 500) == 1.0  # clamped to width
-    assert abs(intrinsic_value_ps(540, 539, 539.5) - 0.5) < 1e-9
+    assert intrinsic_vertical_ps("put", 540, 539, 600) == 0.0
+    assert intrinsic_vertical_ps("put", 540, 539, 500) == 1.0  # clamped to width
+    assert abs(intrinsic_vertical_ps("put", 540, 539, 539.5) - 0.5) < 1e-9
 
 
 def _config(tickers, manage=None):

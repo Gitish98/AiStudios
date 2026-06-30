@@ -122,6 +122,24 @@ strategies:
       stop_loss_mult: 2.0         # stop when the open loss = 2x the credit received
       manage_at_dte: 21           # close whatever's left at 21 DTE (no expiration-week risk)
 
+  volatility_breakout:
+    enabled: true                 # own cheap premium into an expansion (debit spreads)
+    squeeze_pct: 0.20             # Bollinger-bandwidth percentile must be <= this (a real squeeze)
+    atr_contraction: 0.85         # ATR(fast)/ATR(slow) <= this
+    max_iv_rank: 0.35             # only when IV is CHEAP to buy
+    range_high: 0.65              # close in upper part of range -> bullish (call debit)
+    range_low: 0.35               # close in lower part -> bearish (put debit)
+    dte_min: 25
+    dte_max: 45
+    target_long_delta: 0.45
+    min_open_interest: 250
+    max_spread_pct: 0.15
+    max_debit_ratio: 0.55         # debit / strike-width ceiling (risk/reward sanity)
+    manage:
+      debit_profit_gain: 1.0      # take profit at +100% of the debit paid
+      debit_stop_frac: 0.50       # stop after losing 50% of the debit
+      manage_at_dte: 21
+
 # ── Order safety ─────────────────────────────────────────────────────────────
 orders:
   default_type: limit              # limit | marketable_limit — NEVER blind market

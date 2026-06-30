@@ -28,8 +28,16 @@ from strategies.premium_harvest import PremiumHarvest
 
 
 def _strategies(config):
-    params = config.strategies.get("premium_harvest", {}) if config.strategies else {}
-    return [PremiumHarvest(params)]
+    s = config.strategies or {}
+    out = []
+    ph = s.get("premium_harvest")
+    if ph is None or ph.get("enabled", True):
+        out.append(PremiumHarvest(ph or {}))
+    vb = s.get("volatility_breakout")
+    if vb is not None and vb.get("enabled", True):
+        from strategies.breakout import VolatilityBreakout
+        out.append(VolatilityBreakout(vb))
+    return out
 
 
 def _banner(adapter) -> str:
@@ -65,8 +73,10 @@ def cmd_status(args):
     for p in open_pos[:12]:
         from core.positions import dte_from
         dte = dte_from(p["expiration"], datetime.now(timezone.utc).date().isoformat())
-        print(f"    {p['underlying']:<5} {p['short_strike']:g}/{p['long_strike']:g}P "
-              f"{p['expiration']} ({dte}d)  credit ${p['entry_credit_ps']*100:.0f}  "
+        fam = (p.get("family") or "put").upper()[0]
+        net = "credit" if p.get("is_credit", 1) else "debit"
+        print(f"    {p['underlying']:<5} {p['short_strike']:g}/{p['long_strike']:g}{fam} "
+              f"{p['expiration']} ({dte}d)  {net} ${p['entry_credit_ps']*100:.0f}  "
               f"maxloss ${p['max_loss']:.0f}")
 
     orders = store.all_orders(limit=8)

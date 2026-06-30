@@ -291,6 +291,18 @@ class IBKRAdapter(BrokerAdapter):
             ))
         return out
 
+    def get_history(self, symbol: str, days: int = 120,
+                    asof: Optional[str] = None) -> list[dict]:
+        ib = _load_ib()
+        live = self._require()
+        stock = ib.Stock(symbol, "SMART", "USD")
+        live.qualifyContracts(stock)
+        bars = live.reqHistoricalData(
+            stock, endDateTime="", durationStr=f"{max(days, 30)} D",
+            barSizeSetting="1 day", whatToShow="TRADES", useRTH=True, formatDate=1)
+        return [{"date": str(b.date), "o": float(b.open), "h": float(b.high),
+                 "l": float(b.low), "c": float(b.close)} for b in bars]
+
     # ── execution ────────────────────────────────────────────────────────────
     def place_order(self, order: OrderRequest) -> OrderResult:
         ib = _load_ib()

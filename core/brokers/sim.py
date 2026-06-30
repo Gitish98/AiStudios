@@ -80,6 +80,26 @@ class SimAdapter(BrokerAdapter):
             hist.append(round(anchor * factor, 4))
         return hist
 
+    def get_history(self, symbol: str, days: int = 120,
+                    asof: Optional[str] = None) -> list[dict]:
+        """Deterministic synthetic daily OHLC ending at `asof`, last close ≈ spot."""
+        u = symbol.upper()
+        base, vol = _ANCHORS.get(u, (100.0, 0.22))
+        d0 = date.fromisoformat(asof or self.asof)
+        bars = []
+        price = base
+        for i in range(days, 0, -1):
+            d = (d0 - timedelta(days=i)).isoformat()
+            r = (_seed("hist", u, d) - 0.5) * vol * 0.18  # deterministic daily return
+            price = max(1.0, price * (1.0 + r))
+            rng = price * vol * 0.02 * (0.5 + _seed("rng", u, d))
+            o = price * (1.0 + (_seed("open", u, d) - 0.5) * 0.005)
+            h = max(o, price) + rng / 2
+            l = min(o, price) - rng / 2
+            bars.append({"date": d, "o": round(o, 2), "h": round(h, 2),
+                         "l": round(max(0.5, l), 2), "c": round(price, 2)})
+        return bars
+
     def get_quote(self, symbol: str) -> Quote:
         s = self._spot(symbol)
         half = max(0.01, round(s * 0.0002, 2))  # tight ETF spread

@@ -57,6 +57,9 @@ class Store:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 client_order_id TEXT,
                 strategy TEXT,
+                structure TEXT,             -- put_credit_spread | call_debit_spread | ...
+                family TEXT,                -- put | call
+                is_credit INTEGER,          -- 1 credit, 0 debit
                 underlying TEXT,
                 status TEXT,                -- open | closed
                 opened_asof TEXT,
@@ -143,7 +146,8 @@ class Store:
 
     # ── positions ────────────────────────────────────────────────────────────
     def open_position(self, pos: dict[str, Any]) -> int:
-        cols = ("client_order_id", "strategy", "underlying", "status", "opened_asof",
+        cols = ("client_order_id", "strategy", "structure", "family", "is_credit",
+                "underlying", "status", "opened_asof",
                 "opened_ts", "expiration", "contracts", "short_strike", "long_strike",
                 "width", "entry_credit_ps", "max_loss")
         cur = self.conn.execute(

@@ -35,6 +35,8 @@ class StrategyContext:
     option_chain: list  # list[OptionContract]
     iv_history: list[float] = field(default_factory=list)
     closes: list[float] = field(default_factory=list)
+    highs: list[float] = field(default_factory=list)
+    lows: list[float] = field(default_factory=list)
     config: dict[str, Any] = field(default_factory=dict)
 
 

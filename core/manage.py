@@ -22,21 +22,28 @@ def _now_iso() -> str:
 
 
 def mark_spread_value_ps(adapter: BrokerAdapter, pos: dict) -> Optional[float]:
-    """Current per-share cost to close the spread (short put mid − long put mid).
+    """Current per-share market value of the vertical, in [0, width]:
+       put family:  P(higher) − P(lower);  call family: C(lower) − C(higher).
     Uses the adapter's mark_option when available (sim), else the live chain."""
     u, exp = pos["underlying"], pos["expiration"]
-    if hasattr(adapter, "mark_option"):
-        s = adapter.mark_option(u, exp, pos["short_strike"], "put")
-        l = adapter.mark_option(u, exp, pos["long_strike"], "put")
-        return round(s - l, 4)
-    chain = adapter.get_option_chain(u, exp)
-    short = next((c for c in chain if c.option_type == "put"
-                  and abs(c.strike - pos["short_strike"]) < 1e-6), None)
-    long = next((c for c in chain if c.option_type == "put"
-                 and abs(c.strike - pos["long_strike"]) < 1e-6), None)
-    if not short or not long:
+    family = pos.get("family") or ("call" if "call" in (pos.get("structure") or "") else "put")
+    higher = max(pos["short_strike"], pos["long_strike"])
+    lower = min(pos["short_strike"], pos["long_strike"])
+    right = "call" if family == "call" else "put"
+
+    def _mark(strike: float) -> Optional[float]:
+        if hasattr(adapter, "mark_option"):
+            return adapter.mark_option(u, exp, strike, right)
+        chain = adapter.get_option_chain(u, exp)
+        c = next((c for c in chain if c.option_type == right
+                  and abs(c.strike - strike) < 1e-6), None)
+        return c.mid if c else None
+
+    hi, lo = _mark(higher), _mark(lower)
+    if hi is None or lo is None:
         return None
-    return round(short.mid - long.mid, 4)
+    value = (hi - lo) if family == "put" else (lo - hi)
+    return round(max(0.0, value), 4)
 
 
 def _spot(adapter: BrokerAdapter, underlying: str) -> float:
@@ -47,28 +54,30 @@ def _spot(adapter: BrokerAdapter, underlying: str) -> float:
 
 
 def _closing_order(pos: dict, value_ps: float) -> OrderRequest:
-    """Buy-to-close the credit spread (reverse the legs)."""
+    """Close the vertical by reversing both legs (sell the long, buy back the short)."""
     contracts = int(pos["contracts"])
+    family = pos.get("family") or ("call" if "call" in (pos.get("structure") or "") else "put")
     legs = [
         OrderLeg(symbol=f"{pos['underlying']}_close_short", side="buy", qty=contracts,
-                 asset_class="option", option_type="put",
+                 asset_class="option", option_type=family,
                  strike=pos["short_strike"], expiration=pos["expiration"]),
         OrderLeg(symbol=f"{pos['underlying']}_close_long", side="sell", qty=contracts,
-                 asset_class="option", option_type="put",
+                 asset_class="option", option_type=family,
                  strike=pos["long_strike"], expiration=pos["expiration"]),
     ]
     return OrderRequest(
         client_order_id=f"CLOSE-{pos['client_order_id']}",
         legs=legs, order_type="limit", limit_price=round(max(0.0, value_ps), 2),
-        strategy="close_put_credit_spread", est_credit=0.0,
+        strategy=f"close_{pos.get('structure', 'vertical')}", est_credit=0.0,
         max_loss=0.0, underlying=pos["underlying"],
     )
 
 
 def manage_open_positions(adapter: BrokerAdapter, store: Store, config,
                           asof: str) -> dict[str, Any]:
-    params = ManageParams.from_config(
-        (config.strategies or {}).get("premium_harvest", {}))
+    strategies = config.strategies or {}
+    credit_params = ManageParams.from_config(strategies.get("premium_harvest", {}))
+    debit_params = ManageParams.from_config(strategies.get("volatility_breakout", {}))
     open_positions = store.get_open_positions()
 
     summary: dict[str, Any] = {
@@ -82,6 +91,7 @@ def manage_open_positions(adapter: BrokerAdapter, store: Store, config,
             summary["held"].append({"underlying": pos["underlying"], "reason": "no_mark"})
             continue
         spot = _spot(adapter, pos["underlying"])
+        params = credit_params if bool(pos.get("is_credit", 1)) else debit_params
         decision = evaluate_exit(pos, value_ps, spot, asof, params)
 
         if decision.action == "hold":
