@@ -59,6 +59,11 @@ tax export; pro dashboard. **40+ bugs killed across ~9 adversarial review rounds
 **Next, in priority:** (1) IBKR paper connect [needs the user's machine]; (2) the
 guarded go-live ramp; (3) sector caps; (4) more data (Polygon/options flow).
 
+> **NEXT SESSION START HERE:** build the guarded go-live ramp on branch
+> **`aistudios/phase4-ibkr-live`**. Full task brief + agent plan:
+> **`docs/14-next-go-live-ramp.md`**. Cardinal rule: an LLM must satisfy NONE of
+> the go-live gates; build the integration by hand, then review it with a Workflow.
+
 ## How we work (conventions)
 - **Branches:** descriptive, searchable. `aistudios/<area>-<short-desc>` (e.g.
   `aistudios/phase4-ibkr-live`). Milestones get an annotated **tag** (`v0.1-platform`).
