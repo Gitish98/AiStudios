@@ -109,6 +109,14 @@ class AlpacaAdapter(BrokerAdapter):
         last = (bid + ask) / 2 if bid and ask else 0.0
         return Quote(symbol=symbol.upper(), bid=bid, ask=ask, last=last)
 
+    def get_history(self, symbol: str, days: int = 120,
+                    asof: Optional[str] = None) -> list[dict]:
+        params = {"timeframe": "1Day", "limit": max(days, 30), "adjustment": "all"}
+        d = self._get(DATA_BASE, f"/v2/stocks/{symbol}/bars", params)
+        bars = d.get("bars", []) or []
+        return [{"date": b.get("t", "")[:10], "o": float(b["o"]), "h": float(b["h"]),
+                 "l": float(b["l"]), "c": float(b["c"])} for b in bars]
+
     def get_option_chain(self, underlying: str, expiration: Optional[str] = None) -> list[OptionContract]:
         params: dict[str, Any] = {"underlying_symbols": underlying.upper(), "limit": 1000}
         if expiration:

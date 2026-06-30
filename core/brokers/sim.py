@@ -84,8 +84,9 @@ class SimAdapter(BrokerAdapter):
         """Deterministic synthetic next-earnings date: 1–9 days after asof for
         symbols whose seed lands in the 'has upcoming earnings' bucket."""
         u = symbol.upper()
-        d0 = date.fromisoformat(asof or self.asof)
-        s = _seed("earn", u, self.asof)
+        eff = asof or self.asof
+        d0 = date.fromisoformat(eff)
+        s = _seed("earn", u, eff)   # seed and offset both anchored to the SAME date
         if s > 0.6:  # ~40% of names have earnings in the near window on a given day
             return None
         days_out = 1 + int(s * 14)  # 1..9 days

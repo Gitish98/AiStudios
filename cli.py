@@ -59,6 +59,9 @@ def cmd_status(args):
     print(_banner(adapter))
     print("─" * 56)
     print(f"  {build_res.note}")
+    from core.execution import capability_warnings
+    for w in capability_warnings(adapter, config):
+        print(f"  ⚠️  {w}")
     if store.kill_switch:
         print("\n  ⚠️  KILL SWITCH ENGAGED — orders are blocked. Clear with: python cli.py clear-kill")
 
@@ -123,6 +126,8 @@ def cmd_run_cycle(args, dry_run=False):
     summary = run_cycle(adapter, _strategies(config), store, config,
                         asof=args.asof, dry_run=dry_run)
 
+    for w in summary.get("warnings", []):
+        print(f"  ⚠️  {w}")
     m = summary.get("manage", {})
     if m.get("evaluated"):
         print(f"  Management: {m['evaluated']} open · closed {len(m.get('closed', []))} "

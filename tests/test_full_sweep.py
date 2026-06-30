@@ -229,6 +229,89 @@ def test_pending_close_finalizes_when_filled():
         store.close()
 
 
+def test_unfilled_entry_is_pending_not_open():
+    """An accepted-but-unfilled entry is tracked 'pending' (counted for risk) but
+    NOT 'open' (so reconcile won't expect it at the broker yet)."""
+    from core.brokers.base import OrderResult
+
+    class SubmitOnly(SimAdapter):
+        def place_order(self, order):
+            return OrderResult(accepted=True, client_order_id=order.client_order_id,
+                               broker_order_id="B", status="Submitted", filled_qty=0)
+
+    cfg = Config(
+        raw={}, mode="paper",
+        account={"type": "margin", "region": "CA", "starting_equity_usd": 30000,
+                 "options_approval_level": 3},
+        brokers={"execution": "sim"},
+        risk={"per_position_notional_pct": 0.5, "per_trade_risk_pct": 0.5,
+              "max_single_underlying_pct": 0.5, "max_gross_leverage": 50.0,
+              "max_daily_new_positions": 20, "max_concurrent_positions": 20},
+        strategies={"premium_harvest": {"min_iv_rank": 0.0}},
+        watchlist=["SPY", "IWM"])
+    with tempfile.TemporaryDirectory() as tmp:
+        store = Store(Path(tmp) / "t.db")
+        run_cycle(SubmitOnly(asof="2026-01-15"), [PremiumHarvest({"min_iv_rank": 0.0})],
+                  store, cfg, asof="2026-01-15")
+        assert len(store.get_open_positions()) == 0      # nothing filled
+        assert len(store.get_pending_positions()) >= 1    # but working orders are tracked
+        assert len(store.get_active_positions()) >= 1     # and counted as committed risk
+        store.close()
+
+
+def test_pending_entry_finalizes_on_fill_and_drops_on_reject():
+    from core.brokers.base import OrderResult
+    from core.execution import _finalize_pending_entries
+
+    def _pending_pos(coid):
+        return {"client_order_id": coid, "strategy": "put_credit_spread",
+                "structure": "put_credit_spread", "family": "put", "is_credit": 1,
+                "underlying": "SPY", "status": "pending", "opened_asof": "2026-01-15",
+                "opened_ts": "t", "expiration": "2026-02-19", "contracts": 1,
+                "short_strike": 540, "long_strike": 539, "width": 1, "legs_json": None,
+                "entry_credit_ps": 0.26, "max_loss": 74}
+
+    class Orders(SimAdapter):
+        def list_orders(self):
+            return [OrderResult(accepted=True, client_order_id="fill", status="filled", filled_qty=2),
+                    OrderResult(accepted=True, client_order_id="dead", status="canceled", filled_qty=0)]
+
+    with tempfile.TemporaryDirectory() as tmp:
+        store = Store(Path(tmp) / "t.db")
+        store.open_position(_pending_pos("fill"))
+        store.open_position(_pending_pos("dead"))
+        _finalize_pending_entries(Orders(asof="2026-01-15"), store)
+        opens = store.get_open_positions()
+        assert len(opens) == 1 and opens[0]["client_order_id"] == "fill"   # filled -> open
+        assert len(store.get_pending_positions()) == 0                      # dead -> deleted
+        store.close()
+
+
+def test_capability_warnings_loud_on_real_adapter():
+    import types as _t
+    from core.execution import capability_warnings
+    fake = _t.SimpleNamespace(name="ibkr_paper")   # lacks iv_history/get_earnings_date
+    cfg = _t.SimpleNamespace(strategies={"premium_harvest": {}, "earnings_vol": {},
+                                         "volatility_breakout": {}})
+    warns = capability_warnings(fake, cfg)
+    assert any("iv_history" in w for w in warns)
+    assert any("earnings" in w for w in warns)
+    # sim never warns
+    assert capability_warnings(SimAdapter(asof="2026-01-15"), cfg) == []
+
+
+def test_sim_earnings_date_consistent_with_asof():
+    sim = SimAdapter(asof="2026-01-15")
+    from datetime import date
+    for sym in ("SPY", "QQQ", "AAPL", "XLF"):
+        d = sim.get_earnings_date(sym, asof="2026-03-10")
+        if d:   # when present, it must be anchored to the PASSED asof, 1-9 days out
+            delta = (date.fromisoformat(d) - date(2026, 3, 10)).days
+            assert 1 <= delta <= 9
+        # deterministic
+        assert sim.get_earnings_date(sym, asof="2026-03-10") == d
+
+
 def test_debit_vertical_notional_not_double_counted():
     o = OrderRequest(
         client_order_id="d",

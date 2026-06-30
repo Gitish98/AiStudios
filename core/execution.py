@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from .brokers.base import BrokerAdapter, OrderRequest, Position
-from .manage import manage_open_positions
+from .manage import _is_filled, manage_open_positions
 from .positions import order_to_position
 from .reconcile import reconcile
 from .risk import Decision, RiskContext, RiskGate, RiskLimits, _notional
@@ -72,6 +72,12 @@ def run_cycle(
 
     account = adapter.get_account()
 
+    # ── 0. Finalize working ENTRY orders: an accepted-but-unfilled entry tracked
+    # last cycle becomes 'open' once the broker fills it (or is dropped if it
+    # died). Until then it stays 'pending' — counted for risk, but NOT expected at
+    # the broker by reconcile and NOT managed. ──
+    _finalize_pending_entries(adapter, store)
+
     # ── 1. MANAGEMENT PASS — value & exit open positions before any new entry. ──
     manage_summary = manage_open_positions(adapter, store, config, asof)
 
@@ -90,7 +96,7 @@ def run_cycle(
 
     # ── 3. Gate's view of concurrent exposure = our OPEN tracked positions. ──
     positions: list[Position] = []
-    for p in store.get_open_positions():
+    for p in store.get_active_positions():   # open (filled) + pending (working) = committed risk
         # Capital footprint must match _notional: DEBIT verticals are worth the
         # net debit paid (== max_loss), NOT the strike width. Credit spreads and
         # condors are collateralized at the (wider) wing width.
@@ -142,6 +148,11 @@ def run_cycle(
 
     if store.kill_switch:
         summary["note"] = "Kill switch engaged — no orders will be placed."
+
+    warnings = capability_warnings(adapter, config)
+    if warnings:
+        summary["warnings"] = warnings
+        store.append(_now_iso(), "capability_warning", {"warnings": warnings})
 
     seen_ids: set = set()   # idempotency within this cycle (covers dry-run too)
     for symbol in config.watchlist:
@@ -213,10 +224,15 @@ def run_cycle(
                 })
                 if result.accepted:
                     opened_today += 1
-                    _synthesize_position(order)
-                    # Persist the open position so future cycles can manage it.
+                    _synthesize_position(order)  # committed risk counts whether or not it filled yet
+                    # Persist the position. FILLED -> 'open' (sim, marketable);
+                    # accepted-but-unfilled -> 'pending' (finalized on fill next
+                    # cycle). A pending entry is NOT yet expected at the broker by
+                    # reconcile, so an unfilled limit order won't show false drift.
                     try:
-                        store.open_position(order_to_position(order, asof, _now_iso()))
+                        pos_row = order_to_position(order, asof, _now_iso())
+                        pos_row["status"] = "open" if _is_filled(result, 1) else "pending"
+                        store.open_position(pos_row)
                     except ValueError:
                         pass  # non-spread orders aren't tracked as managed positions yet
                     summary["placed"].append({
@@ -238,6 +254,51 @@ def run_cycle(
         "placed": len(summary["placed"]), "rejected": len(summary["rejected"]),
         "reconcile_ok": rec["ok"]})
     return summary
+
+
+def _finalize_pending_entries(adapter: BrokerAdapter, store: Store) -> None:
+    """Flip 'pending' entry positions to 'open' once the broker confirms the fill,
+    or drop them if the order died. Mirrors the pending-close finalizer."""
+    pend = store.get_pending_positions()
+    if not pend:
+        return
+    try:
+        bro = {o.client_order_id: o for o in adapter.list_orders()}
+    except Exception:
+        return  # can't confirm -> leave pending (still counted for risk)
+    for p in pend:
+        o = bro.get(p["client_order_id"])
+        if o is None:
+            continue
+        st = (o.status or "").lower()
+        if st == "filled" and float(o.filled_qty or 0) > 0:
+            store.set_position_status(p["id"], "open")
+            store.append(_now_iso(), "entry_filled", {"position_id": p["id"],
+                                                       "underlying": p["underlying"]})
+        elif st in ("rejected", "canceled", "cancelled", "inactive", "apicancelled"):
+            store.delete_position(p["id"])
+            store.append(_now_iso(), "entry_dropped", {"position_id": p["id"],
+                                                       "underlying": p["underlying"]})
+
+
+def capability_warnings(adapter: BrokerAdapter, config) -> list[str]:
+    """Loudly flag when a REAL broker can't supply the data an enabled engine
+    needs — otherwise the system is silently inert (places nothing, no error)."""
+    if adapter.name == "sim":
+        return []
+    s = config.strategies or {}
+    def on(name):
+        blk = s.get(name)
+        return blk is not None and blk.get("enabled", True)
+    warns = []
+    if (on("premium_harvest") or on("earnings_vol")) and not hasattr(adapter, "iv_history"):
+        warns.append("iv_history not available on this broker — premium_harvest / "
+                     "earnings_vol need an IV-rank history source and will NOT signal.")
+    if on("volatility_breakout") and not hasattr(adapter, "get_history"):
+        warns.append("price history not available — volatility_breakout will NOT signal.")
+    if on("earnings_vol") and not hasattr(adapter, "get_earnings_date"):
+        warns.append("earnings calendar not available — earnings_vol will NOT signal.")
+    return warns
 
 
 def _count_opened_today(store: Store, asof: str) -> int:

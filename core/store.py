@@ -159,10 +159,34 @@ class Store:
         return cur.lastrowid
 
     def get_open_positions(self) -> list[dict[str, Any]]:
+        """FILLED positions only (status='open'). Used by management and reconcile
+        — we must not manage or expect-at-broker an entry that hasn't filled."""
         rows = self.conn.execute(
             "SELECT * FROM positions WHERE status = 'open' ORDER BY id"
         ).fetchall()
         return [dict(r) for r in rows]
+
+    def get_active_positions(self) -> list[dict[str, Any]]:
+        """Filled (open) AND working (pending) positions — committed risk the gate
+        must account for so accepted-but-unfilled entries can't be over-committed."""
+        rows = self.conn.execute(
+            "SELECT * FROM positions WHERE status IN ('open', 'pending') ORDER BY id"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_pending_positions(self) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            "SELECT * FROM positions WHERE status = 'pending' ORDER BY id"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def set_position_status(self, pos_id: int, status: str) -> None:
+        self.conn.execute("UPDATE positions SET status = ? WHERE id = ?", (status, pos_id))
+        self.conn.commit()
+
+    def delete_position(self, pos_id: int) -> None:
+        self.conn.execute("DELETE FROM positions WHERE id = ?", (pos_id,))
+        self.conn.commit()
 
     def close_position(self, pos_id: int, closed_asof: str, closed_ts: str,
                        exit_reason: str, exit_value_ps: float, realized_pnl: float) -> None:
