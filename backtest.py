@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from core.brokers.sim import SimAdapter
+from core.costs import CostModel
 from core.execution import run_cycle
 from core.options_math import realized_vol
 from core.store import Store
@@ -116,13 +117,21 @@ def run_backtest(strategies: list, bars_by_symbol: dict[str, list[dict]], config
             broker.asof = day
             run_cycle(broker, strategies, store, config, asof=day)
         closed = store.get_closed_positions()
-        report = _metrics(closed, days)
+        report = _metrics(closed, days, CostModel.from_config(config))
         store.close()
     return report
 
 
-def _metrics(closed: list[dict], days: list[str]) -> dict[str, Any]:
-    pnls = [float(p.get("realized_pnl") or 0.0) for p in closed]
+def _metrics(closed: list[dict], days: list[str],
+             costs: Optional[CostModel] = None) -> dict[str, Any]:
+    costs = costs or CostModel()
+    gross = [float(p.get("realized_pnl") or 0.0) for p in closed]
+    # Net of commissions + modeled slippage — the number that actually matters.
+    trade_costs = [costs.position_cost(p.get("structure", "put_credit_spread"),
+                                       int(p.get("contracts") or 1),
+                                       p.get("exit_reason", "")) for p in closed]
+    pnls = [g - c for g, c in zip(gross, trade_costs)]
+    total_costs = round(sum(trade_costs), 2)
     n = len(pnls)
     wins = [x for x in pnls if x > 0]
     losses = [x for x in pnls if x < 0]
@@ -141,18 +150,24 @@ def _metrics(closed: list[dict], days: list[str]) -> dict[str, Any]:
     for p in closed:
         by_reason[p.get("exit_reason", "?")] = by_reason.get(p.get("exit_reason", "?"), 0) + 1
 
+    gross_net = round(sum(gross), 2)
     return {
         "days": len(days), "trades": n,
         "wins": len(wins), "losses": len(losses),
         "win_rate": round(len(wins) / n, 4) if n else 0.0,
-        "net_pnl": net,
+        "gross_pnl": gross_net,          # before costs
+        "total_costs": total_costs,       # commissions + modeled slippage
+        "net_pnl": net,                   # AFTER costs — the honest number
         "avg_win": round(gross_profit / len(wins), 2) if wins else 0.0,
         "avg_loss": round(-gross_loss / len(losses), 2) if losses else 0.0,
-        "expectancy": round(net / n, 2) if n else 0.0,
+        "expectancy_net": round(net / n, 2) if n else 0.0,
+        "cost_per_trade": round(total_costs / n, 2) if n else 0.0,
+        "cost_drag_pct": round(total_costs / abs(gross_net), 4) if gross_net else None,
         "profit_factor": round(gross_profit / gross_loss, 2) if gross_loss > 0 else None,
         "max_drawdown": round(max_dd, 2),
         "exits_by_reason": by_reason,
-        "note": "Option prices are MODELED (BS), not real fills. Necessary, not sufficient.",
+        "note": "Net of modeled commissions+slippage. Option prices are MODELED (BS), "
+                "not real fills. Necessary, not sufficient — paper-trade before live.",
     }
 
 

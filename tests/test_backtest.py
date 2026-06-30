@@ -4,6 +4,7 @@ import types
 
 from backtest import BacktestBroker, run_backtest, _metrics
 from core.brokers.sim import SimAdapter
+from core.costs import CostModel
 from core.config import Config
 from strategies.premium_harvest import PremiumHarvest
 
@@ -45,8 +46,10 @@ def test_backtest_runs_and_reports_metrics():
                        start="2026-01-01", end="2026-06-30")
     assert rep["days"] > 0
     assert rep["trades"] >= 1                # the strategy traded over the window
-    assert "win_rate" in rep and "max_drawdown" in rep and "expectancy" in rep
-    # P&L accounting is internally consistent.
+    assert "win_rate" in rep and "max_drawdown" in rep and "expectancy_net" in rep
+    # Cost-aware: net = gross - costs, and costs are non-negative.
+    assert rep["total_costs"] >= 0
+    assert abs(rep["net_pnl"] - (rep["gross_pnl"] - rep["total_costs"])) < 0.01
     assert rep["wins"] + rep["losses"] <= rep["trades"]
 
 
@@ -54,8 +57,20 @@ def test_metrics_math():
     closed = [{"realized_pnl": 100, "exit_reason": "profit_target"},
               {"realized_pnl": -50, "exit_reason": "stop_loss"},
               {"realized_pnl": 30, "exit_reason": "expired"}]
-    m = _metrics(closed, days=["d1", "d2"])
+    zero = CostModel(per_contract=0, min_per_order=0, slippage_per_contract=0)
+    m = _metrics(closed, days=["d1", "d2"], costs=zero)
     assert m["trades"] == 3 and m["wins"] == 2 and m["losses"] == 1
-    assert m["net_pnl"] == 80 and m["expectancy"] == round(80 / 3, 2)
+    assert m["gross_pnl"] == 80 and m["total_costs"] == 0 and m["net_pnl"] == 80
+    assert m["expectancy_net"] == round(80 / 3, 2)
     assert m["profit_factor"] == round(130 / 50, 2)
     assert m["max_drawdown"] == 50   # peak 100 -> trough 50 after the -50
+
+
+def test_cost_model_drag():
+    # A managed close on a 2-leg spread pays round-trip; an expiry pays open only.
+    cm = CostModel()  # IBKR-ish defaults
+    rt = cm.position_cost("put_credit_spread", 1, "profit_target")
+    exp = cm.position_cost("put_credit_spread", 1, "expired")
+    assert rt > exp > 0                       # expiry is cheaper (no closing trade)
+    # An iron condor (4 legs) costs more than a vertical (2 legs).
+    assert cm.position_cost("iron_condor", 1, "stop_loss") > rt
