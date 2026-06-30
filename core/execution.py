@@ -18,8 +18,8 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from .brokers.base import BrokerAdapter, OrderRequest
-from .risk import Decision, RiskContext, RiskGate, RiskLimits
+from .brokers.base import BrokerAdapter, OrderRequest, Position
+from .risk import Decision, RiskContext, RiskGate, RiskLimits, _notional
 from .store import Store
 from strategies.base import Signal, StrategyContext
 
@@ -68,19 +68,40 @@ def run_cycle(
     gate = RiskGate(limits)
 
     account = adapter.get_account()
-    positions = adapter.get_positions()
+    positions = list(adapter.get_positions())  # mutable working copy (accumulates intra-cycle)
     opened_today = _count_opened_today(store, asof)
 
-    ctx_risk_base = dict(
-        account=account,
-        positions=positions,
-        is_paper=adapter.is_paper,
-        kill_switch=store.kill_switch,
-        positions_opened_today=opened_today,
-        day_trades_trailing_5=account.pdt_day_trade_count,
-        daily_pnl=0.0,  # Phase 0 sim is flat; real P&L wired with positions in a later phase.
-        options_approval_level=int(config.account.get("options_approval_level", 3)),
-    )
+    # Daily P&L = current equity vs the first equity we saw today (start-of-day).
+    # Real for a broker whose equity moves; ~0 for the flat sim. This makes the
+    # daily-loss kill switch a live control, not dead code.
+    sod_key = f"sod_equity_{asof}"
+    sod_raw = store.get_kv(sod_key)
+    if sod_raw is None:
+        store.set_kv(sod_key, str(account.equity))
+        sod_equity = account.equity
+    else:
+        sod_equity = float(sod_raw)
+    daily_pnl = account.equity - sod_equity
+
+    options_level = int(config.account.get("options_approval_level", 3))
+
+    def _ctx() -> RiskContext:
+        return RiskContext(
+            account=account, positions=positions, is_paper=adapter.is_paper,
+            kill_switch=store.kill_switch, positions_opened_today=opened_today,
+            day_trades_trailing_5=account.pdt_day_trade_count,
+            daily_pnl=daily_pnl, options_approval_level=options_level,
+        )
+
+    def _synthesize_position(order) -> None:
+        """Add this order's exposure to the working position list so the next
+        signal in the same cycle sees accumulated concentration/heat/leverage."""
+        positions.append(Position(
+            symbol=order.underlying or (order.legs[0].symbol if order.legs else "?"),
+            qty=1, avg_price=0.0, market_value=_notional(order),
+            asset_class="option", underlying=order.underlying,
+            max_loss=order.max_loss,
+        ))
 
     summary: dict[str, Any] = {
         "asof": asof, "mode": "paper" if adapter.is_paper else "LIVE",
@@ -116,9 +137,7 @@ def run_cycle(
                     summary["skipped_duplicates"].append(order.client_order_id)
                     continue
 
-                ctx = RiskContext(**{**ctx_risk_base,
-                                     "positions_opened_today": opened_today})
-                decision = gate.evaluate(order, ctx)
+                decision = gate.evaluate(order, _ctx())
                 store.append(_now_iso(), "risk_decision", {
                     "client_order_id": order.client_order_id,
                     "approved": decision.approved, "reasons": decision.reasons,
@@ -136,6 +155,8 @@ def run_cycle(
                     continue
 
                 if dry_run:
+                    opened_today += 1
+                    _synthesize_position(order)  # so caps accumulate in dry-run too
                     summary["placed"].append(
                         {"underlying": order.underlying, "strategy": order.strategy,
                          "est_credit": order.est_credit, "dry_run": True,
@@ -152,6 +173,7 @@ def run_cycle(
                 })
                 if result.accepted:
                     opened_today += 1
+                    _synthesize_position(order)
                     summary["placed"].append({
                         "underlying": order.underlying, "strategy": order.strategy,
                         "status": result.status, "est_credit": order.est_credit,

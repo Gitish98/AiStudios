@@ -15,6 +15,9 @@ Phase 0 enforces (per docs/05-risk-and-safety.md):
   - max single-underlying %, gross leverage
   - daily loss limit -> trips the kill switch
   - PDT awareness for margin accounts under $25k
+
+Deferred to Phase 2 (need per-symbol metadata; NOT silently treated as enforced):
+  - max_sector_pct, correlation_cluster_threshold.
 """
 
 from __future__ import annotations
@@ -131,6 +134,25 @@ class RiskGate:
                 f"{L.per_position_notional_pct*100:.1f}% of equity."
             )
 
+        # 7b. Portfolio heat — total DEFINED risk across open positions + this
+        # order must stay under the cap. (Real broker positions imported without
+        # a known max_loss contribute 0; intra-cycle synthesized positions carry
+        # their max_loss, so accumulation within a run is enforced.)
+        order_risk = order.max_loss if order.max_loss > 0 else notional
+        existing_heat = sum(max(0.0, p.max_loss) for p in ctx.positions)
+        if (existing_heat + order_risk) > L.portfolio_heat_pct * equity + 1e-6:
+            d.reject(
+                f"Portfolio heat ${existing_heat + order_risk:.0f} would exceed "
+                f"{L.portfolio_heat_pct*100:.1f}% of equity "
+                f"(${L.portfolio_heat_pct*equity:.0f})."
+            )
+
+        # NOTE — NOT YET ENFORCED IN PHASE 0 (need metadata wired in Phase 2):
+        #   max_sector_pct, correlation_cluster_threshold.
+        # These require a sector/correlation map per symbol. They are documented
+        # limits in config but deliberately NOT silently treated as enforced.
+        # See docs/07-roadmap.md (Phase 2).
+
         # 8. Concurrency caps.
         if len(ctx.positions) >= L.max_concurrent_positions:
             d.reject(f"At max concurrent positions ({L.max_concurrent_positions}).")
@@ -171,8 +193,19 @@ class RiskGate:
 
 def _notional(order: OrderRequest) -> float:
     """Approx capital footprint (the buying-power a broker reserves)."""
-    # Defined-risk credit spreads: collateral = strike width * 100 * contracts.
-    if order.strategy in ("put_credit_spread", "call_credit_spread", "iron_condor"):
+    # Iron condor: collateral is the WIDER single-side wing, not the outer span
+    # (only one side can be ITM at expiry). Span would overstate ~10x.
+    if order.strategy == "iron_condor":
+        puts = sorted(l.strike for l in order.legs
+                      if l.option_type == "put" and l.strike is not None)
+        calls = sorted(l.strike for l in order.legs
+                       if l.option_type == "call" and l.strike is not None)
+        put_w = (puts[-1] - puts[0]) if len(puts) >= 2 else 0.0
+        call_w = (calls[-1] - calls[0]) if len(calls) >= 2 else 0.0
+        qty = max((abs(l.qty) for l in order.legs), default=1)
+        return max(put_w, call_w) * 100.0 * qty
+    # Two-leg defined-risk credit spreads: collateral = strike width * 100 * qty.
+    if order.strategy in ("put_credit_spread", "call_credit_spread"):
         strikes = [l.strike for l in order.legs if l.strike is not None]
         if len(strikes) >= 2:
             width = abs(max(strikes) - min(strikes))
@@ -202,17 +235,26 @@ def _underlying_exposure(positions: list[Position], underlying: str) -> float:
 
 
 def _has_naked_short_option(order: OrderRequest) -> bool:
-    """A short option leg with no protective long leg AND no defined max_loss."""
+    """Structural naked-option detection — does NOT trust strategy-supplied
+    max_loss (a naked short mislabeled with a fabricated max_loss must still be
+    caught). Naked = a short option leg whose risk is not structurally bounded by
+    (a) a same-type long protective leg, or (b) declared collateral (CSP/covered
+    call)."""
     short_opts = [l for l in order.legs if l.asset_class == "option" and l.side == "sell"]
-    long_opts = [l for l in order.legs if l.asset_class == "option" and l.side == "buy"]
     if not short_opts:
         return False
-    # Cash-secured puts / covered calls are defined-risk by collateral; the
-    # strategy declares max_loss. If there's a declared max_loss, not naked.
-    if order.max_loss > 0:
+    # Collateralized single-leg strategies are defined-risk by cash/shares.
+    if order.strategy in ("cash_secured_put", "covered_call"):
         return False
-    # Otherwise a short option with no long protection is naked.
-    return len(long_opts) < len(short_opts)
+    long_opts = [l for l in order.legs if l.asset_class == "option" and l.side == "buy"]
+    # Each short option type must have at least as many long protectors of the
+    # same type (a vertical/condor wing). Otherwise some short is uncovered.
+    for ot in ("put", "call"):
+        shorts = sum(1 for l in short_opts if l.option_type == ot)
+        longs = sum(1 for l in long_opts if l.option_type == ot)
+        if shorts > longs:
+            return True
+    return False
 
 
 def _is_short_premium(order: OrderRequest) -> bool:

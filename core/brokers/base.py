@@ -34,6 +34,7 @@ class Position:
     market_value: float
     asset_class: str = "us_equity"  # us_equity | option
     underlying: Optional[str] = None
+    max_loss: float = 0.0  # defined risk of this position (for portfolio-heat math)
 
 
 @dataclass

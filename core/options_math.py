@@ -83,8 +83,14 @@ def implied_vol(
     no-arbitrage band (can't be inverted)."""
     if price <= 0 or t <= 0 or S <= 0 or K <= 0:
         return None
-    intrinsic = max(0.0, (S - K) if option_type == "call" else (K - S))
-    if price < intrinsic - 1e-6:
+    # Reject only genuinely sub-arbitrage prices. For European options the lower
+    # bound is the DISCOUNTED intrinsic, not (S-K)/(K-S): an ITM put can trade
+    # below K-S when r>0, and an ITM call below S-K when q>0 — those are valid.
+    if option_type == "call":
+        lower = max(0.0, S * math.exp(-q * t) - K * math.exp(-r * t))
+    else:
+        lower = max(0.0, K * math.exp(-r * t) - S * math.exp(-q * t))
+    if price < lower - 1e-6:
         return None
     f_lo = bs_price(S, K, t, r, lo, option_type, q) - price
     f_hi = bs_price(S, K, t, r, hi, option_type, q) - price

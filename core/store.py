@@ -73,8 +73,12 @@ class Store:
 
     # ── orders ───────────────────────────────────────────────────────────────
     def has_order(self, client_order_id: str) -> bool:
+        """True only for a LIVE/accepted prior order. A broker-rejected or
+        canceled order must not permanently block a retry of the same signal."""
         return self.conn.execute(
-            "SELECT 1 FROM orders WHERE client_order_id = ?", (client_order_id,)
+            "SELECT 1 FROM orders WHERE client_order_id = ? "
+            "AND status NOT IN ('rejected', 'canceled')",
+            (client_order_id,),
         ).fetchone() is not None
 
     def record_order(self, ts: str, order_req: Any, result: Any) -> None:

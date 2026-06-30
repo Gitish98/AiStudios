@@ -51,5 +51,15 @@ def test_realized_vol_positive():
 
 
 def test_implied_vol_rejects_sub_intrinsic():
-    # Price below intrinsic can't be inverted.
+    # Price below the discounted no-arb bound can't be inverted.
     assert om.implied_vol(0.5, 100, 90, 0.5, 0.04, "call") is None
+
+
+def test_implied_vol_itm_put_with_rate():
+    # Regression: an ITM put can trade below undiscounted K-S when r>0 and still
+    # be a perfectly valid price. It must still invert (not return None).
+    S, K, t, r, true_sigma = 50.0, 100.0, 1.0, 0.10, 0.20
+    price = om.bs_price(S, K, t, r, true_sigma, "put")  # ~40.49, below K-S=50
+    assert price < (K - S)  # genuinely below undiscounted intrinsic
+    iv = om.implied_vol(price, S, K, t, r, "put")
+    assert iv is not None and abs(iv - true_sigma) < 1e-3

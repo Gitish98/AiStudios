@@ -1,7 +1,7 @@
 """Tests for THE RISK GATE — the most important code in the system."""
 
 from core.brokers.base import Account, OrderLeg, OrderRequest, Position
-from core.risk import RiskContext, RiskGate, RiskLimits
+from core.risk import RiskContext, RiskGate, RiskLimits, _notional, _has_naked_short_option
 
 
 def _account(equity=30000.0, acct_type="margin", dt=0):
@@ -146,3 +146,44 @@ def test_pdt_guard_not_triggered_for_cash_account():
 def test_fail_closed_on_zero_equity():
     d = _gate().evaluate(_csp_order(strike=12.0), _ctx(account=_account(equity=0.0)))
     assert not d.approved
+
+
+def test_naked_short_with_fabricated_maxloss_still_blocked():
+    # A genuinely naked short put mislabeled with a positive max_loss must NOT
+    # slip past the defined-risk guard (structural detection, not metadata trust).
+    o = OrderRequest(
+        client_order_id="fake",
+        legs=[OrderLeg(symbol="X_P", side="sell", qty=1, asset_class="option",
+                       option_type="put", strike=50)],
+        limit_price=1.0, strategy="totally_legit", max_loss=500.0,  # fabricated
+        underlying="X", required_approval_level=2,
+    )
+    assert _has_naked_short_option(o) is True
+    d = _gate().evaluate(o, _ctx())
+    assert not d.approved
+    assert any("naked" in r.lower() or "defined-risk" in r.lower() for r in d.reasons)
+
+
+def test_iron_condor_notional_uses_wing_not_span():
+    # Wings 1-wide each; collateral should be ~$100, not the $4200 outer span.
+    legs = [
+        OrderLeg("SP", "sell", 1, "option", "put", strike=440),
+        OrderLeg("LP", "buy", 1, "option", "put", strike=439),
+        OrderLeg("SC", "sell", 1, "option", "call", strike=480),
+        OrderLeg("LC", "buy", 1, "option", "call", strike=481),
+    ]
+    ic = OrderRequest("ic", legs, limit_price=0.40, strategy="iron_condor",
+                      max_loss=60.0, est_credit=40.0, underlying="SPY",
+                      required_approval_level=3)
+    assert _notional(ic) == 100.0
+
+
+def test_portfolio_heat_cap_enforced():
+    # Existing open defined risk near the heat cap; a new order tips it over.
+    big = [Position(symbol="A", qty=1, avg_price=0, market_value=50, max_loss=1700.0)]
+    # heat cap default 6% of 30k = 1800; existing 1700 + new 70 = 1770 < 1800 OK,
+    # but bump existing to 1750 so 1750 + 70 = 1820 > 1800 -> reject.
+    big[0].max_loss = 1750.0
+    d = _gate().evaluate(_spread_order(width=1.0, credit=0.30), _ctx(positions=big))
+    assert not d.approved
+    assert any("heat" in r.lower() for r in d.reasons)
