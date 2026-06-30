@@ -49,7 +49,9 @@ class Config:
 
     @property
     def is_paper(self) -> bool:
-        return self.mode != "live"
+        # Normalize (strip/lower) so this can't drift from core.golive's mode check.
+        # Anything that isn't exactly "live" resolves to paper (fail-safe).
+        return str(self.mode).strip().lower() != "live"
 
     def risk_value(self, key: str, default: Any = None) -> Any:
         return self.risk.get(key, default)

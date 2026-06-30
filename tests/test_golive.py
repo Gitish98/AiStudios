@@ -251,6 +251,42 @@ def test_current_ramp_tier_and_caps():
     assert live_ramp_caps(paper) == (None, None)
 
 
+def test_malformed_config_degrades_to_paper_not_crash():
+    # Regression (review #1): a config typo must DEGRADE to paper, never throw out
+    # of the gate / factory. Both a non-list ramp table and a non-numeric live port.
+    with tempfile.TemporaryDirectory() as tmp:
+        f = _enabled_file(tmp)
+        bad_ramp = _config(ramp="oops-not-a-list", live_enabled_file=f)
+        d = GoLiveGate(bad_ramp, today=TODAY).evaluate(confirmation_phrase(TODAY))
+        assert not d.allowed  # no exception
+        assert any("ramp_tier" in r for r in d.reasons)
+        assert current_ramp_tier(bad_ramp) is None
+        assert live_ramp_caps(bad_ramp) == (None, None)
+
+        bad_port = _config(live_port="notaport", live_enabled_file=f)
+        # _config coerces live_port via the dict; pass a raw string straight through.
+        bad_port.brokers["ibkr_live_port"] = "notaport"
+        d2 = GoLiveGate(bad_port, today=TODAY).evaluate(confirmation_phrase(TODAY))
+        assert not d2.allowed
+        assert any("live_endpoint" in r for r in d2.reasons)
+
+    # And through the factory: mode live + malformed config stays PAPER, no raise.
+    cfg = _config(ramp="oops-not-a-list")
+    build = build_execution_adapter(cfg, store=_StoreStub(armed=None))
+    assert build.adapter.is_paper is True
+
+
+def test_is_paper_normalizes_case_and_whitespace():
+    # Regression (review #2): is_paper must agree with the gate's lowercased mode
+    # check so the two sources of truth can't drift.
+    assert Config(raw={}, mode="LIVE", account={}, brokers={}, risk={},
+                  strategies={}).is_paper is False
+    assert Config(raw={}, mode="  live  ", account={}, brokers={}, risk={},
+                  strategies={}).is_paper is False
+    assert Config(raw={}, mode="paper", account={}, brokers={}, risk={},
+                  strategies={}).is_paper is True
+
+
 def test_ramp_advancement_is_advisory_only():
     tier = DEFAULT_RAMP[0]  # needs 10 clean days
     good = {"trades": 12, "expectancy_net": 4.0}

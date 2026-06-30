@@ -126,14 +126,19 @@ class GoLiveGate:
     def _check_live_endpoint(self) -> GoLiveCondition:
         brokers = getattr(self.config, "brokers", {}) or {}
         exec_broker = str(brokers.get("execution", "")).lower()
-        paper_port = int(brokers.get("ibkr_port", 4002))
-        live_port = int(brokers.get("ibkr_live_port", 4001))
+        paper_port = _safe_int(brokers.get("ibkr_port", 4002), 4002)
+        live_port = _safe_int(brokers.get("ibkr_live_port", 4001))
         is_ibkr = exec_broker in ("ibkr", "ibkr_paper", "ibkr_live")
         if not is_ibkr:
             return GoLiveCondition(
                 "live_endpoint", False,
                 f"execution broker '{exec_broker or '(unset)'}' is not IBKR — live "
                 "is only wired for IBKR (set brokers.execution: ibkr_live)")
+        if live_port is None:
+            return GoLiveCondition(
+                "live_endpoint", False,
+                "brokers.ibkr_live_port is missing or not a number — cannot verify a "
+                "separate live endpoint")
         if live_port in PAPER_PORTS:
             return GoLiveCondition(
                 "live_endpoint", False,
@@ -187,12 +192,9 @@ class GoLiveGate:
     # ── 5. ramp tier active (>=1, defined in the ramp table) ──────────────────
     def _check_ramp_tier(self) -> GoLiveCondition:
         gl = _golive_cfg(self.config)
-        try:
-            tier = int(gl.get("ramp_tier", 0) or 0)
-        except (TypeError, ValueError):
-            tier = 0
-        valid = {int(r.get("tier")) for r in (gl.get("ramp") or [])
-                 if r.get("tier") is not None}
+        tier = _safe_int(gl.get("ramp_tier"), 0)
+        valid = {_safe_int(r.get("tier")) for r in _ramp_rows(gl)}
+        valid.discard(None)
         if tier < 1:
             return GoLiveCondition(
                 "ramp_tier", False,
@@ -211,19 +213,35 @@ def _golive_cfg(config: Any) -> dict:
     return (getattr(config, "raw", {}) or {}).get("go_live", {}) or {}
 
 
+def _safe_int(value: Any, default: Optional[int] = None) -> Optional[int]:
+    """int(value), or `default` on any malformed input — so a config typo (a
+    string port, a non-numeric tier) degrades to PAPER rather than crashing the
+    gate/factory. Fail-closed: a bad value is never read as a valid live setting."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _ramp_rows(gl: dict) -> list[dict]:
+    """The ramp table as dict rows, tolerant of a malformed (non-list) config."""
+    ramp = gl.get("ramp")
+    if not isinstance(ramp, list):
+        return []
+    return [r for r in ramp if isinstance(r, dict)]
+
+
 def current_ramp_tier(config: Any) -> Optional[dict]:
     """The active ramp tier's row ({tier, max_notional_usd, max_positions, ...}),
-    or None when on tier 0 (paper) / the tier is undefined. The human edits the
-    tier in config; the system reads it and NEVER self-promotes (docs/05 §1.3)."""
+    or None when on tier 0 (paper) / the tier is undefined / config is malformed.
+    The human edits the tier in config; the system reads it and NEVER self-promotes
+    (docs/05 §1.3)."""
     gl = _golive_cfg(config)
-    try:
-        tier = int(gl.get("ramp_tier", 0) or 0)
-    except (TypeError, ValueError):
+    tier = _safe_int(gl.get("ramp_tier"), 0)
+    if tier is None or tier < 1:
         return None
-    if tier < 1:
-        return None
-    for r in (gl.get("ramp") or []):
-        if r.get("tier") is not None and int(r["tier"]) == tier:
+    for r in _ramp_rows(gl):
+        if _safe_int(r.get("tier")) == tier:
             return dict(r)
     return None
 
