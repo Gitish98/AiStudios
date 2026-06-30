@@ -43,14 +43,16 @@ def mark_spread_value_ps(adapter: BrokerAdapter, pos: dict) -> Optional[float]:
 
     if pos.get("structure") == "iron_condor":
         legs = json.loads(pos["legs_json"])
-        w = legs["width"]
+        put_wing = legs["sp"] - legs["lp"]
+        call_wing = legs["lc"] - legs["sc"]
         sp, lp = mark(legs["sp"], "put"), mark(legs["lp"], "put")
         sc, lc = mark(legs["sc"], "call"), mark(legs["lc"], "call")
         if None in (sp, lp, sc, lc):
             return None
-        put_side = max(0.0, sp - lp)
-        call_side = max(0.0, sc - lc)
-        return round(max(0.0, min(w, put_side + call_side)), 4)
+        # Each side bounded by its OWN wing (correct for asymmetric condors).
+        put_side = max(0.0, min(put_wing, sp - lp))
+        call_side = max(0.0, min(call_wing, sc - lc))
+        return round(put_side + call_side, 4)
 
     family = pos.get("family") or ("call" if "call" in (pos.get("structure") or "") else "put")
     higher = max(pos["short_strike"], pos["long_strike"])

@@ -39,7 +39,14 @@ def expected_legs(store: Store) -> dict:
     for p in store.get_open_positions():
         n = int(p["contracts"])
         u, exp = p["underlying"], p["expiration"]
-        if p.get("structure") == "iron_condor" and p.get("legs_json"):
+        if p.get("structure") == "iron_condor":
+            # Fail CLOSED: a condor with no legs_json must never be silently
+            # reinterpreted as a 2-leg put vertical (that would drop both call
+            # legs and hide real call-side drift).
+            if not p.get("legs_json"):
+                raise ValueError(
+                    f"iron_condor position for {u} {exp} is missing legs_json — "
+                    "cannot reconcile its 4 legs.")
             j = json.loads(p["legs_json"])
             _add(expected, _leg_key(u, exp, j["sp"], "P"), -n)
             _add(expected, _leg_key(u, exp, j["lp"], "P"), +n)
@@ -81,8 +88,18 @@ def reconcile(adapter: BrokerAdapter, store: Store) -> dict[str, Any]:
                           "IBKR (a real paper/live account).")
         return report
 
+    # A corrupt/incomplete tracked position (e.g. a condor missing legs_json) must
+    # fail closed and be labelled as such — not silently degraded or mislabelled.
     try:
         exp = expected_legs(store)
+    except Exception as e:
+        report["ok"] = False
+        report["note"] = f"corrupt tracked position: {e}"
+        report["drift"].append({"kind": "corrupt_position", "detail": str(e),
+                                "severity": "high"})
+        return report
+
+    try:
         brk = broker_legs(adapter)
     except Exception as e:  # broker fetch failure -> fail closed (flag, don't pretend clean)
         report["ok"] = False

@@ -145,12 +145,16 @@ def intrinsic_vertical_ps(family: str, short_strike: float, long_strike: float,
 
 
 def condor_intrinsic_ps(legs: dict, spot: float) -> float:
-    """Iron-condor value at/after expiry: the breached side's intrinsic, clamped
-    to [0, width]. Only one side can be in-the-money at a single settlement price."""
-    w = legs["width"]
-    put_side = max(0.0, min(w, legs["sp"] - spot))   # short put breached below
-    call_side = max(0.0, min(w, spot - legs["sc"]))  # short call breached above
-    return min(w, put_side + call_side)
+    """Iron-condor value at/after expiry: each side's intrinsic clamped to ITS
+    OWN wing width (the put spread can't exceed sp−lp; the call spread can't
+    exceed lc−sc). The two sides are mutually exclusive at a single settlement
+    price, so they simply sum. (A shared max-wing clamp would over-value the
+    narrower side of an ASYMMETRIC condor and fabricate a loss.)"""
+    put_wing = legs["sp"] - legs["lp"]
+    call_wing = legs["lc"] - legs["sc"]
+    put_side = max(0.0, min(put_wing, legs["sp"] - spot))   # short put breached below
+    call_side = max(0.0, min(call_wing, spot - legs["sc"]))  # short call breached above
+    return put_side + call_side
 
 
 def position_pnl(is_credit: bool, entry_ps: float, value_ps: float,

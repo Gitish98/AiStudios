@@ -59,6 +59,47 @@ def test_condor_expiry_pnl():
     assert abs(d2.realized_pnl - (1.50 - 5.0) * 100) < 1e-6   # -$350
 
 
+def test_condor_intrinsic_asymmetric_wings():
+    # put wing = 5, call wing = 10, stored width = max = 10.
+    legs = {"sp": 100, "lp": 95, "sc": 120, "lc": 130, "width": 10}
+    assert condor_intrinsic_ps(legs, 110) == 0.0          # inside both -> max profit
+    assert condor_intrinsic_ps(legs, 90) == 5.0           # put fully ITM -> capped at PUT wing (5), not 10
+    assert condor_intrinsic_ps(legs, 80) == 5.0           # still only the put wing
+    assert condor_intrinsic_ps(legs, 135) == 10.0         # call fully ITM -> capped at CALL wing (10)
+    assert abs(condor_intrinsic_ps(legs, 97) - 3.0) < 1e-9  # partial put-side
+
+
+def test_condor_asymmetric_expiry_pnl_not_overstated():
+    legs = {"sp": 100, "lp": 95, "sc": 120, "lc": 130, "width": 10}
+    pos = {"id": 1, "structure": "iron_condor", "is_credit": 1, "family": "mixed",
+           "underlying": "X", "expiration": "2026-02-19", "contracts": 1,
+           "short_strike": 100, "long_strike": 95, "width": 10,
+           "legs_json": json.dumps(legs), "entry_credit_ps": 2.0, "max_loss": 800}
+    d = evaluate_exit(pos, 0.0, 90, "2026-02-19", ManageParams())
+    # put side max loss is the 5-wide wing, not the 10-wide aggregate.
+    assert abs(d.realized_pnl - (2.0 - 5.0) * 100) < 1e-6   # -$300, NOT -$800
+
+
+def test_reconcile_condor_missing_legs_json_fails_closed():
+    with tempfile.TemporaryDirectory() as tmp:
+        store = Store(Path(tmp) / "t.db")
+        store.open_position({
+            "client_order_id": "ic", "strategy": "iron_condor", "structure": "iron_condor",
+            "family": "mixed", "is_credit": 1, "underlying": "SPY", "status": "open",
+            "opened_asof": "2026-01-15", "opened_ts": "t", "expiration": "2026-02-19",
+            "contracts": 1, "short_strike": 540, "long_strike": 535, "width": 5,
+            "legs_json": None, "entry_credit_ps": 1.5, "max_loss": 350})
+
+        class Stub:
+            name = "ibkr_paper"
+            def get_positions(self):
+                return []
+        rep = reconcile(Stub(), store)
+        assert not rep["ok"]
+        assert any(d["kind"] == "corrupt_position" for d in rep["drift"])
+        store.close()
+
+
 def test_condor_take_profit():
     pos = order_to_position(_condor_order(credit=1.50), "2026-01-15", "t")
     pos["id"] = 1
