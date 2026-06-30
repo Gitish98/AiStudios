@@ -145,7 +145,8 @@ def cmd_run_cycle(args, dry_run=False):
     print(f"\n  Placed   : {len(summary['placed'])}")
     for p in summary["placed"]:
         tag = " [DRY]" if p.get("dry_run") else ""
-        print(f"    ✓ {p['underlying']} {p['strategy']} "
+        nc = p.get("contracts", 1)
+        print(f"    ✓ {p['underlying']} {p['strategy']} ×{nc} "
               f"(credit ${p.get('est_credit', 0):.0f}){tag}")
     print(f"  Rejected : {len(summary['rejected'])}")
     for r in summary["rejected"]:

@@ -23,6 +23,7 @@ from .manage import _is_filled, manage_open_positions
 from .positions import order_to_position
 from .reconcile import reconcile
 from .risk import Decision, RiskContext, RiskGate, RiskLimits, _notional
+from .sizing import SizeParams, size_contracts
 from .store import DEAD_ORDER_STATUSES, Store
 from strategies.base import Signal, StrategyContext
 
@@ -119,6 +120,7 @@ def run_cycle(
 
     options_level = int(config.account.get("options_approval_level", 3))
     region = str(config.account.get("region", "US")).upper()
+    size_params = SizeParams.from_config(config)
 
     def _ctx() -> RiskContext:
         return RiskContext(
@@ -215,15 +217,29 @@ def run_cycle(
             for signal in strat.generate(sctx):
                 summary["signals"].append({"symbol": symbol, "strategy": signal.strategy,
                                            "rationale": signal.rationale})
-                order = signal_to_order(signal, asof)
+                base_order = signal_to_order(signal, asof)  # 1 contract (unit)
 
                 # Dedup against both the persisted store AND orders already
                 # handled earlier in THIS cycle (the store isn't written in a
                 # dry-run, so a cycle-local set is needed to avoid double-counting).
-                if store.has_order(order.client_order_id) or order.client_order_id in seen_ids:
-                    summary["skipped_duplicates"].append(order.client_order_id)
+                if (store.has_order(base_order.client_order_id)
+                        or base_order.client_order_id in seen_ids):
+                    summary["skipped_duplicates"].append(base_order.client_order_id)
                     continue
-                seen_ids.add(order.client_order_id)
+                seen_ids.add(base_order.client_order_id)
+
+                # SIZE the order to the account (before the gate, so the gate
+                # re-checks the SIZED order). 0 contracts => one contract already
+                # exceeds the per-trade risk budget -> skip honestly.
+                n = size_contracts(signal.max_loss, account.equity, size_params)
+                if n < 1:
+                    summary["rejected"].append({
+                        "underlying": base_order.underlying, "strategy": base_order.strategy,
+                        "reasons": [f"too small to size within per-trade risk "
+                                    f"(${size_params.per_trade_risk_pct*account.equity:.0f}) "
+                                    f"vs max loss ${signal.max_loss:.0f}/contract"]})
+                    continue
+                order = _scale_order(base_order, n)
 
                 decision = gate.evaluate(order, _ctx())
                 store.append(_now_iso(), "risk_decision", {
@@ -256,14 +272,21 @@ def run_cycle(
                             "underlying": order.underlying, "strategy": order.strategy,
                             "thesis": ann["thesis"]})
                         continue
+                    # The advisor may only scale DOWN (mult in [0,1]). Re-size the
+                    # already-gate-approved order; a smaller order is still safe.
+                    if size_params.enabled and ann["allocation_mult"] < 1.0 and n > 1:
+                        n2 = max(1, int(n * ann["allocation_mult"]))
+                        if n2 < n:
+                            order = _scale_order(base_order, n2)   # re-scale from unit
+                            n = n2
 
                 if dry_run:
                     opened_today += 1
                     _synthesize_position(order)  # so caps accumulate in dry-run too
                     summary["placed"].append(
                         {"underlying": order.underlying, "strategy": order.strategy,
-                         "est_credit": order.est_credit, "dry_run": True,
-                         "client_order_id": order.client_order_id})
+                         "contracts": n, "est_credit": round(order.est_credit * n, 2),
+                         "dry_run": True, "client_order_id": order.client_order_id})
                     continue
 
                 result = adapter.place_order(order)
@@ -289,7 +312,8 @@ def run_cycle(
                         pass  # non-spread orders aren't tracked as managed positions yet
                     summary["placed"].append({
                         "underlying": order.underlying, "strategy": order.strategy,
-                        "status": result.status, "est_credit": order.est_credit,
+                        "contracts": n, "status": result.status,
+                        "est_credit": round(order.est_credit * n, 2),
                         "client_order_id": order.client_order_id})
                 else:
                     summary["rejected"].append(
@@ -306,6 +330,19 @@ def run_cycle(
         "placed": len(summary["placed"]), "rejected": len(summary["rejected"]),
         "reconcile_ok": rec["ok"]})
     return summary
+
+
+def _scale_order(base: OrderRequest, n: int) -> OrderRequest:
+    """Scale a 1-contract order to n contracts: leg quantities and TOTAL max_loss
+    scale by n; est_credit stays PER-CONTRACT (order_to_position derives per-share
+    credit from it and reads contract count from the leg qty), and limit_price is
+    a per-share net price (unchanged)."""
+    import dataclasses
+    n = max(1, int(n))
+    if n == 1:
+        return base
+    new_legs = [dataclasses.replace(l, qty=l.qty * n) for l in base.legs]
+    return dataclasses.replace(base, legs=new_legs, max_loss=base.max_loss * n)
 
 
 def _reasoning_enabled(config) -> bool:

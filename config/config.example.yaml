@@ -107,6 +107,13 @@ overnight:
 
 # ── Position sizing ──────────────────────────────────────────────────────────
 sizing:
+  enabled: true                    # size contracts to the account (else 1 contract/trade)
+  # Risk this fraction of equity per trade, sized off the trade's DEFINED max loss
+  # per contract. Defaults to risk.per_trade_risk_pct. FLOORS to a whole number, so
+  # if even 1 contract exceeds this budget the trade is SKIPPED (honest for small
+  # accounts). The gate still re-checks the sized order against every cap.
+  per_trade_risk_pct: 0.005
+  max_contracts: 10                # hard cap on contracts per position
   method: fixed_fractional         # fixed_fractional | vol_target | kelly_lite
   # fixed_fractional is the default and usually the right answer (docs/05 §3.1).
   # kelly_lite is capped HARD (<= 1/4 Kelly, then clamped by per_trade_risk_pct)
