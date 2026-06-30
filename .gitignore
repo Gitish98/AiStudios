@@ -25,6 +25,7 @@ portfolio.db
 
 # ── Generated artifacts ─────────────────────────────────────────────────────
 dashboard/out/
+exports/
 *.log
 logs/
 

@@ -20,7 +20,7 @@ import argparse
 import sys
 from datetime import datetime, timezone
 
-from core.config import load_config
+from core.config import load_config, REPO_ROOT
 from core.brokers.factory import build_execution_adapter
 from core.store import Store
 from core.execution import run_cycle
@@ -220,6 +220,65 @@ def cmd_reconcile(args):
     store.close()
 
 
+def cmd_performance(args):
+    from core.costs import CostModel
+    from core.performance import compute_metrics, graduation_status
+    config = load_config()
+    store = Store()
+    closed = store.get_closed_positions()
+    days = sorted({p.get("closed_asof") for p in closed if p.get("closed_asof")})
+    m = compute_metrics(closed, days, CostModel.from_config(config))
+    grad = graduation_status(m)
+
+    print("─" * 56)
+    print("  PAPER PERFORMANCE  (net of modeled commissions + slippage)")
+    print("─" * 56)
+    print(f"  Trading days   : {m['days']}")
+    print(f"  Closed trades  : {m['trades']}   (win rate {m['win_rate']*100:.1f}%)")
+    print(f"  Gross P&L      : ${m['gross_pnl']:+,.2f}")
+    print(f"  Costs          : -${m['total_costs']:,.2f}  (${m['cost_per_trade']:.2f}/trade)")
+    print(f"  NET P&L        : ${m['net_pnl']:+,.2f}")
+    print(f"  Net expectancy : ${m['expectancy_net']:+.2f} / trade")
+    print(f"  Profit factor  : {m['profit_factor']}")
+    print(f"  Max drawdown   : ${m['max_drawdown']:,.2f}")
+    print(f"  Exits          : {m['exits_by_reason']}")
+    print()
+    if grad["graduated"]:
+        print("  ✅ Clears the minimum paper bar (>=60 days, >=40 trades, positive net "
+              "expectancy). This is a HURDLE, not a recommendation to go live.")
+    else:
+        print("  ⛔ Not yet eligible to even consider live:")
+        for r in grad["reasons"]:
+            print(f"       - {r}")
+    print("\n  Reminder: paper/backtest curves are optimistic; option prices here are")
+    print("  modeled. Not financial advice.")
+    store.close()
+
+
+def cmd_export_trades(args):
+    import csv
+    from core.costs import CostModel
+    from core.performance import trade_rows
+    config = load_config()
+    store = Store()
+    rows = trade_rows(store.get_closed_positions(), CostModel.from_config(config))
+    store.close()
+    if not rows:
+        print("No closed trades to export yet.")
+        return
+    out_dir = REPO_ROOT / "exports"
+    out_dir.mkdir(exist_ok=True)
+    out = out_dir / "trades.csv"
+    with open(out, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+        w.writeheader()
+        w.writerows(rows)
+    print(f"Exported {len(rows)} trades to: {out}")
+    print("For Canadian tax: this is a trade log (gross, cost, net per trade). Your")
+    print("adjusted cost base / capital-gains-vs-business-income treatment is a")
+    print("question for a tax professional — this export is records, not advice.")
+
+
 def cmd_go_live(args):
     print("go-live is DISABLED in Phase 0. This system is paper-only.")
     print("See docs/05-risk-and-safety.md (§1) and docs/07-roadmap.md for the")
@@ -240,6 +299,8 @@ def main():
         func=lambda a: cmd_run_cycle(a, dry_run=True))
     sub.add_parser("dashboard", help="Rebuild the HTML dashboard").set_defaults(func=cmd_dashboard)
     sub.add_parser("reconcile", help="Diff broker vs local journal").set_defaults(func=cmd_reconcile)
+    sub.add_parser("performance", help="Net-of-cost paper performance + graduation status").set_defaults(func=cmd_performance)
+    sub.add_parser("export-trades", help="Export closed trades to a CSV (tax/records)").set_defaults(func=cmd_export_trades)
     sub.add_parser("kill", help="Engage the kill switch").set_defaults(func=cmd_kill)
     sub.add_parser("clear-kill", help="Clear the kill switch").set_defaults(func=cmd_clear_kill)
     sub.add_parser("go-live", help="(disabled in Phase 0)").set_defaults(func=cmd_go_live)
