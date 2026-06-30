@@ -20,7 +20,7 @@ config/watchlist.yaml
 *.db-shm
 *.sqlite
 *.sqlite3
-data/
+/data/
 portfolio.db
 
 # ── Generated artifacts ─────────────────────────────────────────────────────
