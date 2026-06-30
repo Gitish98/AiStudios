@@ -28,9 +28,11 @@ etfs:
   - XLF      # Financials sector
   - XLE      # Energy sector
 
-# ── Liquid large-cap equities (deep options; have earnings — mind §0.4/§2.5) ─
-# These carry scheduled earnings binary risk. The earnings calendar is used to
-# AVOID holding naked premium through a report (and is the trigger for Engine C).
+# ── Liquid large-cap equities — NOT LOADED IN PHASE 0 ───────────────────────
+# The operator chose "ETFs first": single names carry scheduled earnings binary
+# risk, so the loader intentionally ignores this `equities:` block in Phase 0.
+# It comes online when the earnings engine ships (docs/07-roadmap.md, Phase 3+),
+# which uses the earnings calendar to avoid holding premium through a report.
 equities:
   - AAPL
   - MSFT
