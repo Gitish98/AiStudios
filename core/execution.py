@@ -138,11 +138,14 @@ def run_cycle(
             quote = adapter.get_quote(symbol)
             iv_hist = getattr(adapter, "iv_history", lambda s: [])(symbol)
             bars = adapter.get_history(symbol, 120) if hasattr(adapter, "get_history") else []
+            earnings = (adapter.get_earnings_date(symbol)
+                        if hasattr(adapter, "get_earnings_date") else None)
             sctx = StrategyContext(
                 underlying=symbol, spot=quote.mid, option_chain=chain,
                 iv_history=iv_hist,
                 closes=[b["c"] for b in bars], highs=[b["h"] for b in bars],
-                lows=[b["l"] for b in bars], config=config.strategies,
+                lows=[b["l"] for b in bars], asof=asof, earnings_date=earnings,
+                config=config.strategies,
             )
         except Exception as e:  # data failure for one symbol must not kill the cycle
             store.append(_now_iso(), "data_error", {"symbol": symbol, "error": str(e)})

@@ -69,6 +69,7 @@ class Store:
                 short_strike REAL,
                 long_strike REAL,
                 width REAL,
+                legs_json TEXT,             -- full leg detail for multi-leg structures (iron condor)
                 entry_credit_ps REAL,       -- per-share net credit (e.g. 0.26)
                 max_loss REAL,              -- dollars
                 closed_asof TEXT,
@@ -149,7 +150,7 @@ class Store:
         cols = ("client_order_id", "strategy", "structure", "family", "is_credit",
                 "underlying", "status", "opened_asof",
                 "opened_ts", "expiration", "contracts", "short_strike", "long_strike",
-                "width", "entry_credit_ps", "max_loss")
+                "width", "legs_json", "entry_credit_ps", "max_loss")
         cur = self.conn.execute(
             f"INSERT INTO positions ({','.join(cols)}) VALUES ({','.join('?'*len(cols))})",
             tuple(pos.get(c) for c in cols),

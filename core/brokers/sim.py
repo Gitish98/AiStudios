@@ -80,6 +80,17 @@ class SimAdapter(BrokerAdapter):
             hist.append(round(anchor * factor, 4))
         return hist
 
+    def get_earnings_date(self, symbol: str, asof: Optional[str] = None) -> Optional[str]:
+        """Deterministic synthetic next-earnings date: 1–9 days after asof for
+        symbols whose seed lands in the 'has upcoming earnings' bucket."""
+        u = symbol.upper()
+        d0 = date.fromisoformat(asof or self.asof)
+        s = _seed("earn", u, self.asof)
+        if s > 0.6:  # ~40% of names have earnings in the near window on a given day
+            return None
+        days_out = 1 + int(s * 14)  # 1..9 days
+        return (d0 + timedelta(days=days_out)).isoformat()
+
     def get_history(self, symbol: str, days: int = 120,
                     asof: Optional[str] = None) -> list[dict]:
         """Deterministic synthetic daily OHLC ending at `asof`, last close ≈ spot."""

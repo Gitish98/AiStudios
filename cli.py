@@ -37,6 +37,10 @@ def _strategies(config):
     if vb is not None and vb.get("enabled", True):
         from strategies.breakout import VolatilityBreakout
         out.append(VolatilityBreakout(vb))
+    ev = s.get("earnings_vol")
+    if ev is not None and ev.get("enabled", True):
+        from strategies.earnings import EarningsVol
+        out.append(EarningsVol(ev))
     return out
 
 

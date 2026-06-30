@@ -140,6 +140,21 @@ strategies:
       debit_stop_frac: 0.50       # stop after losing 50% of the debit
       manage_at_dte: 21
 
+  earnings_vol:
+    enabled: true                 # harvest the earnings IV-crush (sell rich premium)
+    min_days_to_earnings: 1       # be positioned BEFORE the report
+    max_days_to_earnings: 7
+    rich_threshold: 1.20          # implied move must be >= 1.2x the realized-vol baseline
+    min_iv_rank: 0.50             # second confirmation: elevated IV
+    wing_width: 5.0               # iron-condor wing width ($)
+    min_open_interest: 250
+    max_spread_pct: 0.18
+    min_credit_ratio: 0.20        # net credit / wing width
+    manage:
+      profit_target_pct: 0.50     # close at 50% — the crush usually realizes fast post-earnings
+      stop_loss_mult: 2.0
+      manage_at_dte: 21
+
 # ── Order safety ─────────────────────────────────────────────────────────────
 orders:
   default_type: limit              # limit | marketable_limit — NEVER blind market

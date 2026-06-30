@@ -9,6 +9,7 @@ gate or the kill switch — you must always be able to exit. They are journaled.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -21,30 +22,46 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _marker(adapter: BrokerAdapter, underlying: str, expiration: str):
+    """Return a mark(strike, right) -> per-share mid (or None)."""
+    def _mark(strike: float, right: str) -> Optional[float]:
+        if hasattr(adapter, "mark_option"):
+            return adapter.mark_option(underlying, expiration, strike, right)
+        chain = adapter.get_option_chain(underlying, expiration)
+        c = next((c for c in chain if c.option_type == right
+                  and abs(c.strike - strike) < 1e-6), None)
+        return c.mid if c else None
+    return _mark
+
+
 def mark_spread_value_ps(adapter: BrokerAdapter, pos: dict) -> Optional[float]:
-    """Current per-share market value of the vertical, in [0, width]:
-       put family:  P(higher) − P(lower);  call family: C(lower) − C(higher).
-    Uses the adapter's mark_option when available (sim), else the live chain."""
+    """Current per-share market value, clamped to [0, width].
+       vertical put:  P(higher) − P(lower);  vertical call: C(lower) − C(higher);
+       iron condor:   put-side spread value + call-side spread value."""
     u, exp = pos["underlying"], pos["expiration"]
+    mark = _marker(adapter, u, exp)
+
+    if pos.get("structure") == "iron_condor":
+        legs = json.loads(pos["legs_json"])
+        w = legs["width"]
+        sp, lp = mark(legs["sp"], "put"), mark(legs["lp"], "put")
+        sc, lc = mark(legs["sc"], "call"), mark(legs["lc"], "call")
+        if None in (sp, lp, sc, lc):
+            return None
+        put_side = max(0.0, sp - lp)
+        call_side = max(0.0, sc - lc)
+        return round(max(0.0, min(w, put_side + call_side)), 4)
+
     family = pos.get("family") or ("call" if "call" in (pos.get("structure") or "") else "put")
     higher = max(pos["short_strike"], pos["long_strike"])
     lower = min(pos["short_strike"], pos["long_strike"])
     right = "call" if family == "call" else "put"
-
-    def _mark(strike: float) -> Optional[float]:
-        if hasattr(adapter, "mark_option"):
-            return adapter.mark_option(u, exp, strike, right)
-        chain = adapter.get_option_chain(u, exp)
-        c = next((c for c in chain if c.option_type == right
-                  and abs(c.strike - strike) < 1e-6), None)
-        return c.mid if c else None
-
-    hi, lo = _mark(higher), _mark(lower)
+    hi, lo = mark(higher, right), mark(lower, right)
     if hi is None or lo is None:
         return None
     value = (hi - lo) if family == "put" else (lo - hi)
     width = abs(pos["short_strike"] - pos["long_strike"])
-    return round(max(0.0, min(width, value)), 4)  # a vertical is worth [0, width]
+    return round(max(0.0, min(width, value)), 4)
 
 
 def _spot(adapter: BrokerAdapter, underlying: str) -> Optional[float]:
@@ -59,17 +76,24 @@ def _spot(adapter: BrokerAdapter, underlying: str) -> Optional[float]:
 
 
 def _closing_order(pos: dict, value_ps: float) -> OrderRequest:
-    """Close the vertical by reversing both legs (sell the long, buy back the short)."""
+    """Close the spread by reversing every leg (sell longs, buy back shorts)."""
     contracts = int(pos["contracts"])
-    family = pos.get("family") or ("call" if "call" in (pos.get("structure") or "") else "put")
-    legs = [
-        OrderLeg(symbol=f"{pos['underlying']}_close_short", side="buy", qty=contracts,
-                 asset_class="option", option_type=family,
-                 strike=pos["short_strike"], expiration=pos["expiration"]),
-        OrderLeg(symbol=f"{pos['underlying']}_close_long", side="sell", qty=contracts,
-                 asset_class="option", option_type=family,
-                 strike=pos["long_strike"], expiration=pos["expiration"]),
-    ]
+    exp, u = pos["expiration"], pos["underlying"]
+
+    def leg(side, otype, strike, tag):
+        return OrderLeg(symbol=f"{u}_close_{tag}", side=side, qty=contracts,
+                        asset_class="option", option_type=otype, strike=strike, expiration=exp)
+
+    if pos.get("structure") == "iron_condor":
+        j = json.loads(pos["legs_json"])
+        legs = [
+            leg("buy", "put", j["sp"], "sp"), leg("sell", "put", j["lp"], "lp"),
+            leg("buy", "call", j["sc"], "sc"), leg("sell", "call", j["lc"], "lc"),
+        ]
+    else:
+        family = pos.get("family") or ("call" if "call" in (pos.get("structure") or "") else "put")
+        legs = [leg("buy", family, pos["short_strike"], "short"),
+                leg("sell", family, pos["long_strike"], "long")]
     return OrderRequest(
         client_order_id=f"CLOSE-{pos['client_order_id']}",
         legs=legs, order_type="limit", limit_price=round(max(0.0, value_ps), 2),
@@ -83,7 +107,13 @@ def manage_open_positions(adapter: BrokerAdapter, store: Store, config,
     strategies = config.strategies or {}
     credit_params = ManageParams.from_config(strategies.get("premium_harvest", {}))
     debit_params = ManageParams.from_config(strategies.get("volatility_breakout", {}))
+    condor_params = ManageParams.from_config(strategies.get("earnings_vol", {}))
     open_positions = store.get_open_positions()
+
+    def _params_for(pos):
+        if pos.get("structure") == "iron_condor":
+            return condor_params
+        return credit_params if bool(pos.get("is_credit", 1)) else debit_params
 
     summary: dict[str, Any] = {
         "evaluated": len(open_positions), "closed": [], "held": [],
@@ -103,7 +133,7 @@ def manage_open_positions(adapter: BrokerAdapter, store: Store, config,
         if dte_from(pos["expiration"], asof) <= 0 and spot is None:
             summary["held"].append({"underlying": pos["underlying"], "reason": "no_spot_at_expiry"})
             continue
-        params = credit_params if bool(pos.get("is_credit", 1)) else debit_params
+        params = _params_for(pos)
         decision = evaluate_exit(pos, value_ps, spot if spot is not None else 0.0,
                                  asof, params)
 

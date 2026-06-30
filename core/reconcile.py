@@ -34,10 +34,18 @@ def _leg_key(underlying: str, expiration: str, strike: float, right: str):
 
 def expected_legs(store: Store) -> dict:
     """Signed expected option-leg quantities from our tracked open positions."""
+    import json
     expected: dict = {}
     for p in store.get_open_positions():
         n = int(p["contracts"])
         u, exp = p["underlying"], p["expiration"]
+        if p.get("structure") == "iron_condor" and p.get("legs_json"):
+            j = json.loads(p["legs_json"])
+            _add(expected, _leg_key(u, exp, j["sp"], "P"), -n)
+            _add(expected, _leg_key(u, exp, j["lp"], "P"), +n)
+            _add(expected, _leg_key(u, exp, j["sc"], "C"), -n)
+            _add(expected, _leg_key(u, exp, j["lc"], "C"), +n)
+            continue
         family = p.get("family") or ("call" if "call" in (p.get("structure") or "") else "put")
         right = "C" if family == "call" else "P"
         # The SHORT leg is held −N, the LONG leg +N, regardless of credit/debit.

@@ -26,14 +26,17 @@ Exit rules (config strategies.<name>.manage):
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
 from .brokers.base import OrderRequest
 
-CREDIT_STRUCTURES = {"put_credit_spread", "call_credit_spread"}
+CREDIT_STRUCTURES = {"put_credit_spread", "call_credit_spread", "iron_condor"}
 DEBIT_STRUCTURES = {"call_debit_spread", "put_debit_spread"}
+VERTICAL_STRUCTURES = {"put_credit_spread", "call_credit_spread",
+                       "call_debit_spread", "put_debit_spread"}
 
 
 @dataclass
@@ -63,10 +66,40 @@ def is_credit_structure(structure: str) -> bool:
 
 
 def order_to_position(order: OrderRequest, asof: str, opened_ts: str) -> dict:
-    """Derive a persisted position row from an accepted vertical-spread order.
-    Works for all four structures: the SELL leg is the short, the BUY leg the
-    long; family comes from the option type; credit/debit from est_credit's sign
-    (our convention: est_credit > 0 = net credit, ≤ 0 = net debit)."""
+    """Derive a persisted position row from an accepted spread order. Verticals
+    (4 structures) and the 4-leg iron condor are supported."""
+    if order.strategy == "iron_condor":
+        return _condor_to_position(order, asof, opened_ts)
+    return _vertical_to_position(order, asof, opened_ts)
+
+
+def _condor_to_position(order: OrderRequest, asof: str, opened_ts: str) -> dict:
+    puts = [l for l in order.legs if l.option_type == "put"]
+    calls = [l for l in order.legs if l.option_type == "call"]
+    sp = next((l for l in puts if l.side == "sell"), None)
+    lp = next((l for l in puts if l.side == "buy"), None)
+    sc = next((l for l in calls if l.side == "sell"), None)
+    lc = next((l for l in calls if l.side == "buy"), None)
+    if not (sp and lp and sc and lc):
+        raise ValueError("iron_condor expects short+long put AND short+long call")
+    width = round(max(sp.strike - lp.strike, lc.strike - sc.strike), 2)
+    legs = {"sp": sp.strike, "lp": lp.strike, "sc": sc.strike, "lc": lc.strike, "width": width}
+    return {
+        "client_order_id": order.client_order_id, "strategy": order.strategy,
+        "structure": "iron_condor", "family": "mixed", "is_credit": 1,
+        "underlying": order.underlying, "status": "open", "opened_asof": asof,
+        "opened_ts": opened_ts, "expiration": sp.expiration,
+        "contracts": max(1, int(round(abs(sp.qty)))),
+        "short_strike": sp.strike, "long_strike": lp.strike, "width": width,
+        "legs_json": json.dumps(legs),
+        "entry_credit_ps": round(abs(order.est_credit) / 100.0, 4),
+        "max_loss": order.max_loss,
+    }
+
+
+def _vertical_to_position(order: OrderRequest, asof: str, opened_ts: str) -> dict:
+    """The SELL leg is the short, the BUY leg the long; family from the option
+    type; credit/debit from est_credit's sign (>0 = credit, ≤0 = debit)."""
     short = next((l for l in order.legs if l.side == "sell" and l.asset_class == "option"), None)
     long = next((l for l in order.legs if l.side == "buy" and l.asset_class == "option"), None)
     if short is None or long is None or short.option_type != long.option_type:
@@ -111,6 +144,15 @@ def intrinsic_vertical_ps(family: str, short_strike: float, long_strike: float,
     return max(0.0, min(width, spot - lower))
 
 
+def condor_intrinsic_ps(legs: dict, spot: float) -> float:
+    """Iron-condor value at/after expiry: the breached side's intrinsic, clamped
+    to [0, width]. Only one side can be in-the-money at a single settlement price."""
+    w = legs["width"]
+    put_side = max(0.0, min(w, legs["sp"] - spot))   # short put breached below
+    call_side = max(0.0, min(w, spot - legs["sc"]))  # short call breached above
+    return min(w, put_side + call_side)
+
+
 def position_pnl(is_credit: bool, entry_ps: float, value_ps: float,
                  contracts: int) -> float:
     """Dollars. Credit: profit as value falls. Debit: profit as value rises."""
@@ -134,8 +176,12 @@ def evaluate_exit(pos: dict, current_value_ps: float, spot: float, asof: str,
     family = pos.get("family") or family_of(pos.get("structure", "put_credit_spread"))
     dte = dte_from(pos["expiration"], asof)
 
+    structure = pos.get("structure", "")
     if dte <= 0:
-        iv = intrinsic_vertical_ps(family, pos["short_strike"], pos["long_strike"], spot)
+        if structure == "iron_condor":
+            iv = condor_intrinsic_ps(json.loads(pos["legs_json"]), spot)
+        else:
+            iv = intrinsic_vertical_ps(family, pos["short_strike"], pos["long_strike"], spot)
         return ExitDecision("expire", "expired", iv,
                             position_pnl(is_credit, entry, iv, contracts))
 

@@ -37,6 +37,8 @@ class StrategyContext:
     closes: list[float] = field(default_factory=list)
     highs: list[float] = field(default_factory=list)
     lows: list[float] = field(default_factory=list)
+    asof: str = ""
+    earnings_date: Optional[str] = None   # ISO date of next earnings, if known
     config: dict[str, Any] = field(default_factory=dict)
 
 
