@@ -24,6 +24,18 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 
 
+def _force_utf8_console() -> None:
+    """Windows consoles often default to a legacy code page (cp1252) that cannot
+    encode the box-drawing / emoji characters this script prints — which crashes
+    a fresh setup on the very first line. Reconfigure stdout/stderr to UTF-8 where
+    the runtime supports it (Python 3.7+); a no-op elsewhere."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
+
 def step(msg: str) -> None:
     print(f"\n{'─' * 60}\n  {msg}\n{'─' * 60}")
 
@@ -46,6 +58,7 @@ def run(cmd: list[str]) -> int:
 
 
 def main() -> int:
+    _force_utf8_console()
     step("Python version")
     print("  Python", sys.version.split()[0])
     if sys.version_info < (3, 11):

@@ -8,8 +8,20 @@ Usage: python -m tests.run     (or: python tests/run.py)
 from __future__ import annotations
 
 import importlib
+import sys
 import traceback
 from pathlib import Path
+
+
+def _force_utf8_console() -> None:
+    """Windows consoles often default to cp1252, which can't encode the box-drawing
+    characters in the summary — that would crash the runner AFTER the tests pass.
+    Reconfigure stdout/stderr to UTF-8 where supported (Python 3.7+)."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+        except Exception:
+            pass
 
 
 def _discover():
@@ -21,6 +33,7 @@ def _discover():
 
 
 def main() -> int:
+    _force_utf8_console()
     passed = failed = 0
     failures = []
     for mod in _discover():

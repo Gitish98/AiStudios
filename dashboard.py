@@ -48,7 +48,7 @@ def build(asof: str | None = None) -> Path:
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     out = OUT_DIR / "dashboard.html"
-    out.write_text(_render(data))
+    out.write_text(_render(data), encoding="utf-8")
     return out
 
 

@@ -66,7 +66,7 @@ def test_build_pro_self_contained_with_curve_and_winrate():
         assert out.exists(), "dashboard html was not written"
         assert out.name == "dashboard_pro.html"
 
-        html = out.read_text()
+        html = out.read_text(encoding="utf-8")
 
         # Self-contained: no external resources, no runtime fetch.
         assert "fetch(" not in html, "must not call fetch()"

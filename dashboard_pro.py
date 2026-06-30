@@ -137,7 +137,7 @@ def build_pro(store_path: Optional[Path] = None) -> Path:
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     out = OUT_DIR / "dashboard_pro.html"
-    out.write_text(_render(data))
+    out.write_text(_render(data), encoding="utf-8")
     return out
 
 

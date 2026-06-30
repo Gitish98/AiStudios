@@ -26,7 +26,7 @@ def _load_env_file(path: Path) -> None:
     variables already set in the real environment."""
     if not path.exists():
         return
-    for raw in path.read_text().splitlines():
+    for raw in path.read_text(encoding="utf-8").splitlines():
         line = raw.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
@@ -63,12 +63,12 @@ def load_config(config_path: Path | None = None) -> Config:
     path = config_path or CONFIG_PATH
     if not path.exists():
         path = path.with_name(path.name.replace(".yaml", ".example.yaml"))
-    data = yaml.safe_load(path.read_text()) or {}
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
 
     wpath = WATCHLIST_PATH
     if not wpath.exists():
         wpath = wpath.with_name(wpath.name.replace(".yaml", ".example.yaml"))
-    watch_raw = yaml.safe_load(wpath.read_text()) if wpath.exists() else {}
+    watch_raw = yaml.safe_load(wpath.read_text(encoding="utf-8")) if wpath.exists() else {}
     watchlist = _extract_watchlist(watch_raw)
 
     # Environment override for mode is intentionally NOT trusted to enable live;
