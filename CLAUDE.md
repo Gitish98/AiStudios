@@ -54,16 +54,20 @@ killed across ~10 adversarial review rounds.**
 - **Live is untested** — the go-live ramp is built + reviewed but only the operator
   can exercise the REAL live order path on a live IBKR Gateway. Shipped paper-
   validated, NOT live-validated. This is the #1 next step.
-- **IBKR paper connect: ACHIEVED & data-validated** on the operator's Windows box.
-  Account (CAD-base → USD), option chains, greeks/IV all flow; a full `dry-run`
-  runs with zero data errors and records ATM-IV snapshots. Fixed live: CAD-base
-  `get_account`, unqualified-contract filter, NaN-safe field parsing, delayed
-  market-data default. **Order placement path not yet exercised** — 0 signals so
-  far because IV rank is still bootstrapping (see below).
+- **IBKR paper connect: ACHIEVED, data-validated, and DEPLOYED on an always-on
+  cloud VM** (DigitalOcean, Ubuntu 24.04, ~$12/mo). IB Gateway runs headless via
+  IBC (systemd + Xvfb, auto-login, survives IBKR's nightly restart); AiStudios runs
+  in a venv on this branch with a cron (`0 10 * * 1-5` ET) firing a paper cycle each
+  weekday. Account (CAD-base → USD), option chains, greeks/IV all flow with zero
+  data errors; day-1 IV snapshots banked. Fixed live: CAD-base `get_account`,
+  unqualified-contract filter, NaN-safe field parsing, delayed market-data default.
+  Reach it: `ssh trader@<vm-ip>` then `ais status` / `ais kill`. Full runbook:
+  docs/10. **Order placement path not yet exercised** — 0 signals until IV rank
+  bootstraps (see below).
   - **IBKR gotcha (operational):** market data is served to only ONE session at a
     time — a phone app / web Client Portal / 2nd Gateway causes `Error 10197`
-    ("competing live session"). Keep exactly one login. Paper uses DELAYED data
-    (free); real-time needs entitlements.
+    ("competing live session") AND an "Existing session detected" login tug-of-war.
+    Keep exactly ONE login = the VM's Gateway. Paper uses DELAYED data (free).
 - IV rank needs **~20 sessions** to bootstrap on a real broker; earnings/news need
   a provider key (else those engines stand aside — they warn loudly).
 - Backtest option prices are **modeled (BS)**, not real fills — necessary, not
@@ -72,20 +76,22 @@ killed across ~10 adversarial review rounds.**
   ramp-tier advancement (today `ramp_advancement_status` only REPORTS readiness;
   the human edits the tier — by design).
 
-**Next, in priority:** (1) accrue ~20 daily paper cycles during market hours so IV
-rank bootstraps and premium_harvest starts signalling (then the paper ORDER path
-gets exercised); (2) operator live-validation of the ramp at tier 1 (smallest
-size); (3) sector caps; (4) more data (Polygon/options flow, an earnings key for
-earnings_vol).
+**Next, in priority:** (1) let the VM's daily cron accrue ~20 cycles so IV rank
+bootstraps and premium_harvest starts signalling (then the paper ORDER path gets
+exercised autonomously); (2) operator live-validation of the ramp at tier 1
+(smallest size); (3) sector caps; (4) more data (Polygon/options flow, an earnings
+key for earnings_vol); (5) tighten the VM API bind to localhost, passphrase the SSH
+key before live.
 
-> **NEXT SESSION START HERE:** branch **`aistudios/phase4-ibkr-live`**. Two things
-> are DONE this phase: the five-gate go-live ramp (`core/golive.py`, factory
-> unlock, risk ramp cap, `cli.py go-live`/`go-paper`, docs/05 §1.4) AND a working,
-> data-validated IBKR **paper** connect on the operator's box (account+chains+IV
-> flow; 220 tests). Live is UNtested. Next: run daily paper cycles during market
-> hours to bootstrap IV rank (~20 sessions) so signals/orders actually fire, then a
-> deliberate hand-run live-validation at ramp tier 1 — never let an LLM satisfy a
-> go-live gate. Keep exactly ONE IBKR session logged in (avoids Error 10197).
+> **NEXT SESSION START HERE:** branch **`aistudios/phase4-ibkr-live`**. Three things
+> are DONE this phase: the five-gate go-live ramp (`core/golive.py`, factory unlock,
+> risk ramp cap, `cli.py go-live`/`go-paper`, docs/05 §1.4); the data-validated IBKR
+> **paper** connect; and a full **autonomous cloud-VM deployment** (headless Gateway
+> via IBC + weekday cron; docs/10; `ssh trader@<vm-ip> ais status`; 220 tests). Live
+> is UNtested. Next is passive: the VM banks IV history daily (~20 sessions) until
+> signals/orders fire on their own, then a deliberate hand-run live-validation at
+> ramp tier 1 — never let an LLM satisfy a go-live gate. Keep exactly ONE IBKR
+> session logged in (the VM's) or Error 10197 returns.
 
 ## How we work (conventions)
 - **Branches:** descriptive, searchable. `aistudios/<area>-<short-desc>` (e.g.
