@@ -241,6 +241,7 @@ def _render(data: dict[str, Any]) -> str:
 <html lang="en"><head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<meta http-equiv="refresh" content="300">
 <title>AiStudios — Pro Dashboard</title>
 <style>
 *,*::before,*::after{{box-sizing:border-box;margin:0;padding:0}}
