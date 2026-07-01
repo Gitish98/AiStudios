@@ -22,6 +22,7 @@ explicitly passed (the factory never does that in the current phase).
 
 from __future__ import annotations
 
+import math
 from datetime import date, datetime, timedelta
 from typing import Any, Optional
 
@@ -46,10 +47,30 @@ def option_right(option_type: str) -> str:
 
 
 def _to_float(x: Any, default: float = 0.0) -> float:
+    """float(x), treating None and NaN as the default. IB market-data fields come
+    back as NaN (not None) when absent — and `NaN or 0` is NaN (NaN is truthy), so
+    naive `float(x or 0)` / `int(x or 0)` propagate NaN or crash."""
     try:
-        return float(x)
+        v = float(x)
+        return default if math.isnan(v) else v
     except (TypeError, ValueError):
         return default
+
+
+def _to_int(x: Any, default: int = 0) -> int:
+    try:
+        return int(_to_float(x, float(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _to_float_opt(x: Any) -> Optional[float]:
+    """Like _to_float but None (not 0.0) when absent/NaN — for optional greeks/IV."""
+    try:
+        v = float(x)
+        return None if math.isnan(v) else v
+    except (TypeError, ValueError):
+        return None
 
 
 def parse_account_values(rows: list[tuple[str, str, Any]]) -> dict:
@@ -307,10 +328,11 @@ class IBKRAdapter(BrokerAdapter):
         live = self._require()
         contract = ib.Stock(symbol, "SMART", "USD")
         live.qualifyContracts(contract)
-        t = live.reqMktData(contract, "", False, False)
-        live.sleep(1.0)
-        bid = float(t.bid or 0); ask = float(t.ask or 0)
-        last = float(t.last or t.close or 0)
+        # Blocking snapshot (respects the session market-data type). More robust than
+        # reqMktData+sleep(1s), which often hasn't populated delayed ticks in time.
+        [t] = live.reqTickers(contract)
+        bid, ask = _to_float(t.bid), _to_float(t.ask)
+        last = _to_float(t.last) or _to_float(t.close) or _to_float(t.marketPrice())
         return Quote(symbol=symbol.upper(), bid=bid, ask=ask, last=last)
 
     def get_option_chain(self, underlying: str, expiration: Optional[str] = None) -> list[OptionContract]:
@@ -347,7 +369,14 @@ class IBKRAdapter(BrokerAdapter):
         for K in strikes:
             for right in ("P", "C"):
                 contracts.append(ib.Option(underlying, exp, K, right, "SMART", currency="USD"))
+        # qualifyContracts populates conId only for combos that actually exist as
+        # listed contracts; a non-existent strike/right is left WITHOUT a conId.
+        # Passing such a contract to reqTickers raises "can't be hashed because no
+        # 'conId'" and kills the ENTIRE chain — so drop the unqualified ones first.
         live.qualifyContracts(*contracts)
+        contracts = [c for c in contracts if getattr(c, "conId", 0)]
+        if not contracts:
+            return []
         tickers = live.reqTickers(*contracts)
 
         out: list[OptionContract] = []
@@ -360,15 +389,15 @@ class IBKRAdapter(BrokerAdapter):
                 underlying=underlying.upper(),
                 expiration=datetime.strptime(exp, "%Y%m%d").strftime("%Y-%m-%d"),
                 strike=float(c.strike), option_type="call" if c.right == "C" else "put",
-                bid=float(tk.bid or 0), ask=float(tk.ask or 0), last=float(tk.last or 0),
-                implied_vol=float(g.impliedVol) if g and g.impliedVol else None,
-                delta=float(g.delta) if g and g.delta is not None else None,
-                gamma=float(g.gamma) if g and g.gamma is not None else None,
-                theta=float(g.theta) if g and g.theta is not None else None,
-                vega=float(g.vega) if g and g.vega is not None else None,
-                open_interest=int((tk.putOpenInterest if c.right == "P"
-                                   else tk.callOpenInterest) or 0),
-                volume=int(tk.volume or 0), dte=dte_val,
+                bid=_to_float(tk.bid), ask=_to_float(tk.ask), last=_to_float(tk.last),
+                implied_vol=_to_float_opt(g.impliedVol) if g else None,
+                delta=_to_float_opt(g.delta) if g else None,
+                gamma=_to_float_opt(g.gamma) if g else None,
+                theta=_to_float_opt(g.theta) if g else None,
+                vega=_to_float_opt(g.vega) if g else None,
+                open_interest=_to_int(tk.putOpenInterest if c.right == "P"
+                                      else tk.callOpenInterest),
+                volume=_to_int(tk.volume), dte=dte_val,
             ))
         return out
 

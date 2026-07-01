@@ -6,7 +6,19 @@ only touched on a live connect, which we don't do here)."""
 from core.brokers.base import OrderLeg, OrderRequest
 from core.brokers.ibkr import (
     IBKRAdapter, build_order_plan, ib_expiry, option_right, parse_account_values,
+    _to_float, _to_int, _to_float_opt,
 )
+
+
+def test_nan_safe_field_parsing():
+    # IB market-data fields come back as NaN (not None) when absent, and NaN is
+    # truthy — so `int(x or 0)` crashed with "cannot convert float NaN to integer"
+    # and `float(x or 0)` propagated NaN. Regression: the helpers must be NaN-safe.
+    nan = float("nan")
+    assert _to_float(nan) == 0.0 and _to_float(None) == 0.0 and _to_float("1.5") == 1.5
+    assert _to_int(nan) == 0 and _to_int(None) == 0 and _to_int(5.0) == 5
+    assert _to_float_opt(nan) is None and _to_float_opt(None) is None
+    assert _to_float_opt(0.31) == 0.31 and _to_float_opt(0.0) == 0.0
 
 
 def test_parse_account_values_cad_base_converts_to_usd():
