@@ -179,11 +179,19 @@ def cmd_run_cycle(args, dry_run=False):
     if summary.get("kill_switch"):
         print("\n  ⚠️  Kill switch is now ENGAGED.")
     store.close()
+    # Regenerate the self-contained dashboard each cycle (best-effort; a dashboard
+    # error must never affect the trading cycle). This is what keeps the cron's
+    # dashboard fresh.
+    try:
+        import dashboard_pro
+        dashboard_pro.build_pro()
+    except Exception:
+        pass
 
 
 def cmd_dashboard(args):
-    import dashboard
-    p = dashboard.build(asof=args.asof)
+    import dashboard_pro
+    p = dashboard_pro.build_pro()
     print(f"Dashboard written to: {p}")
     print("Open it in any browser (works on iPhone).")
 

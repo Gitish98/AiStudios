@@ -103,24 +103,70 @@ def _open_view(open_positions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
+def _iv_progress(store: Store, target: int = 20) -> dict[str, Any]:
+    """Store-only IV-rank bootstrap progress: distinct session-days accrued and the
+    latest per-symbol ATM IV. This is what makes the empty state honest."""
+    days, latest = 0, []
+    try:
+        days = int(store.conn.execute(
+            "SELECT COUNT(DISTINCT asof) FROM iv_snapshots").fetchone()[0] or 0)
+        rows = store.conn.execute(
+            "SELECT symbol, atm_iv FROM iv_snapshots "
+            "WHERE asof = (SELECT MAX(asof) FROM iv_snapshots) ORDER BY symbol"
+        ).fetchall()
+        latest = [{"symbol": r[0], "iv": round(float(r[1]), 3)} for r in rows]
+    except Exception:
+        pass
+    return {"days": days, "target": target, "latest": latest}
+
+
+def _graduation(closed: list[dict[str, Any]], min_days: int = 60,
+                min_trades: int = 40) -> dict[str, Any]:
+    """Store-only view of the graduation hurdle: time AND trades AND positive net."""
+    n = len(closed)
+    net = round(sum(_num(p.get("realized_pnl")) for p in closed), 2)
+    days = len({p.get("closed_asof") for p in closed if p.get("closed_asof")})
+    exp = round(net / n, 2) if n else None
+    return {
+        "trades": n, "min_trades": min_trades, "days": days, "min_days": min_days,
+        "net": net, "expectancy": exp,
+        "eligible": n >= min_trades and days >= min_days and (exp or 0) > 0,
+    }
+
+
 def _gather(store: Store) -> dict[str, Any]:
     closed = store.get_closed_positions()
     open_positions = store.get_open_positions()
 
-    # Equity: derive from store kv markers if present; otherwise leave None.
+    # Account + last-cycle come from read-only store markers the cycle writes.
     equity = store.get_kv("equity")
     cash = store.get_kv("cash")
     buying_power = store.get_kv("buying_power")
+    last_cycle = store.get_kv("last_cycle")
+    try:
+        last_cycle = json.loads(last_cycle) if last_cycle else None
+    except Exception:
+        last_cycle = None
+    try:
+        from core.config import load_config
+        watchlist = load_config().watchlist
+    except Exception:
+        watchlist = []
 
     return {
         "generated": datetime.now(timezone.utc).isoformat(),
-        "mode": "PAPER",
+        "mode": (store.get_kv("mode") or "paper").upper(),
+        "broker": store.get_kv("broker") or "sim",
         "kill_switch": store.kill_switch,
         "account": {
             "equity": _num(equity) if equity is not None else None,
             "cash": _num(cash) if cash is not None else None,
             "buying_power": _num(buying_power) if buying_power is not None else None,
         },
+        "last_cycle": last_cycle,
+        "iv": _iv_progress(store),
+        "graduation": _graduation(closed),
+        "watchlist": watchlist,
         "equity_curve": _equity_curve(closed),
         "open_positions": _open_view(open_positions),
         "closed_summary": _closed_summary(closed),
@@ -233,6 +279,12 @@ padding:2px 7px;border-radius:20px}}
 .reasons{{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}}
 .chip{{font-size:11px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);
 border-radius:20px;padding:3px 9px;color:#b8b8d8}}
+.info{{background:rgba(90,140,240,.14);color:#9fb9ff;border:1px solid rgba(90,140,240,.3);
+border-radius:12px;padding:12px 14px;margin-bottom:14px;font-size:13px;line-height:1.5}}
+.bar{{height:8px;background:rgba(255,255,255,.08);border-radius:99px;overflow:hidden;margin:8px 0}}
+.barfill{{height:100%;background:#9fb9ff;border-radius:99px}}
+.gate{{display:flex;justify-content:space-between;font-size:13px;padding:4px 0;color:#b8b8d8}}
+.gate b{{color:#e8e8f4;font-weight:600}}
 </style></head><body>
 <div id="app">
 <div class="sec-title">Equity curve</div>
@@ -251,7 +303,11 @@ var h = '';
 h += '<div class="banner '+(D.mode==='PAPER'?'paper':'live')+'">'+esc(D.mode)+' MODE</div>';
 if (D.kill_switch) h += '<div class="kill">\\u26a0\\ufe0e KILL SWITCH ENGAGED — orders blocked until cleared</div>';
 else h += '<div class="killoff">Kill switch: clear — trading enabled</div>';
-h += '<h1>AiStudios Pro</h1><div class="sub">generated '+esc((D.generated||'').slice(0,19).replace('T',' '))+' UTC</div>';
+var iv = D.iv||{{}};
+if ((iv.days||0) < (iv.target||20)) h += '<div class="info">Bootstrapping IV rank — day '+(iv.days||0)+' of ~'+(iv.target||20)+'. premium_harvest stands aside until history accrues, so no signals yet. Expected, not a fault.</div>';
+h += '<h1>AiStudios</h1><div class="sub">'+esc(String(D.broker||'sim'))+' · generated '+esc((D.generated||'').slice(0,19).replace('T',' '))+' UTC</div>';
+var lc = D.last_cycle;
+if (lc) h += '<div class="sub" style="margin-top:-12px">last cycle '+esc(String(lc.ts||'').slice(0,16).replace('T',' '))+' · '+(lc.signals||0)+' signals · '+(lc.placed||0)+' placed · '+(lc.rejected||0)+' rejected · reconcile '+(lc.reconcile_ok?'in sync':'DRIFT')+'</div>';
 
 h += '<div class="cards">';
 h += '<div class="card"><div class="k">Equity</div><div class="v">'+money(a.equity)+'</div></div>';
@@ -259,6 +315,17 @@ h += '<div class="card"><div class="k">Buying Power</div><div class="v">'+money(
 h += '<div class="card"><div class="k">Cash</div><div class="v">'+money(a.cash)+'</div></div>';
 h += '<div class="card"><div class="k">Net realized P&L</div><div class="v">'+signed(cs.net_pnl)+'</div></div>';
 h += '</div>';
+
+h += '<div class="sec-title">IV-rank bootstrap</div>';
+var ivpct = Math.min(100, Math.round(100*(iv.days||0)/(iv.target||20)));
+h += '<div class="card"><div class="gate"><span>Sessions accrued</span><b>'+(iv.days||0)+' / '+(iv.target||20)+'</b></div><div class="bar"><div class="barfill" style="width:'+ivpct+'%"></div></div><div class="muted" style="font-size:11px">Signals begin once ~'+(iv.target||20)+' daily ATM-IV readings accrue.</div></div>';
+
+var g = D.graduation||{{}};
+h += '<div class="sec-title">Graduation gate</div><div class="card">';
+h += '<div class="gate"><span>Closed trades</span><b>'+(g.trades||0)+' / '+(g.min_trades||40)+'</b></div>';
+h += '<div class="gate"><span>Trading days</span><b>'+(g.days||0)+' / '+(g.min_days||60)+'</b></div>';
+h += '<div class="gate"><span>Net expectancy</span><b>'+(g.expectancy==null?'—':signed(g.expectancy)+' /trade')+'</b></div>';
+h += '<div style="margin-top:6px;font-size:12px;color:'+(g.eligible?'#60cc88':'#ff9a6b')+'">'+(g.eligible?'Clears the minimum bar — a hurdle, not a recommendation to go live.':'Not yet eligible to consider live.')+'</div></div>';
 
 h += '<div class="sec-title">Equity curve</div>'+curveHTML;
 
@@ -289,6 +356,9 @@ ops.forEach(function(p){{
        '<div class="muted">strikes '+esc(strikes)+' · '+esc(p.contracts)+'x · DTE '+esc(p.dte==null?'—':p.dte)+' · exp '+esc(p.expiration||'—')+'</div>'+
        '<div class="muted">'+lbl+' '+esc(p.credit_ps)+' /sh · max loss '+money(p.max_loss)+'</div></div>';
 }});
+
+var wl = D.watchlist||[];
+if (wl.length){{ h += '<div class="sec-title">Watchlist</div><div class="reasons">'; wl.forEach(function(s){{ h += '<span class="chip">'+esc(s)+'</span>'; }}); h += '</div>'; }}
 
 h += '<div class="sec-title">Recent activity</div>';
 var jr = D.journal||[];

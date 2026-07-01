@@ -14,6 +14,7 @@ bypass the gate.
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -79,6 +80,17 @@ def run_cycle(
     gate = RiskGate(limits)
 
     account = adapter.get_account()
+
+    # Persist a READ-ONLY account snapshot for the dashboard (store-only surface;
+    # never read back by the gate). Best-effort — must never break the cycle.
+    try:
+        store.set_kv("equity", str(account.equity))
+        store.set_kv("cash", str(account.cash))
+        store.set_kv("buying_power", str(account.buying_power))
+        store.set_kv("broker", adapter.name)
+        store.set_kv("mode", "paper" if adapter.is_paper else "live")
+    except Exception:
+        pass
 
     # ── 0. Finalize working ENTRY orders: an accepted-but-unfilled entry tracked
     # last cycle becomes 'open' once the broker fills it (or is dropped if it
@@ -337,6 +349,16 @@ def run_cycle(
     store.append(_now_iso(), "cycle_end", {
         "placed": len(summary["placed"]), "rejected": len(summary["rejected"]),
         "reconcile_ok": rec["ok"]})
+
+    # Read-only last-cycle marker for the dashboard. Best-effort.
+    try:
+        store.set_kv("last_cycle", json.dumps({
+            "asof": asof, "ts": _now_iso(), "dry_run": bool(dry_run),
+            "signals": len(summary["signals"]), "placed": len(summary["placed"]),
+            "rejected": len(summary["rejected"]), "reconcile_ok": bool(rec["ok"]),
+        }))
+    except Exception:
+        pass
     return summary
 
 

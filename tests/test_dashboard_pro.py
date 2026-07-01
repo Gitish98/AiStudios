@@ -80,6 +80,30 @@ def test_build_pro_self_contained_with_curve_and_winrate():
         # Win rate computed from the two seeded closed trades = 50.0.
         assert "50.0" in html, "expected win-rate 50.0 in output"
 
+        # Honest empty-state sections are present (rendered from inlined JS).
+        assert "IV-rank bootstrap" in html, "missing IV bootstrap section"
+        assert "Graduation gate" in html, "missing graduation gate section"
+        assert "Bootstrapping IV rank" in html, "missing bootstrapping banner"
+
+
+def test_iv_and_graduation_helpers():
+    # IV bootstrap counts DISTINCT session-days, not raw snapshots.
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        store = Store(Path(td) / "p.db")
+        store.record_iv_snapshot("SPY", "2026-06-01", 0.2)
+        store.record_iv_snapshot("QQQ", "2026-06-01", 0.3)   # same day
+        store.record_iv_snapshot("SPY", "2026-06-02", 0.25)  # new day
+        prog = dashboard_pro._iv_progress(store, target=20)
+        assert prog["days"] == 2 and prog["target"] == 20
+        store.close()
+
+    g = dashboard_pro._graduation(
+        [{"realized_pnl": 90.0, "closed_asof": "2026-06-15"},
+         {"realized_pnl": -200.0, "closed_asof": "2026-06-18"}])
+    assert g["trades"] == 2 and g["days"] == 2 and g["min_trades"] == 40
+    assert g["expectancy"] == -55.0 and g["eligible"] is False
+
 
 def test_summary_math():
     closed = [
