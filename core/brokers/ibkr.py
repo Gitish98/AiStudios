@@ -45,6 +45,62 @@ def option_right(option_type: str) -> str:
     return "C" if option_type == "call" else "P"
 
 
+def _to_float(x: Any, default: float = 0.0) -> float:
+    try:
+        return float(x)
+    except (TypeError, ValueError):
+        return default
+
+
+def parse_account_values(rows: list[tuple[str, str, Any]]) -> dict:
+    """Pure, unit-testable: turn IB (tag, currency, value) account rows into USD
+    equity / cash / buying_power.
+
+    Why this is not trivial: IBKR reports the account-SUMMARY tags (NetLiquidation,
+    TotalCashValue, BuyingPower) ONLY in the account's BASE currency. A CA margin
+    account is CAD-base, so filtering to USD (as the old code did) found no rows and
+    read $0 — which fails the risk gate closed. Worse, per-currency rows like
+    CashBalance exist in USD too (a stray FX sub-balance), so a naive read grabbed
+    the wrong number.
+
+    We therefore: (1) find the base currency (the one whose ExchangeRate == 1.0,
+    else NetLiquidation's currency); (2) read the base-currency summary figures;
+    (3) convert to USD via IB's ExchangeRate (units of BASE per 1 USD, e.g. 1.42
+    CAD/USD) so the USD-denominated risk gate and notionals compare apples-to-apples.
+    If the base is USD, no conversion. If the base is non-USD but no USD rate is
+    available, we return base-currency values and flag converted=False so the caller
+    can warn rather than silently mis-scale risk."""
+    cell: dict[tuple[str, str], Any] = {(t, c): v for (t, c, v) in rows}
+
+    base_ccy: Optional[str] = None
+    for (tag, ccy), val in cell.items():
+        if tag == "ExchangeRate" and ccy not in ("BASE", "") and _to_float(val) == 1.0:
+            base_ccy = ccy
+            break
+    if base_ccy is None:
+        base_ccy = next((c for (t, c) in cell if t == "NetLiquidation"), "USD")
+
+    def base_val(tag: str) -> float:
+        for ccy in (base_ccy, "BASE"):
+            if (tag, ccy) in cell:
+                return _to_float(cell[(tag, ccy)])
+        return 0.0
+
+    equity = base_val("NetLiquidation")
+    cash = base_val("TotalCashValue") or base_val("CashBalance")
+    bp = base_val("BuyingPower")
+
+    usd_rate = _to_float(cell.get(("ExchangeRate", "USD")), 0.0)
+    converted = False
+    if base_ccy != "USD" and usd_rate > 0:
+        equity, cash, bp = equity / usd_rate, cash / usd_rate, bp / usd_rate
+        converted = True
+    return {"equity": equity, "cash": cash, "buying_power": bp,
+            "base_currency": base_ccy,
+            "usd_rate": (1.0 if base_ccy == "USD" else usd_rate),
+            "converted": converted}
+
+
 def build_order_plan(order: OrderRequest) -> dict:
     """Translate an OrderRequest into a broker-neutral IB order PLAN (a dict).
 
@@ -192,13 +248,21 @@ class IBKRAdapter(BrokerAdapter):
     # ── account / positions ──────────────────────────────────────────────────
     def get_account(self) -> Account:
         ib = self._require()
-        vals = {v.tag: v.value for v in ib.accountValues()
-                if v.currency in ("USD", "BASE", "")}
-        equity = float(vals.get("NetLiquidation", 0) or 0)
-        cash = float(vals.get("TotalCashValue", vals.get("CashBalance", 0)) or 0)
-        bp = float(vals.get("BuyingPower", 0) or 0)
+        rows = [(v.tag, v.currency, v.value) for v in ib.accountValues()]
+        a = parse_account_values(rows)
+        # Remember the currency situation so the CLI can surface it transparently.
+        self.base_currency = a["base_currency"]
+        if a["converted"]:
+            self.fx_note = (f"account base is {a['base_currency']}; equity/cash/BP "
+                            f"converted to USD at {a['usd_rate']:.4f} {a['base_currency']}/USD.")
+        elif a["base_currency"] != "USD":
+            self.fx_note = (f"account base is {a['base_currency']} but no USD FX rate was "
+                            "available — values shown in base currency; USD risk caps are "
+                            "APPROXIMATE until an FX rate is present.")
+        else:
+            self.fx_note = None
         return Account(
-            equity=equity, cash=cash, buying_power=bp,
+            equity=a["equity"], cash=a["cash"], buying_power=a["buying_power"],
             account_type="margin", is_paper=self._paper,
             pdt_day_trade_count=0,  # US-only concept; not applicable to a CA account
         )

@@ -5,8 +5,58 @@ only touched on a live connect, which we don't do here)."""
 
 from core.brokers.base import OrderLeg, OrderRequest
 from core.brokers.ibkr import (
-    IBKRAdapter, build_order_plan, ib_expiry, option_right,
+    IBKRAdapter, build_order_plan, ib_expiry, option_right, parse_account_values,
 )
+
+
+def test_parse_account_values_cad_base_converts_to_usd():
+    # A real CA margin (CAD-base) paper account: the summary tags exist ONLY in
+    # CAD, plus a stray USD CashBalance. The old USD filter read $0 equity (which
+    # fails the risk gate closed). We must read the CAD figures and convert to USD.
+    rows = [
+        ("NetLiquidation", "CAD", "982834.73"),
+        ("TotalCashValue", "CAD", "982025.49"),
+        ("BuyingPower", "CAD", "3263892.78"),
+        ("CashBalance", "CAD", "1128120.74"),
+        ("CashBalance", "USD", "-102824.03"),   # stray FX sub-balance — must NOT be used
+        ("CashBalance", "BASE", "982025.49"),
+        ("ExchangeRate", "CAD", "1.00"),
+        ("ExchangeRate", "USD", "1.4208"),      # 1 USD = 1.4208 CAD
+        ("ExchangeRate", "BASE", "1.00"),
+    ]
+    a = parse_account_values(rows)
+    assert a["base_currency"] == "CAD" and a["converted"] is True
+    # 982834.73 CAD / 1.4208 ≈ 691,747 USD — NOT $0, NOT the -102,824 USD row.
+    assert abs(a["equity"] - 982834.73 / 1.4208) < 1.0
+    assert abs(a["cash"] - 982025.49 / 1.4208) < 1.0
+    assert abs(a["buying_power"] - 3263892.78 / 1.4208) < 1.0
+    assert a["equity"] > 600000  # sanity: the gate now sees real equity
+
+
+def test_parse_account_values_usd_base_unconverted():
+    rows = [
+        ("NetLiquidation", "USD", "1000000"),
+        ("TotalCashValue", "USD", "1000000"),
+        ("BuyingPower", "USD", "2000000"),
+        ("ExchangeRate", "USD", "1.00"),
+        ("ExchangeRate", "BASE", "1.00"),
+    ]
+    a = parse_account_values(rows)
+    assert a["base_currency"] == "USD" and a["converted"] is False
+    assert a["equity"] == 1000000 and a["buying_power"] == 2000000
+
+
+def test_parse_account_values_no_fx_falls_back_to_base_currency():
+    # Non-USD base but no USD ExchangeRate: don't silently mis-scale — return base
+    # values and flag not-converted so the caller can warn.
+    rows = [
+        ("NetLiquidation", "CAD", "500000"),
+        ("TotalCashValue", "CAD", "500000"),
+        ("BuyingPower", "CAD", "1000000"),
+    ]
+    a = parse_account_values(rows)
+    assert a["base_currency"] == "CAD" and a["converted"] is False
+    assert a["equity"] == 500000  # unconverted, but not $0
 
 
 def _raises(exc, fn):
@@ -73,7 +123,9 @@ def test_refuses_live_port_when_paper():
 
 
 def test_try_connect_returns_false_without_gateway():
-    # No IB library / no Gateway here — must fail gracefully, never raise.
-    a = IBKRAdapter(host="127.0.0.1", port=4002, paper=True)
+    # Unreachable endpoint must fail gracefully (return False, never raise). Use a
+    # non-IB port that nothing listens on, so this holds even when a real IB Gateway
+    # is running locally on 4002 (which would otherwise make this connect succeed).
+    a = IBKRAdapter(host="127.0.0.1", port=4999, paper=True)
     assert a.try_connect() is False
     assert a.is_paper is True

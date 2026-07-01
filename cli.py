@@ -88,6 +88,9 @@ def cmd_status(args):
         print(f"  Cash             : ${a.cash:,.2f}")
         print(f"  Buying power     : ${a.buying_power:,.2f}")
         print(f"  Day trades (5d)  : {a.pdt_day_trade_count}")
+        fx_note = getattr(adapter, "fx_note", None)
+        if fx_note:
+            print(f"  FX               : {fx_note}")
     except Exception as e:
         print(f"\n  Account: unavailable ({e})")
 
