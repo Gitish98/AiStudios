@@ -20,7 +20,7 @@ losses; we never promise gains. Nothing here is financial/legal/tax advice.
 4. **Paper is the default.** `cli.py go-live` is disabled; live needs a multi-gate ramp (not built yet).
 5. **Never commit secrets.** `.env`, `config/config.yaml`, `data/`, `exports/`, `dashboard/out/` are gitignored.
 6. **Fill-aware lifecycle:** positions are `open` only when filled, `closed` only when filled; `pending` = working order (counts for risk, not expected at broker by reconcile).
-7. **Test everything that touches money/risk.** 216 tests pass via `python -m tests.run` (also pytest-compatible). Add a regression test for every fix.
+7. **Test everything that touches money/risk.** 220 tests pass via `python -m tests.run` (also pytest-compatible). Add a regression test for every fix.
 
 ## Architecture (key files)
 - `core/risk.py` — the gate. `core/execution.py` — the cycle (manage → size → gate → advisor veto → fill-aware place → reconcile). `core/manage.py` — exits/management + pending-close finalizer. `core/positions.py` — structure-aware P&L/exits (4 verticals + iron condor). `core/sizing.py` — fixed-fractional sizing. `core/costs.py` + `core/performance.py` — cost model + metrics + graduation gate. `core/reconcile.py` — broker-truth diff. `core/store.py` — SQLite state.
@@ -54,8 +54,16 @@ killed across ~10 adversarial review rounds.**
 - **Live is untested** — the go-live ramp is built + reviewed but only the operator
   can exercise the REAL live order path on a live IBKR Gateway. Shipped paper-
   validated, NOT live-validated. This is the #1 next step.
-- **IBKR paper connect** still needs the operator's machine + a logged-in Gateway
-  (the connect path is fixed and works on Windows now; sim until a Gateway answers).
+- **IBKR paper connect: ACHIEVED & data-validated** on the operator's Windows box.
+  Account (CAD-base → USD), option chains, greeks/IV all flow; a full `dry-run`
+  runs with zero data errors and records ATM-IV snapshots. Fixed live: CAD-base
+  `get_account`, unqualified-contract filter, NaN-safe field parsing, delayed
+  market-data default. **Order placement path not yet exercised** — 0 signals so
+  far because IV rank is still bootstrapping (see below).
+  - **IBKR gotcha (operational):** market data is served to only ONE session at a
+    time — a phone app / web Client Portal / 2nd Gateway causes `Error 10197`
+    ("competing live session"). Keep exactly one login. Paper uses DELAYED data
+    (free); real-time needs entitlements.
 - IV rank needs **~20 sessions** to bootstrap on a real broker; earnings/news need
   a provider key (else those engines stand aside — they warn loudly).
 - Backtest option prices are **modeled (BS)**, not real fills — necessary, not
@@ -64,15 +72,20 @@ killed across ~10 adversarial review rounds.**
   ramp-tier advancement (today `ramp_advancement_status` only REPORTS readiness;
   the human edits the tier — by design).
 
-**Next, in priority:** (1) IBKR paper connect + first paper cycles [operator's
-machine]; (2) operator live-validation of the ramp at tier 1 (smallest size);
-(3) sector caps; (4) more data (Polygon/options flow).
+**Next, in priority:** (1) accrue ~20 daily paper cycles during market hours so IV
+rank bootstraps and premium_harvest starts signalling (then the paper ORDER path
+gets exercised); (2) operator live-validation of the ramp at tier 1 (smallest
+size); (3) sector caps; (4) more data (Polygon/options flow, an earnings key for
+earnings_vol).
 
-> **NEXT SESSION START HERE:** the go-live ramp is BUILT on branch
-> **`aistudios/phase4-ibkr-live`** (`core/golive.py`, factory unlock, risk ramp
-> cap, `cli.py go-live`/`go-paper`, docs/05 §1.4, 216 tests). It is paper-validated
-> only. Next is operator-driven IBKR paper connect, then a deliberate, hand-run
-> live-validation at ramp tier 1 — never let an LLM satisfy a go-live gate.
+> **NEXT SESSION START HERE:** branch **`aistudios/phase4-ibkr-live`**. Two things
+> are DONE this phase: the five-gate go-live ramp (`core/golive.py`, factory
+> unlock, risk ramp cap, `cli.py go-live`/`go-paper`, docs/05 §1.4) AND a working,
+> data-validated IBKR **paper** connect on the operator's box (account+chains+IV
+> flow; 220 tests). Live is UNtested. Next: run daily paper cycles during market
+> hours to bootstrap IV rank (~20 sessions) so signals/orders actually fire, then a
+> deliberate hand-run live-validation at ramp tier 1 — never let an LLM satisfy a
+> go-live gate. Keep exactly ONE IBKR session logged in (avoids Error 10197).
 
 ## How we work (conventions)
 - **Branches:** descriptive, searchable. `aistudios/<area>-<short-desc>` (e.g.
