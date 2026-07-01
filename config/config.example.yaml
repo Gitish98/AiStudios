@@ -43,6 +43,11 @@ brokers:
   ibkr_live_port: 4001           # IB Gateway LIVE — a SEPARATE login from paper. The
                                  # go-live gate refuses to treat the paper port as live.
   ibkr_client_id: 7
+  # Market-data type: 1=live, 2=frozen, 3=delayed, 4=delayed-frozen. Default 3
+  # (delayed) — free, no real-time subscription, and avoids IBKR Error 10197 ("no
+  # market data during competing live session"). Set 1 only with real-time
+  # entitlements. Live builds default to 1 when this is unset.
+  ibkr_market_data_type: 3
 
 # ── Reasoning layer (Claude advisor — VETO-ONLY) ─────────────────────────────
 # When enabled AND an ANTHROPIC_API_KEY is set, Claude reviews each gate-APPROVED

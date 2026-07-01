@@ -194,7 +194,7 @@ class IBKRAdapter(BrokerAdapter):
 
     def __init__(self, host: str = "127.0.0.1", port: int = 4002,
                  client_id: int = 7, paper: bool = True, region: str = "CA",
-                 timeout: float = 8.0):
+                 timeout: float = 8.0, market_data_type: int = 3):
         if not paper and port in PAPER_PORTS:
             raise ValueError("paper=False but port is a paper port — refusing ambiguous config.")
         if paper and port in LIVE_PORTS:
@@ -209,6 +209,12 @@ class IBKRAdapter(BrokerAdapter):
         self.name = "ibkr_paper" if paper else "ibkr_live"
         self.region = region
         self.timeout = timeout
+        # IB market-data type: 1=live, 2=frozen, 3=delayed, 4=delayed-frozen.
+        # Default 3 (delayed) — free, needs no real-time subscription, and does NOT
+        # contend with a live session (avoids "Error 10197: No market data during
+        # competing live session"). Matches docs/05: paper-trade the delay you'll
+        # trade live on. A live operator with real-time entitlements can set 1.
+        self.market_data_type = int(market_data_type)
         self._ib = None  # set on connect()
 
     @property
@@ -230,6 +236,12 @@ class IBKRAdapter(BrokerAdapter):
         self._ib = ib.IB()
         self._ib.connect(self.host, self.port, clientId=self.client_id,
                          timeout=self.timeout, readonly=False)
+        # Select the market-data type up front so every reqMktData/reqTickers below
+        # uses it. Best-effort: a failure here must not break the connection.
+        try:
+            self._ib.reqMarketDataType(self.market_data_type)
+        except Exception:
+            pass
         return self._ib
 
     def _require(self):

@@ -53,8 +53,9 @@ def build_execution_adapter(config: Config, asof: Optional[str] = None,
             port = int(config.brokers.get("ibkr_port", 4002))   # 4002 = Gateway paper
             cid = int(config.brokers.get("ibkr_client_id", 7))
             region = str(config.account.get("region", "CA"))
+            md = int(config.brokers.get("ibkr_market_data_type", 3))  # 3=delayed (paper default)
             adapter = IBKRAdapter(host=host, port=port, client_id=cid,
-                                  paper=True, region=region)
+                                  paper=True, region=region, market_data_type=md)
             if adapter.try_connect():
                 return BrokerBuild(adapter, f"Using IBKR PAPER via Gateway at {host}:{port}.")
             return _sim(
@@ -105,8 +106,9 @@ def build_execution_adapter(config: Config, asof: Optional[str] = None,
     live_port = int(config.brokers.get("ibkr_live_port", 4001))
     cid = int(config.brokers.get("ibkr_client_id", 7))
     region = str(config.account.get("region", "CA"))
+    live_md = int(config.brokers.get("ibkr_market_data_type", 1))  # 1=live (live default)
     live = IBKRAdapter(host=host, port=live_port, client_id=cid,
-                       paper=False, region=region)
+                       paper=False, region=region, market_data_type=live_md)
     if live.try_connect():
         return BrokerBuild(
             live,
