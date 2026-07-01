@@ -209,10 +209,13 @@ TZ=America/New_York
 0 10 * * 1-5  /home/trader/AiStudios/scripts/run_cycle.sh >> /home/trader/AiStudios/logs/cron.log 2>&1
 ```
 
-> **Honest limitation:** Phase 0 has **no code-level market-calendar guard yet**
-> (that's a Phase 2 item). The `1-5` cron avoids weekends but **not holidays /
-> half-days**. Until the calendar guard lands, treat unattended runs as
-> best-effort and review with `status`. Don't rely on it fully for live.
+> **Market-calendar guard (now in code):** `cli.py run-cycle` checks
+> `core/market_calendar.py` (NYSE via `pandas-market-calendars`, with a stdlib
+> fallback) and **skips weekends AND holidays/half-days on its own** — so the
+> `1-5` cron is just a coarse outer filter; the code makes the real call and a
+> holiday run exits cleanly with a "market closed" note. Use `--force` only for a
+> deliberate off-day run. Still glance at `status` periodically — don't rely on any
+> automation blindly, and never for live.
 
 ---
 
