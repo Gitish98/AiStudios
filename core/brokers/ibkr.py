@@ -193,6 +193,36 @@ def build_order_plan(order: OrderRequest) -> dict:
     }
 
 
+def pick_secdef_params(params: list, underlying: str):
+    """Choose the SMART secdef entry for the STANDARD option class.
+
+    Some ETFs (SPY, IWM) carry a SECOND options class at IB (tradingClass '2SPY',
+    '2IWM') whose strikes overlap the standard one. Building contracts without a
+    tradingClass then makes qualifyContracts AMBIGUOUS for nearly every strike, the
+    unqualified contracts get dropped, and the chain collapses to a couple of odd
+    survivors (observed live: SPY/IWM returned 2 contracts, 0 with IV, while QQQ
+    returned 214/112). Prefer exchange==SMART with tradingClass==underlying; fall
+    back to any SMART entry, then the first."""
+    smart = [p for p in params if getattr(p, "exchange", "") == "SMART"]
+    for p in smart:
+        if getattr(p, "tradingClass", "").upper() == underlying.upper():
+            return p
+    return smart[0] if smart else (params[0] if params else None)
+
+
+def _qualified_option(ib, live, underlying: str, expiry, strike, right):
+    """Qualify ONE option for the order path, pinning the standard tradingClass
+    first (disambiguates dual-class underlyings); if that class doesn't exist for
+    this symbol, retry unpinned. Returns the contract (conId set iff qualified)."""
+    opt = ib.Option(underlying, expiry, strike, right, "SMART", currency="USD",
+                    tradingClass=underlying)
+    live.qualifyContracts(opt)
+    if not getattr(opt, "conId", 0):
+        opt = ib.Option(underlying, expiry, strike, right, "SMART", currency="USD")
+        live.qualifyContracts(opt)
+    return opt
+
+
 def _load_ib():
     """Import the IB library lazily. Prefer the maintained ib_async fork; fall
     back to ib_insync. Raises a clear error if neither is installed."""
@@ -344,9 +374,10 @@ class IBKRAdapter(BrokerAdapter):
         spot = float(ticker.marketPrice() or ticker.close or 0)
 
         params = live.reqSecDefOptParams(stock.symbol, "", stock.secType, stock.conId)
-        smart = next((p for p in params if p.exchange == "SMART"), params[0] if params else None)
+        smart = pick_secdef_params(params, underlying)
         if not smart:
             return []
+        trading_class = getattr(smart, "tradingClass", "") or underlying
 
         today = date.today()
         # Choose the expiry nearest the 30-45 DTE window if not specified.
@@ -368,7 +399,8 @@ class IBKRAdapter(BrokerAdapter):
         contracts = []
         for K in strikes:
             for right in ("P", "C"):
-                contracts.append(ib.Option(underlying, exp, K, right, "SMART", currency="USD"))
+                contracts.append(ib.Option(underlying, exp, K, right, "SMART",
+                                           currency="USD", tradingClass=trading_class))
         # qualifyContracts populates conId only for combos that actually exist as
         # listed contracts; a non-existent strike/right is left WITHOUT a conId.
         # Passing such a contract to reqTickers raises "can't be hashed because no
@@ -448,18 +480,19 @@ class IBKRAdapter(BrokerAdapter):
         if plan["kind"] == "single":
             if plan["sec_type"] == "STK":
                 c = ib.Stock(plan["symbol"], "SMART", "USD")
+                live.qualifyContracts(c)
             else:
                 o = plan["option"]
-                c = ib.Option(o["underlying"], o["expiry"], o["strike"], o["right"],
-                              "SMART", currency="USD")
-            live.qualifyContracts(c)
+                c = _qualified_option(ib, live, o["underlying"], o["expiry"],
+                                      o["strike"], o["right"])
             return c
-        # Combo: resolve each leg to a conId, then build the BAG.
+        # Combo: resolve each leg to a conId, then build the BAG. tradingClass is
+        # pinned per leg so dual-class underlyings (SPY/2SPY) can't come back
+        # ambiguous and sink the whole combo.
         combo_legs = []
         for leg in plan["legs"]:
-            opt = ib.Option(leg["underlying"], leg["expiry"], leg["strike"], leg["right"],
-                            "SMART", currency="USD")
-            live.qualifyContracts(opt)
+            opt = _qualified_option(ib, live, leg["underlying"], leg["expiry"],
+                                    leg["strike"], leg["right"])
             # IB ComboLeg.openClose: 1 = OPEN, 2 = CLOSE. Setting this explicitly
             # stops a managed close from being treated as opening a new position.
             open_close = 2 if leg.get("intent") == "close" else 1

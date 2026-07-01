@@ -6,8 +6,24 @@ only touched on a live connect, which we don't do here)."""
 from core.brokers.base import OrderLeg, OrderRequest
 from core.brokers.ibkr import (
     IBKRAdapter, build_order_plan, ib_expiry, option_right, parse_account_values,
-    _to_float, _to_int, _to_float_opt,
+    pick_secdef_params, _to_float, _to_int, _to_float_opt,
 )
+
+
+def test_pick_secdef_params_prefers_standard_trading_class():
+    # SPY/IWM carry a second options class (2SPY/2IWM) whose overlapping strikes
+    # made qualifyContracts ambiguous and collapsed the chain (observed live: 2
+    # contracts, 0 IV). The picker must pin the STANDARD class == the symbol.
+    from types import SimpleNamespace as NS
+    spy = NS(exchange="SMART", tradingClass="SPY", expirations=["20260717"], strikes=[740])
+    spy2 = NS(exchange="SMART", tradingClass="2SPY", expirations=["20260717"], strikes=[740])
+    cboe = NS(exchange="CBOE", tradingClass="SPY", expirations=["20260717"], strikes=[740])
+
+    assert pick_secdef_params([spy2, spy, cboe], "SPY") is spy       # standard wins
+    assert pick_secdef_params([spy2, cboe], "SPY") is spy2           # any SMART beats non-SMART
+    assert pick_secdef_params([cboe], "SPY") is cboe                 # last resort: first entry
+    assert pick_secdef_params([], "SPY") is None                     # empty -> None (chain empty)
+    assert pick_secdef_params([spy2, spy], "spy") is spy             # case-insensitive
 
 
 def test_nan_safe_field_parsing():
