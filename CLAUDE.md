@@ -50,6 +50,17 @@ tax export; pro dashboard; **the guarded five-gate go-live ramp (`core/golive.py
 UTF-8 portability fixes (bootstrap/cli/config read on cp1252 consoles). **40+ bugs
 killed across ~10 adversarial review rounds.**
 
+**Repo hygiene / OSS cleanup (2026-07-07):** the public GitHub repo now presents
+honestly — description fixed (was a leftover film-scripts stub), README rewritten
+to v0.1-platform reality (branch commit `c8d4343`), **MIT LICENSE** added. `main`
+was a one-commit stub; PR #1 (merged) gave it the README + LICENSE only — all code
+still lives on this branch. Two operational notes: (a) direct pushes to `main` are
+permission-blocked — deliver via PR; (b) on the eventual phase4→main merge,
+README.md conflicts trivially — take the branch version (main's copy carries a
+"development lives on the branch" note + absolute links). Checked 2026-07-07: the
+project does NOT qualify for Anthropic's Claude-for-OSS program (solo repo, no
+ecosystem reach) — don't re-litigate without new facts.
+
 **NOT done / honest gaps:**
 - **Live is untested** — the go-live ramp is built + reviewed but only the operator
   can exercise the REAL live order path on a live IBKR Gateway. Shipped paper-
