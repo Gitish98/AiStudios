@@ -225,6 +225,47 @@ TZ=America/New_York
 
 ---
 
+## 8.1 Phone dashboard via Tailscale (bookmarkable, private)
+
+Once Tailscale is installed on both the VM and your phone (both show **Connected**
+in the Tailscale app, same tailnet), you can serve the dashboard as a private URL
+only your own devices can reach — never the public internet.
+
+**Where do I run these? On the VM, not your phone.** From your phone, open an SSH
+app (Termius or Blink), SSH into the VM, and type these there:
+
+```bash
+ssh trader@<VM_IP>            # or the Tailscale name, e.g. ssh trader@aistudios
+cd ~/AiStudios
+python3 cli.py dashboard      # rebuild dashboard/out/dashboard.html from latest data
+tailscale serve --bg --https=443 /home/trader/AiStudios/dashboard/out
+```
+
+Adjust `/home/trader/...` to your VM's real home path (run `whoami` and `pwd` if
+unsure). Then, in your phone's browser, open (using YOUR tailnet's MagicDNS name,
+shown in the Tailscale app under the VM device — e.g. `aistudios.tailXXXX.ts.net`):
+
+```
+https://<your-vm>.<tailnet>.ts.net/dashboard.html
+```
+
+Bookmark it. `--bg` keeps it serving after you close the SSH session.
+
+**Keep it fresh automatically** — have cron rebuild the dashboard after each cycle
+(add to the crontab from §7, VM clock in US/Eastern):
+
+```cron
+35 10 * * 1-5  cd /home/trader/AiStudios && /usr/bin/python3 cli.py dashboard
+```
+
+**To stop serving:** `tailscale serve --https=443 off`.
+
+> This is safe because Tailscale is a private, encrypted mesh — the dashboard is
+> reachable only by devices logged into *your* tailnet, and the IBKR API port
+> (4002) is never served, only the static HTML in `dashboard/out/`.
+
+---
+
 ## 9. Before you ever go live (do NOT skip)
 - Weeks of clean **paper** cycles on the VM, zero reconcile drift.
 - Confirm credit spreads submit as **credits** on the IBKR side.
