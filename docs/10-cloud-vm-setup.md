@@ -225,6 +225,42 @@ TZ=America/New_York
 
 ---
 
+## 8.0 Connecting from a phone SSH app (Termius) — first time
+
+To run anything "on the VM" from your phone you first SSH in. One-time setup:
+
+**1. Install Termius** (free, App Store / Play Store). Blink works too.
+
+**2. You need one of these to authenticate** (whatever you chose when creating the
+droplet):
+- an **SSH private key** (the match to the public key you pasted into DigitalOcean
+  at droplet creation), **or**
+- the droplet's **root password** (only if you enabled password login — the
+  hardened setup in §2 disables this, so you likely have a key).
+
+**3a. If you have the SSH key** (a file like `id_ed25519` or `id_rsa`, no `.pub`):
+- Termius → **Keychain** → **+** → **Import key** → pick the private key file (AirDrop
+  or copy it to your phone's Files first, or paste its text).
+- Termius → **Hosts** → **+** → set:
+  - **Alias:** `aistudios`
+  - **Hostname:** `100.85.251.33` (your Tailscale IPv4) or `aistudios.tailbcaed2.ts.net`
+  - **Username:** the VM user you created (`root` or `trader`)
+  - **Key:** select the key you just imported
+- Tap the host → you land at a shell prompt. Done.
+
+**3b. If you only set a password:** same Hosts → + steps, but fill **Password**
+instead of Key.
+
+**4. Requires Tailscale ON** on your phone if you use the `100.x` / `.ts.net`
+address (that's the private path). A public droplet IP works over normal internet
+but only if the firewall allows SSH from your phone — the Tailscale path is safer.
+
+> Lost the SSH key? You can add a new one from the DigitalOcean console
+> (Droplet → Access → **Launch Droplet Console** in the browser, then append your
+> new public key to `~/.ssh/authorized_keys`). Easier to sort from a desktop.
+
+---
+
 ## 8.1 Phone dashboard via Tailscale (bookmarkable, private)
 
 Once Tailscale is installed on both the VM and your phone (both show **Connected**
