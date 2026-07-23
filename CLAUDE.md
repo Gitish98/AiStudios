@@ -79,7 +79,10 @@ ecosystem reach) — don't re-litigate without new facts.
     time — a phone app / web Client Portal / 2nd Gateway causes `Error 10197`
     ("competing live session") AND an "Existing session detected" login tug-of-war.
     Keep exactly ONE login = the VM's Gateway. Paper uses DELAYED data (free).
-- IV rank needs **~20 sessions** to bootstrap on a real broker; earnings/news need
+- IV rank needs **60+ sessions** (`core.options_math.MIN_IV_OBSERVATIONS`) before it
+  is trusted — a short window makes the rank ACTIVELY MISLEADING (in a gently
+  rising regime today is the max, so it prints ~100% at a below-average IV).
+  Earlier docs said ~20; that was wrong. Earnings/news need
   a provider key (else those engines stand aside — they warn loudly).
 - Backtest option prices are **modeled (BS)**, not real fills — necessary, not
   sufficient.
@@ -87,7 +90,7 @@ ecosystem reach) — don't re-litigate without new facts.
   ramp-tier advancement (today `ramp_advancement_status` only REPORTS readiness;
   the human edits the tier — by design).
 
-**Next, in priority:** (1) let the VM's daily cron accrue ~20 cycles so IV rank
+**Next, in priority:** (1) let the VM's daily cron accrue 60+ cycles so IV rank
 bootstraps and premium_harvest starts signalling (then the paper ORDER path gets
 exercised autonomously); (2) operator live-validation of the ramp at tier 1
 (smallest size); (3) sector caps; (4) more data (Polygon/options flow, an earnings
@@ -99,7 +102,7 @@ key before live.
 > risk ramp cap, `cli.py go-live`/`go-paper`, docs/05 §1.4); the data-validated IBKR
 > **paper** connect; and a full **autonomous cloud-VM deployment** (headless Gateway
 > via IBC + weekday cron; docs/10; `ssh trader@<vm-ip> ais status`; 220 tests). Live
-> is UNtested. Next is passive: the VM banks IV history daily (~20 sessions) until
+> is UNtested. Next is passive: the VM banks IV history daily (60+ sessions) until
 > signals/orders fire on their own, then a deliberate hand-run live-validation at
 > ramp tier 1 — never let an LLM satisfy a go-live gate. Keep exactly ONE IBKR
 > session logged in (the VM's) or Error 10197 returns.

@@ -33,7 +33,10 @@ def test_snapshots_accrue_and_build_history():
         store.record_iv_snapshot("SPY", "2026-01-10", 0.99)
         assert len(store.get_iv_history("SPY")) == 5
         # And the history is usable for an IV rank.
-        assert iv_rank(0.20, hist) is not None
+        # Usable as a rank input — but only once the sample floor is met;
+        # 5 days is storage, not a trustworthy rank (see test_options_math).
+        assert iv_rank(0.20, hist, min_observations=2) is not None
+        assert iv_rank(0.20, hist) is None   # real floor refuses 5 obs
         store.close()
 
 

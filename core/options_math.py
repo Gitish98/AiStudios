@@ -108,11 +108,29 @@ def implied_vol(
     return 0.5 * (lo + hi)
 
 
-def iv_rank(current_iv: float, history: Sequence[float]) -> float | None:
-    """IV Rank = where current IV sits between the 1y min and max, in [0, 1].
-    Needs a non-degenerate history."""
+MIN_IV_OBSERVATIONS = 60
+
+
+def iv_rank(current_iv: float, history: Sequence[float],
+            min_observations: int = MIN_IV_OBSERVATIONS) -> float | None:
+    """IV Rank = where current IV sits between the min and max of `history`, in
+    [0, 1]. Returns None — meaning "stand aside" — unless the history is both
+    non-degenerate AND long enough to mean anything.
+
+    The sample floor is the whole point. IV rank is conventionally a 1-YEAR
+    statistic, but this formula happily returns a number from 2 observations, and
+    a short window makes it actively misleading rather than merely noisy: over a
+    few weeks of gently rising vol, today's reading IS the max, so the rank prints
+    ~100% ("premium is extremely rich!") at an implied vol that is below average
+    by any historical standard. That is a manufactured sell signal. Requiring a
+    real sample makes the system stand aside until it can actually judge — the
+    fail-closed direction.
+
+    Note the returned number is a rank over WHATEVER window `history` covers, not
+    necessarily a year; callers should surface the sample size alongside it so a
+    60-day rank is never mistaken for a 252-day one."""
     vals = [v for v in history if v is not None and v > 0]
-    if len(vals) < 2:
+    if len(vals) < max(2, int(min_observations)):
         return None
     lo, hi = min(vals), max(vals)
     if hi - lo < 1e-9:

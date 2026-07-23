@@ -30,7 +30,7 @@ import math
 from datetime import date
 
 from core.brokers.base import OrderLeg
-from core.options_math import implied_move, iv_rank, realized_vol
+from core.options_math import MIN_IV_OBSERVATIONS, implied_move, iv_rank, realized_vol
 from .base import Signal, Strategy, StrategyContext
 from strategies.premium_harvest import _atm_iv
 
@@ -44,6 +44,7 @@ class EarningsVol(Strategy):
         self.max_days = int(p.get("max_days_to_earnings", 7))
         self.rich_threshold = float(p.get("rich_threshold", 1.20))  # implied/realized expected move
         self.min_iv_rank = float(p.get("min_iv_rank", 0.50))
+        self.min_iv_observations = int(p.get("min_iv_observations", MIN_IV_OBSERVATIONS))
         self.wing_width = float(p.get("wing_width", 5.0))
         self.min_open_interest = int(p.get("min_open_interest", 250))
         self.max_spread_pct = float(p.get("max_spread_pct", 0.18))
@@ -83,7 +84,7 @@ class EarningsVol(Strategy):
         atm_iv = _atm_iv(ctx.option_chain, ctx.spot)
         if atm_iv is None or not ctx.iv_history:
             return []
-        ivr = iv_rank(atm_iv, ctx.iv_history)
+        ivr = iv_rank(atm_iv, ctx.iv_history, self.min_iv_observations)
         if ivr is None or ivr < self.min_iv_rank:
             return []
 

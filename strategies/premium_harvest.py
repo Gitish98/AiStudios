@@ -20,7 +20,7 @@ This is intentionally conservative and ETF-only — no single-stock earnings bin
 from __future__ import annotations
 
 from core.brokers.base import OptionContract, OrderLeg
-from core.options_math import iv_rank
+from core.options_math import MIN_IV_OBSERVATIONS, iv_rank
 from .base import Signal, Strategy, StrategyContext
 
 
@@ -30,6 +30,10 @@ class PremiumHarvest(Strategy):
     def __init__(self, params: dict | None = None):
         p = params or {}
         self.min_iv_rank = float(p.get("min_iv_rank", 0.40))
+        # Minimum IV observations before an IV rank is trusted at all. A short
+        # window manufactures ~100% ranks in a gently rising regime — see
+        # core.options_math.iv_rank.
+        self.min_iv_observations = int(p.get("min_iv_observations", MIN_IV_OBSERVATIONS))
         self.target_delta = float(p.get("target_put_delta", 0.25))
         self.delta_lo = float(p.get("delta_min", 0.12))
         self.delta_hi = float(p.get("delta_max", 0.40))
@@ -48,7 +52,7 @@ class PremiumHarvest(Strategy):
         atm_iv = _atm_iv(chain, ctx.spot)
         if atm_iv is None or not ctx.iv_history:
             return []
-        rank = iv_rank(atm_iv, ctx.iv_history)
+        rank = iv_rank(atm_iv, ctx.iv_history, self.min_iv_observations)
         if rank is None or rank < self.min_iv_rank:
             return []
 

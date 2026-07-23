@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from core.config import REPO_ROOT
+from core.options_math import MIN_IV_OBSERVATIONS
 from core.store import Store
 
 OUT_DIR = REPO_ROOT / "dashboard" / "out"
@@ -103,7 +104,7 @@ def _open_view(open_positions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
-def _iv_progress(store: Store, target: int = 20) -> dict[str, Any]:
+def _iv_progress(store: Store, target: int = MIN_IV_OBSERVATIONS) -> dict[str, Any]:
     """Store-only IV-rank bootstrap progress: distinct session-days accrued and the
     latest per-symbol ATM IV. This is what makes the empty state honest."""
     days, latest = 0, []
@@ -321,7 +322,7 @@ h += '<div class="banner '+(D.mode==='PAPER'?'paper':'live')+'">'+esc(D.mode)+' 
 if (D.kill_switch) h += '<div class="kill">\\u26a0\\ufe0e KILL SWITCH ENGAGED — orders blocked until cleared</div>';
 else h += '<div class="killoff">Kill switch: clear — trading enabled</div>';
 var iv = D.iv||{{}};
-if ((iv.days||0) < (iv.target||20)) h += '<div class="info">Bootstrapping IV rank — day '+(iv.days||0)+' of ~'+(iv.target||20)+'. premium_harvest stands aside until history accrues, so no signals yet. Expected, not a fault.</div>';
+if ((iv.days||0) < (iv.target||60)) h += '<div class="info">Bootstrapping IV rank — day '+(iv.days||0)+' of ~'+(iv.target||60)+'. premium_harvest stands aside until history accrues, so no signals yet. Expected, not a fault.</div>';
 h += '<h1>AiStudios</h1><div class="sub">'+esc(String(D.broker||'sim'))+' · generated '+esc((D.generated||'').slice(0,19).replace('T',' '))+' UTC</div>';
 var lc = D.last_cycle;
 if (lc) h += '<div class="sub" style="margin-top:-12px">last cycle '+esc(String(lc.ts||'').slice(0,16).replace('T',' '))+' · '+(lc.signals||0)+' signals · '+(lc.placed||0)+' placed · '+(lc.rejected||0)+' rejected · reconcile '+(lc.reconcile_ok?'in sync':'DRIFT')+'</div>';
@@ -334,8 +335,8 @@ h += '<div class="card"><div class="k">Net realized P&L</div><div class="v">'+si
 h += '</div>';
 
 h += '<div class="sec-title">IV-rank bootstrap</div>';
-var ivpct = Math.min(100, Math.round(100*(iv.days||0)/(iv.target||20)));
-h += '<div class="card"><div class="gate"><span>Sessions accrued</span><b>'+(iv.days||0)+' / '+(iv.target||20)+'</b></div><div class="bar"><div class="barfill" style="width:'+ivpct+'%"></div></div><div class="muted" style="font-size:11px">Signals begin once ~'+(iv.target||20)+' daily ATM-IV readings accrue.</div></div>';
+var ivpct = Math.min(100, Math.round(100*(iv.days||0)/(iv.target||60)));
+h += '<div class="card"><div class="gate"><span>Sessions accrued</span><b>'+(iv.days||0)+' / '+(iv.target||60)+'</b></div><div class="bar"><div class="barfill" style="width:'+ivpct+'%"></div></div><div class="muted" style="font-size:11px">Signals begin once ~'+(iv.target||60)+' daily ATM-IV readings accrue.</div></div>';
 
 var g = D.graduation||{{}};
 h += '<div class="sec-title">Graduation gate</div><div class="card">';

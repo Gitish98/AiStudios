@@ -26,7 +26,7 @@ from __future__ import annotations
 from core.indicators import (
     atr_contraction_ratio, bandwidth_percentile, inside_day, nr7, range_position,
 )
-from core.options_math import iv_rank
+from core.options_math import MIN_IV_OBSERVATIONS, iv_rank
 from .base import Signal, Strategy, StrategyContext
 from strategies.premium_harvest import _atm_iv  # reuse ATM-IV helper
 from core.brokers.base import OrderLeg
@@ -40,6 +40,7 @@ class VolatilityBreakout(Strategy):
         self.squeeze_pct = float(p.get("squeeze_pct", 0.20))
         self.atr_contraction = float(p.get("atr_contraction", 0.85))
         self.max_iv_rank = float(p.get("max_iv_rank", 0.35))
+        self.min_iv_observations = int(p.get("min_iv_observations", MIN_IV_OBSERVATIONS))
         self.range_hi = float(p.get("range_high", 0.65))   # >= -> bullish lean
         self.range_lo = float(p.get("range_low", 0.35))    # <= -> bearish lean
         self.dte_min = int(p.get("dte_min", 25))
@@ -69,7 +70,7 @@ class VolatilityBreakout(Strategy):
         atm_iv = _atm_iv(ctx.option_chain, ctx.spot)
         if atm_iv is None or not ctx.iv_history:
             return []
-        ivr = iv_rank(atm_iv, ctx.iv_history)
+        ivr = iv_rank(atm_iv, ctx.iv_history, self.min_iv_observations)
         if ivr is None or ivr > self.max_iv_rank:
             return []
 

@@ -128,7 +128,8 @@ def _breakout_ctx(short_bid, short_ask):
     ]
     return StrategyContext(
         underlying="SPY", spot=100.0, option_chain=chain,
-        iv_history=[0.10, 0.20, 0.30], closes=closes, highs=highs, lows=lows, config={})
+        iv_history=[0.10, 0.20, 0.30] * 25,  # 75 obs: meets the IV-rank sample floor
+        closes=closes, highs=highs, lows=lows, config={})
 
 
 _LEN = {"squeeze_pct": 0.9, "atr_contraction": 2.0, "max_iv_rank": 1.0,

@@ -165,7 +165,9 @@ def _earnings_ctx(rich=True):
     base = [100 + (0.6 if rich else 6.0) * math.sin(i / 3.0) for i in range(80)]
     return StrategyContext(
         underlying="ABC", spot=spot, option_chain=chain,
-        iv_history=[0.30, 0.60, 0.95],       # current 0.85 -> high IV rank
+        # 60+ observations so the IV-rank sample floor is satisfied; the
+        # min/max still bracket a HIGH rank for the 0.85 current reading.
+        iv_history=[0.30, 0.60, 0.95] * 25,  # current 0.85 -> high IV rank
         closes=base, highs=[b + 1 for b in base], lows=[b - 1 for b in base],
         asof="2026-01-15", earnings_date="2026-01-19", config={})
 

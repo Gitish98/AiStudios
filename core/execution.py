@@ -21,6 +21,7 @@ from typing import Any, Optional
 
 from .brokers.base import BrokerAdapter, OrderRequest, Position
 from .fills import entry_slippage_ps, signed_credit_ps
+from .options_math import MIN_IV_OBSERVATIONS
 from .manage import _is_filled, manage_open_positions
 from .positions import order_to_position
 from .reconcile import reconcile
@@ -471,7 +472,9 @@ def capability_warnings(adapter: BrokerAdapter, config) -> list[str]:
     # needed), but it takes time to accrue a meaningful rank.
     if (on("premium_harvest") or on("earnings_vol")) and not hasattr(adapter, "iv_history"):
         warns.append("IV-rank history is bootstrapping from daily ATM-IV snapshots — "
-                     "premium_harvest / earnings_vol stand aside until ~20 sessions accrue.")
+                     f"premium_harvest / earnings_vol stand aside until "
+                     f"{MIN_IV_OBSERVATIONS}+ sessions accrue — a shorter window makes "
+                     "IV rank actively misleading, not merely noisy.")
     if on("volatility_breakout") and not hasattr(adapter, "get_history"):
         warns.append("price history not available — volatility_breakout will NOT signal.")
     if on("earnings_vol") and not hasattr(adapter, "get_earnings_date"):
