@@ -91,8 +91,21 @@ class Store:
                 closed_ts TEXT,
                 exit_reason TEXT,
                 exit_value_ps REAL,
-                realized_pnl REAL           -- dollars
+                realized_pnl REAL,          -- dollars (from INTENDED prices)
+                -- Realized execution economics. Captured at fill time because IB's
+                -- trades() feed is session-scoped: a fill price not recorded the
+                -- same day is gone forever. Without these, every P&L number is a
+                -- restatement of our own mid-price assumptions. See core/fills.py.
+                entry_fill_ps REAL,         -- broker fill, our signed-credit convention
+                exit_fill_ps REAL,
+                entry_slip_ps REAL,         -- + = adverse vs intent
+                exit_slip_ps REAL
             )""")
+        # Migrate existing DBs (the VM has months of rows) — add any missing column.
+        have = {r["name"] for r in self.conn.execute("PRAGMA table_info(positions)")}
+        for col in ("entry_fill_ps", "exit_fill_ps", "entry_slip_ps", "exit_slip_ps"):
+            if col not in have:
+                c.execute(f"ALTER TABLE positions ADD COLUMN {col} REAL")
         self.conn.commit()
 
     # ── journal ──────────────────────────────────────────────────────────────
@@ -228,6 +241,27 @@ class Store:
             "SELECT * FROM positions WHERE status = 'pending' ORDER BY id"
         ).fetchall()
         return [dict(r) for r in rows]
+
+    def record_entry_fill(self, pos_id: int, fill_ps: Optional[float],
+                          slip_ps: Optional[float]) -> None:
+        """Persist realized ENTRY execution. Called the moment a fill is observed —
+        the broker's fill feed is session-scoped, so this is a one-shot capture."""
+        if fill_ps is None and slip_ps is None:
+            return
+        self.conn.execute(
+            "UPDATE positions SET entry_fill_ps = ?, entry_slip_ps = ? WHERE id = ?",
+            (fill_ps, slip_ps, pos_id))
+        self.conn.commit()
+
+    def record_exit_fill(self, pos_id: int, fill_ps: Optional[float],
+                         slip_ps: Optional[float]) -> None:
+        """Persist realized EXIT execution (see record_entry_fill)."""
+        if fill_ps is None and slip_ps is None:
+            return
+        self.conn.execute(
+            "UPDATE positions SET exit_fill_ps = ?, exit_slip_ps = ? WHERE id = ?",
+            (fill_ps, slip_ps, pos_id))
+        self.conn.commit()
 
     def set_position_status(self, pos_id: int, status: str) -> None:
         self.conn.execute("UPDATE positions SET status = ? WHERE id = ?", (status, pos_id))

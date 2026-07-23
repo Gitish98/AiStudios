@@ -99,10 +99,18 @@ def test_iv_and_graduation_helpers():
         store.close()
 
     g = dashboard_pro._graduation(
-        [{"realized_pnl": 90.0, "closed_asof": "2026-06-15"},
-         {"realized_pnl": -200.0, "closed_asof": "2026-06-18"}])
+        [{"realized_pnl": 90.0, "closed_asof": "2026-06-15",
+          "structure": "put_credit_spread", "contracts": 1, "exit_reason": "profit_target"},
+         {"realized_pnl": -200.0, "closed_asof": "2026-06-18",
+          "structure": "put_credit_spread", "contracts": 1, "exit_reason": "stop_loss"}])
     assert g["trades"] == 2 and g["days"] == 2 and g["min_trades"] == 40
-    assert g["expectancy"] == -55.0 and g["eligible"] is False
+    assert g["eligible"] is False
+    # Costs MUST be subtracted now: the gross expectancy is -55.00, so a
+    # cost-aware net expectancy has to be strictly worse. The dashboard used to
+    # report the gross number, which is how it could show "eligible" while the
+    # real gate said no.
+    assert g["gross"] == -110.0 and g["costs"] > 0
+    assert g["expectancy"] < -55.0
 
 
 def test_summary_math():

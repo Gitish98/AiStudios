@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from .brokers.base import BrokerAdapter, OrderLeg, OrderRequest
+from .fills import exit_slippage_ps, signed_credit_ps
 from .positions import ManageParams, dte_from, evaluate_exit
 from .store import DEAD_ORDER_STATUSES, Store
 
@@ -120,7 +121,16 @@ def _closing_order(pos: dict, value_ps: float) -> OrderRequest:
 
 
 def _is_filled(result, contracts: int) -> bool:
-    return (result.status or "").lower() == "filled" and float(result.filled_qty or 0) > 0
+    """A broker-reported terminal 'filled' status IS the fill signal.
+
+    We deliberately do NOT also require filled_qty > 0. IB reports status='Filled'
+    with filled=0.0 whenever an order is reconstructed from completedOrders in a
+    NEW process — which is exactly our deployment (one cron process per run). The
+    old `and filled_qty > 0` meant a real fill was never recognised: the entry
+    stayed 'pending' forever (invisible to management, never exited, yet still
+    consuming a concurrency slot and heat budget), and a filled CLOSE left a
+    phantom position the account no longer held. Trust the terminal status."""
+    return (result.status or "").lower() == "filled"
 
 
 def _load_pending(store: Store) -> dict:
@@ -148,13 +158,17 @@ def _finalize_pending_closes(adapter: BrokerAdapter, store: Store, asof: str) ->
         o = bro.get(info["coid"])
         if o is None:
             continue
-        st = (o.status or "").lower()
-        if st == "filled" and float(o.filled_qty or 0) > 0:
+        if _is_filled(o, 1):
             store.close_position(int(pid), asof, _now_iso(), info["reason"],
                                  info["exit_value_ps"], info["realized_pnl"])
+            # Capture realized exit economics NOW — this feed is session-scoped.
+            store.record_exit_fill(
+                int(pid), signed_credit_ps(o.filled_avg_price),
+                exit_slippage_ps(info["exit_value_ps"], o.filled_avg_price))
             store.append(_now_iso(), "position_closed", {
                 "position_id": int(pid), "reason": info["reason"],
-                "realized_pnl": info["realized_pnl"], "via": "pending_fill"})
+                "realized_pnl": info["realized_pnl"], "via": "pending_fill",
+                "exit_slip_ps": exit_slippage_ps(info["exit_value_ps"], o.filled_avg_price)})
             del pend[pid]; changed = True
         elif st in DEAD_ORDER_STATUSES:
             store.set_order_status(info["coid"], "canceled")  # canonicalize the close order
@@ -244,6 +258,12 @@ def manage_open_positions(adapter: BrokerAdapter, store: Store, config,
 
         store.close_position(pos["id"], asof, _now_iso(), decision.reason,
                              decision.exit_value_ps, decision.realized_pnl)
+        # An immediate (same-call) fill — capture its realized economics too. An
+        # expiry settlement has no order/fill, so `result` may not exist.
+        if decision.action == "close":
+            store.record_exit_fill(
+                pos["id"], signed_credit_ps(result.filled_avg_price),
+                exit_slippage_ps(decision.exit_value_ps, result.filled_avg_price))
         store.append(_now_iso(), "position_closed", {
             "underlying": pos["underlying"], "reason": decision.reason,
             "exit_value_ps": decision.exit_value_ps, "realized_pnl": decision.realized_pnl})

@@ -122,15 +122,31 @@ def _iv_progress(store: Store, target: int = 20) -> dict[str, Any]:
 
 def _graduation(closed: list[dict[str, Any]], min_days: int = 60,
                 min_trades: int = 40) -> dict[str, Any]:
-    """Store-only view of the graduation hurdle: time AND trades AND positive net."""
-    n = len(closed)
-    net = round(sum(_num(p.get("realized_pnl")) for p in closed), 2)
-    days = len({p.get("closed_asof") for p in closed if p.get("closed_asof")})
-    exp = round(net / n, 2) if n else None
+    """The graduation hurdle — delegated to the ONE real implementation.
+
+    This used to compute expectancy from gross realized P&L with NO cost model,
+    so it reported a positive expectancy (and a green 'eligible') in exactly the
+    case the honest gate reports negative — a 57%-win-rate book that loses money
+    after commissions and slippage. The dashboard is the surface actually looked
+    at daily, so that made the measurement layer argue for going live precisely
+    when the math said don't. Never fork the gate: call core.performance."""
+    from core.performance import compute_metrics, graduation_status
+    from core.costs import CostModel
+    try:
+        from core.config import load_config
+        costs = CostModel.from_config(load_config())
+    except Exception:
+        costs = CostModel()
+
+    days_list = sorted({p.get("closed_asof") for p in closed if p.get("closed_asof")})
+    m = compute_metrics(closed, days_list, costs)
+    grad = graduation_status(m, min_days=min_days, min_trades=min_trades)
     return {
-        "trades": n, "min_trades": min_trades, "days": days, "min_days": min_days,
-        "net": net, "expectancy": exp,
-        "eligible": n >= min_trades and days >= min_days and (exp or 0) > 0,
+        "trades": m["trades"], "min_trades": min_trades,
+        "days": m["days"], "min_days": min_days,
+        "net": m["net_pnl"], "gross": m["gross_pnl"], "costs": m["total_costs"],
+        "expectancy": m["expectancy_net"] if m["trades"] else None,
+        "eligible": grad["graduated"], "reasons": grad["reasons"],
     }
 
 

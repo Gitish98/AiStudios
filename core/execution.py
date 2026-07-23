@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from .brokers.base import BrokerAdapter, OrderRequest, Position
+from .fills import entry_slippage_ps, signed_credit_ps
 from .manage import _is_filled, manage_open_positions
 from .positions import order_to_position
 from .reconcile import reconcile
@@ -326,8 +327,15 @@ def run_cycle(
                     # reconcile, so an unfilled limit order won't show false drift.
                     try:
                         pos_row = order_to_position(order, asof, _now_iso())
-                        pos_row["status"] = "open" if _is_filled(result, 1) else "pending"
-                        store.open_position(pos_row)
+                        filled_now = _is_filled(result, 1)
+                        pos_row["status"] = "open" if filled_now else "pending"
+                        pid = store.open_position(pos_row)
+                        if filled_now:
+                            # Immediate fill — capture realized entry economics.
+                            store.record_entry_fill(
+                                pid, signed_credit_ps(result.filled_avg_price),
+                                entry_slippage_ps(pos_row.get("entry_credit_ps"),
+                                                  result.filled_avg_price))
                     except ValueError:
                         pass  # non-spread orders aren't tracked as managed positions yet
                     summary["placed"].append({
@@ -430,10 +438,15 @@ def _finalize_pending_entries(adapter: BrokerAdapter, store: Store) -> None:
         if o is None:
             continue
         st = (o.status or "").lower()
-        if st == "filled" and float(o.filled_qty or 0) > 0:
+        if _is_filled(o, 1):
             store.set_position_status(p["id"], "open")
+            # Capture realized ENTRY economics now — IB's fill feed is session-
+            # scoped, so this price is unrecoverable after today.
+            slip = entry_slippage_ps(p.get("entry_credit_ps"), o.filled_avg_price)
+            store.record_entry_fill(p["id"], signed_credit_ps(o.filled_avg_price), slip)
             store.append(_now_iso(), "entry_filled", {"position_id": p["id"],
-                                                       "underlying": p["underlying"]})
+                                                       "underlying": p["underlying"],
+                                                       "entry_slip_ps": slip})
         elif st in DEAD_ORDER_STATUSES:
             # Reconcile the orders table too, or has_order keeps the deterministic
             # client_order_id dedup-blocked all day and the position can never be

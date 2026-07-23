@@ -35,10 +35,19 @@ NEWS = [
     {"datetime": _NOW, "headline": "More", "summary": "", "url": "", "source": ""},
 ]
 
+def _future(days: int) -> str:
+    import datetime as _dt
+    return (_dt.datetime.now(_dt.timezone.utc).date()
+            + _dt.timedelta(days=days)).strftime("%Y-%m-%d")
+
+
+# Dates are RELATIVE to today: get_earnings filters to `date >= today`, so a
+# hard-coded future date silently rots into a past one and the test starts
+# failing for calendar reasons rather than code reasons.
 EARNINGS = {
     "earningsCalendar": [
-        {"date": "2026-07-15", "hour": "amc", "epsEstimate": 1.23},
-        {"date": "2026-01-01", "hour": "bmo", "epsEstimate": 0.5},
+        {"date": _future(14), "hour": "amc", "epsEstimate": 1.23},
+        {"date": _future(-180), "hour": "bmo", "epsEstimate": 0.5},
     ]
 }
 
@@ -80,7 +89,7 @@ def test_get_earnings():
     p = FinnhubProvider(api_key="k",
                         http=_fake_http({"calendar/earnings": EARNINGS}))
     e = p.get_earnings("AAPL")
-    assert e == {"date": "2026-07-15", "time": "amc", "eps_estimate": 1.23}
+    assert e == {"date": _future(14), "time": "amc", "eps_estimate": 1.23}
 
 
 def test_get_earnings_none():
