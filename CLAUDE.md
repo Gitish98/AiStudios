@@ -20,7 +20,7 @@ losses; we never promise gains. Nothing here is financial/legal/tax advice.
 4. **Paper is the default.** `cli.py go-live` is disabled; live needs a multi-gate ramp (not built yet).
 5. **Never commit secrets.** `.env`, `config/config.yaml`, `data/`, `exports/`, `dashboard/out/` are gitignored.
 6. **Fill-aware lifecycle:** positions are `open` only when filled, `closed` only when filled; `pending` = working order (counts for risk, not expected at broker by reconcile).
-7. **Test everything that touches money/risk.** 220 tests pass via `python -m tests.run` (also pytest-compatible). Add a regression test for every fix.
+7. **Test everything that touches money/risk.** 261 tests pass via `python -m tests.run` (also pytest-compatible). Add a regression test for every fix.
 
 ## Architecture (key files)
 - `core/risk.py` — the gate. `core/execution.py` — the cycle (manage → size → gate → advisor veto → fill-aware place → reconcile). `core/manage.py` — exits/management + pending-close finalizer. `core/positions.py` — structure-aware P&L/exits (4 verticals + iron condor). `core/sizing.py` — fixed-fractional sizing. `core/costs.py` + `core/performance.py` — cost model + metrics + graduation gate. `core/reconcile.py` — broker-truth diff. `core/store.py` — SQLite state.
@@ -31,6 +31,10 @@ losses; we never promise gains. Nothing here is financial/legal/tax advice.
 - `backtest.py` — replays the REAL cycle over history (cost-aware, modeled option prices).
 - `cli.py` — status / run-cycle / dry-run / dashboard / reconcile / performance / export-trades / kill / go-live (guarded, five-gate) / go-paper.
 - `core/golive.py` — the five-gate `GoLiveGate` (the fail-closed paper→live path).
+- `core/vrp.py` + `cli.py vrp` — measures the volatility risk premium (the strategy's premise) on decades of Cboe index history.
+- `core/clusters.py` — correlation clusters; SPY/QQQ/DIA/XLK share ONE risk budget.
+- `core/fills.py` — realized fill/slippage capture (IB's fill feed is session-scoped: capture at fill time or lose it).
+- `core/data/cboe.py` — free 252-day IV rank for SPY/QQQ/IWM/DIA from Cboe VIX-family history.
 - `docs/00`–`13` — full documentation. **`docs/09` (home setup) + `docs/10` (cloud VM) + `bootstrap.py` are the IBKR connect path.**
 
 ## Run it
@@ -90,12 +94,52 @@ ecosystem reach) — don't re-litigate without new facts.
   ramp-tier advancement (today `ramp_advancement_status` only REPORTS readiness;
   the human edits the tier — by design).
 
-**Next, in priority:** (1) let the VM's daily cron accrue 60+ cycles so IV rank
-bootstraps and premium_harvest starts signalling (then the paper ORDER path gets
-exercised autonomously); (2) operator live-validation of the ramp at tier 1
-(smallest size); (3) sector caps; (4) more data (Polygon/options flow, an earnings
-key for earnings_vol); (5) tighten the VM API bind to localhost, passphrase the SSH
-key before live.
+**Session 2026-07-24 — audit, then nine real bugs (see git log):**
+A 28-agent adversarial audit + a 33-agent tooling scout (all findings verified,
+15 of 19 tool recommendations killed by the challenge phase) drove a pass that
+fixed, in order of danger:
+1. **Fills never registered** — `_is_filled` required `filled_qty>0`, but IB reports
+   `Filled` with `filled=0.0` cross-process (our cron). Positions would go invisible:
+   never managed, never exited, still consuming risk budget. Six would brick it.
+2. **Slippage was unmeasurable** and the data unrecoverable (session-scoped feed).
+   `core/fills.py` + new position columns now capture it AT fill time.
+3. **The dashboard shipped a cost-blind graduation gate** — it would have shown
+   "eligible" exactly when the honest gate said no. Now delegates to core.performance.
+4. **IV rank from 2 observations** — printed ~95% on real data ("sell!") when the
+   honest 252-day rank said 29.7%. Floor is now 60 obs (`MIN_IV_OBSERVATIONS`).
+5-8. **Four separate chain bugs**, each producing an identical healthy-looking
+   "0 signals": wrong single expiry (premium_harvest could NEVER fire), 732-contract
+   requests silently throttling greeks, open interest never requested (needs generic
+   tick `101`), and IB's `-1.0` marketPrice sentinel emptying the chain after hours.
+9. **Correlation + overnight caps** were configured and documented as enforced while
+   no code evaluated them.
+
+> **THE LESSON, now a rule:** five distinct bugs produced the same symptom — a green
+> cycle reporting **"0 signals."** On this system that is a QUESTION, not a status.
+> Verify it every time; do not read silence as selectivity.
+
+**VRP MEASURED (the existential question, answered):** `cli.py vrp` over 2011-2026
+(3,747 paired days) says the premium is REAL and has NOT decayed: SPY mean VRP
+**+3.58%** (last 5y +3.65% vs older +3.55%), QQQ +2.90%, IWM +3.48%, DIA +3.34%;
+IV exceeded subsequent RV on 77-84% of days. The audit's "decayed to zero" claim is
+contradicted for this sample/measure. BUT the tail is the whole story: worst episode
+was Feb 2020 at IV 14% vs RV 81% (**-67%**), and 17% of days are negative and CLUSTER
+in crashes. Raw VRP in vol points is NOT P&L — costs and the spread's long wing eat
+much of it, and our own cost-aware backtest still showed 57% wins with negative net
+expectancy. The finding validates the DEFINED-RISK ARCHITECTURE as much as the
+strategy: that -67% tail is exactly what the long wing exists to bound.
+
+**Next, in priority:** (1) **activate the heartbeat** — `scripts/run_cycle.sh`
+pings a monitor on start/success/failure but is DORMANT until a healthchecks.io URL
+is written to the gitignored `.healthcheck_url` on the VM (operator action, 2 min);
+(2) SPY/QQQ/IWM/DIA now have real 252-day IV ranks, so the paper ORDER path can fire
+as soon as a credit-ratio-worthy spread appears — watch for the first fill and verify
+the fill/slippage capture end-to-end; (3) operator live-validation of the ramp at
+tier 1; (4) XLK/XLF/XLE still bootstrap locally (~43 more sessions); (5) sector caps
+(needs GICS metadata) and `max_overnight_risk_at_event_pct` (needs the earnings date
+in RiskContext); (6) tighten the VM API bind to localhost, passphrase the SSH key
+before live. NOTE: cycles now take ~6 min (was ~90s) because chains stream with a
+settle delay — well inside the 900s timeout, so no tuning needed yet.
 
 > **NEXT SESSION START HERE:** branch **`aistudios/phase4-ibkr-live`**. Three things
 > are DONE this phase: the five-gate go-live ramp (`core/golive.py`, factory unlock,
