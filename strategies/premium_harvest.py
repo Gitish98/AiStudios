@@ -23,6 +23,16 @@ from core.brokers.base import OptionContract, OrderLeg
 from core.options_math import MIN_IV_OBSERVATIONS, iv_rank
 from .base import Signal, Strategy, StrategyContext
 
+def _resolve_iv_rank(ctx, atm_iv, min_obs):
+    """IV rank + provenance. Prefers a real benchmark series supplied by execution
+    (252-day, from core.data.cboe); otherwise ranks our own ATM IV against our own
+    bootstrapped history. Never mixes the two — the current reading and the
+    history always come from the same series."""
+    if ctx.iv_rank_value is not None:
+        return ctx.iv_rank_value, (ctx.iv_rank_source or "external"), ctx.iv_rank_observations
+    return iv_rank(atm_iv, ctx.iv_history, min_obs), "bootstrap", len(ctx.iv_history or [])
+
+
 
 class PremiumHarvest(Strategy):
     name = "premium_harvest"
@@ -52,7 +62,8 @@ class PremiumHarvest(Strategy):
         atm_iv = _atm_iv(chain, ctx.spot)
         if atm_iv is None or not ctx.iv_history:
             return []
-        rank = iv_rank(atm_iv, ctx.iv_history, self.min_iv_observations)
+        rank, iv_src, iv_n = _resolve_iv_rank(atm_iv=atm_iv, ctx=ctx,
+                                             min_obs=self.min_iv_observations)
         if rank is None or rank < self.min_iv_rank:
             return []
 
@@ -119,7 +130,7 @@ class PremiumHarvest(Strategy):
             max_loss=max_loss,
             required_approval_level=self.required_level,
             is_day_trade=False,
-            meta={"iv_rank": rank, "short_delta": short.delta, "dte": short.dte,
+            meta={"iv_rank": rank, "iv_rank_source": iv_src, "iv_obs": iv_n, "short_delta": short.delta, "dte": short.dte,
                   "short_strike": short.strike, "long_strike": long_leg.strike,
                   "width": width, "expiration": short.expiration},
         )]

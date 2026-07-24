@@ -224,9 +224,26 @@ def run_cycle(
             if earnings is None and data_hub is not None:
                 e = data_hub.get_earnings(symbol)        # provider earnings calendar
                 earnings = e.get("date") if isinstance(e, dict) else None
+            # A real 252-day IV rank from the underlying's benchmark vol index,
+            # when one exists (SPY/QQQ/IWM/DIA). Fails closed to the local
+            # bootstrap on any error, stale feed, or unmapped symbol.
+            proxy = None
+            try:
+                from .data.cboe import proxy_iv_rank
+                proxy = proxy_iv_rank(symbol)
+            except Exception:
+                proxy = None
+            if proxy:
+                store.append(_now_iso(), "iv_rank_source", {
+                    "symbol": symbol, "source": proxy["source"],
+                    "rank": round(proxy["rank"], 4), "observations": proxy["observations"]})
+
             sctx = StrategyContext(
                 underlying=symbol, spot=quote.mid, option_chain=chain,
                 iv_history=iv_hist,
+                iv_rank_value=(proxy["rank"] if proxy else None),
+                iv_rank_source=(proxy["source"] if proxy else ""),
+                iv_rank_observations=(proxy["observations"] if proxy else 0),
                 closes=[b["c"] for b in bars], highs=[b["h"] for b in bars],
                 lows=[b["l"] for b in bars], asof=asof, earnings_date=earnings,
                 config=config.strategies,

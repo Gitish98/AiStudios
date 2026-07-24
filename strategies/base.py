@@ -40,6 +40,16 @@ class StrategyContext:
     asof: str = ""
     earnings_date: Optional[str] = None   # ISO date of next earnings, if known
     config: dict[str, Any] = field(default_factory=dict)
+    # Pre-computed IV rank with PROVENANCE, supplied by execution when a real
+    # 252-day benchmark series is available (see core.data.cboe). It is passed as
+    # a finished rank rather than as a history because the current reading and the
+    # history MUST come from the same series: ranking our single-strike ATM IV
+    # against VIX's variance-swap strip would depress every rank permanently.
+    # None => the strategy falls back to ranking its own ATM IV against
+    # `iv_history` (which needs MIN_IV_OBSERVATIONS sessions to be trustworthy).
+    iv_rank_value: Optional[float] = None
+    iv_rank_source: str = ""              # e.g. "cboe:VIX" | "bootstrap"
+    iv_rank_observations: int = 0
 
 
 class Strategy(abc.ABC):

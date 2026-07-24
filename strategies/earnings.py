@@ -32,6 +32,16 @@ from datetime import date
 from core.brokers.base import OrderLeg
 from core.options_math import MIN_IV_OBSERVATIONS, implied_move, iv_rank, realized_vol
 from .base import Signal, Strategy, StrategyContext
+
+def _resolve_iv_rank(ctx, atm_iv, min_obs):
+    """IV rank + provenance. Prefers a real benchmark series supplied by execution
+    (252-day, from core.data.cboe); otherwise ranks our own ATM IV against our own
+    bootstrapped history. Never mixes the two — the current reading and the
+    history always come from the same series."""
+    if ctx.iv_rank_value is not None:
+        return ctx.iv_rank_value, (ctx.iv_rank_source or "external"), ctx.iv_rank_observations
+    return iv_rank(atm_iv, ctx.iv_history, min_obs), "bootstrap", len(ctx.iv_history or [])
+
 from strategies.premium_harvest import _atm_iv
 
 
@@ -84,13 +94,15 @@ class EarningsVol(Strategy):
         atm_iv = _atm_iv(ctx.option_chain, ctx.spot)
         if atm_iv is None or not ctx.iv_history:
             return []
-        ivr = iv_rank(atm_iv, ctx.iv_history, self.min_iv_observations)
+        ivr, iv_src, iv_n = _resolve_iv_rank(atm_iv=atm_iv, ctx=ctx,
+                                            min_obs=self.min_iv_observations)
         if ivr is None or ivr < self.min_iv_rank:
             return []
 
-        return self._build_condor(ctx, im_pct, ivr, days_to)
+        return self._build_condor(ctx, im_pct, ivr, days_to, iv_src, iv_n)
 
-    def _build_condor(self, ctx, im_pct, ivr, days_to) -> list[Signal]:
+    def _build_condor(self, ctx, im_pct, ivr, days_to,
+                      iv_src="", iv_n=0) -> list[Signal]:
         spot, exp = ctx.spot, ctx.option_chain[0].expiration
         puts = sorted({c.strike for c in ctx.option_chain if c.option_type == "put"})
         calls = sorted({c.strike for c in ctx.option_chain if c.option_type == "call"})
@@ -143,7 +155,7 @@ class EarningsVol(Strategy):
             rationale=rationale, limit_price=credit, est_credit=round(credit * 100, 2),
             max_loss=max_loss, required_approval_level=self.required_level,
             is_day_trade=False,
-            meta={"implied_move": im_pct, "iv_rank": ivr, "days_to_earnings": days_to,
+            meta={"implied_move": im_pct, "iv_rank": ivr, "iv_rank_source": iv_src, "iv_obs": iv_n, "days_to_earnings": days_to,
                   "structure": "iron_condor", "width": width},
         )]
 

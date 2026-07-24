@@ -28,6 +28,16 @@ from core.indicators import (
 )
 from core.options_math import MIN_IV_OBSERVATIONS, iv_rank
 from .base import Signal, Strategy, StrategyContext
+
+def _resolve_iv_rank(ctx, atm_iv, min_obs):
+    """IV rank + provenance. Prefers a real benchmark series supplied by execution
+    (252-day, from core.data.cboe); otherwise ranks our own ATM IV against our own
+    bootstrapped history. Never mixes the two — the current reading and the
+    history always come from the same series."""
+    if ctx.iv_rank_value is not None:
+        return ctx.iv_rank_value, (ctx.iv_rank_source or "external"), ctx.iv_rank_observations
+    return iv_rank(atm_iv, ctx.iv_history, min_obs), "bootstrap", len(ctx.iv_history or [])
+
 from strategies.premium_harvest import _atm_iv  # reuse ATM-IV helper
 from core.brokers.base import OrderLeg
 
@@ -70,7 +80,8 @@ class VolatilityBreakout(Strategy):
         atm_iv = _atm_iv(ctx.option_chain, ctx.spot)
         if atm_iv is None or not ctx.iv_history:
             return []
-        ivr = iv_rank(atm_iv, ctx.iv_history, self.min_iv_observations)
+        ivr, iv_src, iv_n = _resolve_iv_rank(atm_iv=atm_iv, ctx=ctx,
+                                            min_obs=self.min_iv_observations)
         if ivr is None or ivr > self.max_iv_rank:
             return []
 
@@ -85,9 +96,11 @@ class VolatilityBreakout(Strategy):
         else:
             return []  # no clear lean -> stand aside
 
-        return self._build_debit_spread(ctx, family, bullish, bw_pct, ivr, rpos)
+        return self._build_debit_spread(ctx, family, bullish, bw_pct, ivr, rpos,
+                                       iv_src, iv_n)
 
-    def _build_debit_spread(self, ctx, family, bullish, bw_pct, ivr, rpos) -> list[Signal]:
+    def _build_debit_spread(self, ctx, family, bullish, bw_pct, ivr, rpos,
+                            iv_src="", iv_n=0) -> list[Signal]:
         chain = [c for c in ctx.option_chain
                  if c.option_type == family
                  and self.dte_min <= c.dte <= self.dte_max
@@ -150,6 +163,6 @@ class VolatilityBreakout(Strategy):
             max_loss=max_loss,
             required_approval_level=self.required_level,
             is_day_trade=False,
-            meta={"bandwidth_pct": bw_pct, "iv_rank": ivr, "range_pos": rpos,
+            meta={"bandwidth_pct": bw_pct, "iv_rank": ivr, "iv_rank_source": iv_src, "iv_obs": iv_n, "range_pos": rpos,
                   "structure": structure, "width": width},
         )]
