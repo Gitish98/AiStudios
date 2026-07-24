@@ -157,3 +157,16 @@ def test_try_connect_returns_false_without_gateway():
     a = IBKRAdapter(host="127.0.0.1", port=4999, paper=True)
     assert a.try_connect() is False
     assert a.is_paper is True
+
+
+def test_pick_spot_rejects_ibkr_negative_sentinel():
+    """IB's marketPrice() returns -1.0 after hours as "no data", and -1.0 is
+    truthy — so `marketPrice() or close` short-circuits to -1.0 and the strike
+    band goes negative, emptying the whole chain right when the 15:30 cron runs."""
+    from core.brokers.ibkr import pick_spot
+    assert pick_spot(-1.0, 690.5) == 690.5          # sentinel skipped, close used
+    assert pick_spot(-1.0, 0.0, 688.0) == 688.0     # falls through zeros too
+    assert pick_spot(691.2, 690.0) == 691.2         # first positive wins
+    assert pick_spot(-1.0, 0.0, None) is None       # nothing usable -> None
+    assert pick_spot(float("nan"), 692.0) == 692.0  # NaN skipped
+    assert pick_spot() is None

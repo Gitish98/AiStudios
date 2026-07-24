@@ -63,6 +63,22 @@ def option_right(option_type: str) -> str:
     return "C" if option_type == "call" else "P"
 
 
+def pick_spot(*candidates: Any) -> Optional[float]:
+    """First strictly-POSITIVE, finite price from the candidates, else None.
+
+    IB's marketPrice() returns -1.0 as a "no live data" sentinel after hours, and
+    -1.0 is truthy — so `marketPrice() or close` short-circuits to -1.0 and never
+    reaches the close fallback. A negative spot then makes the strike band
+    (spot*0.92 .. spot*1.08) negative, yielding ZERO strikes and an empty chain:
+    the whole chain silently disappears near the close, exactly when the 15:30
+    cron runs. Order candidates best-first (marketPrice, then last, then close)."""
+    for x in candidates:
+        v = _to_float_opt(x)
+        if v is not None and v > 0:
+            return v
+    return None
+
+
 def _to_float(x: Any, default: float = 0.0) -> float:
     """float(x), treating None and NaN as the default. IB market-data fields come
     back as NaN (not None) when absent — and `NaN or 0` is NaN (NaN is truthy), so
@@ -379,7 +395,9 @@ class IBKRAdapter(BrokerAdapter):
         # reqMktData+sleep(1s), which often hasn't populated delayed ticks in time.
         [t] = live.reqTickers(contract)
         bid, ask = _to_float(t.bid), _to_float(t.ask)
-        last = _to_float(t.last) or _to_float(t.close) or _to_float(t.marketPrice())
+        # pick_spot filters out IB's -1.0 "no data" sentinel (marketPrice can be
+        # -1 after hours); a plain `or` chain would leak it as a negative last.
+        last = pick_spot(t.last, t.close, t.marketPrice()) or 0.0
         return Quote(symbol=symbol.upper(), bid=bid, ask=ask, last=last)
 
     def get_option_chain(self, underlying: str, expiration: Optional[str] = None) -> list[OptionContract]:
@@ -388,7 +406,12 @@ class IBKRAdapter(BrokerAdapter):
         stock = ib.Stock(underlying, "SMART", "USD")
         live.qualifyContracts(stock)
         [ticker] = live.reqTickers(stock)
-        spot = float(ticker.marketPrice() or ticker.close or 0)
+        spot = pick_spot(ticker.marketPrice(), ticker.last, ticker.close)
+        if not spot:
+            # No usable underlying price -> we cannot bound the strike band, so we
+            # cannot build a meaningful chain. Return empty (the strategy stands
+            # aside) rather than silently ranging over garbage strikes.
+            return []
 
         params = live.reqSecDefOptParams(stock.symbol, "", stock.secType, stock.conId)
         smart = pick_secdef_params(params, underlying)
