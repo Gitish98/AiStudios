@@ -22,7 +22,9 @@ Enforces (per docs/05-risk-and-safety.md):
     single defined-risk budget, so "6 positions" cannot become one leveraged bet.
 
 Deferred (needs per-symbol GICS metadata; NOT silently treated as enforced):
-  - max_sector_pct.
+  - max_sector_pct (needs GICS metadata)
+  - max_overnight_risk_at_event_pct (needs an earnings calendar inside the gate;
+    the earnings date exists in StrategyContext but is not passed to RiskContext)
 """
 
 from __future__ import annotations
@@ -49,17 +51,35 @@ class RiskLimits:
     # SPY/QQQ/DIA/XLK are one cluster, without this the heat cap alone would
     # happily allow the entire budget in a single beta exposure.
     max_cluster_risk_pct: float = 0.03
+    # OVERNIGHT / GAP RISK (from the config's `overnight:` block). The daily-loss
+    # kill switch is a continuous intraday trip and is ASLEEP across the session
+    # boundary — it cannot bound a gap. This is the cap that can. Measured VRP
+    # (cli.py vrp) puts the worst 21-day episode at RV 81% vs IV 14%: the tail is
+    # the whole risk in short premium, and it arrives overnight.
+    max_overnight_defined_risk_pct: float = 0.04
     max_gross_leverage: float = 1.0
     daily_loss_limit_pct: float = 0.03
     allow_naked_short_options: bool = False
     pdt_equity_threshold: float = 25000.0
 
     @classmethod
-    def from_config(cls, risk: dict[str, Any]) -> "RiskLimits":
+    def from_config(cls, risk: dict[str, Any],
+                    overnight: Optional[dict[str, Any]] = None) -> "RiskLimits":
+        """Build limits from the `risk:` block, plus the separate top-level
+        `overnight:` block (whose keys were dead config until now). The tighter of
+        max_overnight_defined_risk_pct / max_aggregate_gap_loss_pct wins: for a
+        defined-risk-only book they measure the same quantity (see the gate)."""
         f = cls()
+        merged = dict(risk or {})
+        o = overnight or {}
+        caps = [o.get(k) for k in
+                ("max_overnight_defined_risk_pct", "max_aggregate_gap_loss_pct")
+                if o.get(k) is not None]
+        if caps:
+            merged["max_overnight_defined_risk_pct"] = min(float(c) for c in caps)
         for k in vars(f):
-            if k in risk and risk[k] is not None:
-                setattr(f, k, type(getattr(f, k))(risk[k]))
+            if k in merged and merged[k] is not None:
+                setattr(f, k, type(getattr(f, k))(merged[k]))
         return f
 
 
@@ -195,6 +215,28 @@ class RiskGate:
                 f"${cluster_risk + order_risk:.0f} of defined risk "
                 f"(> {L.max_cluster_risk_pct*100:.1f}% of equity, "
                 f"${L.max_cluster_risk_pct*equity:.0f}). Correlated names share one budget."
+            )
+
+        # 7d. OVERNIGHT / GAP risk — the cap the daily-loss kill switch cannot be.
+        # That switch is a continuous INTRADAY mark-to-market trip; it is asleep
+        # across the session boundary, so it can never bound an overnight gap. The
+        # `overnight:` config block promised this cap for months while no code
+        # referenced it at all.
+        # HONEST NOTE ON OVERLAP: every position this system holds is defined-risk
+        # and multi-day (30-45 DTE), so "risk carried overnight" is the SAME set as
+        # portfolio heat, and for defined-risk structures the worst-case aggregate
+        # gap loss IS the sum of max_loss (the long wing caps it — that is the
+        # point). So this check duplicates 7b's arithmetic with a TIGHTER bound,
+        # and in practice becomes the binding heat constraint. It is kept separate
+        # because the two limits answer different questions and would diverge the
+        # moment an intraday or undefined-risk structure is ever added.
+        overnight_risk = existing_heat + order_risk
+        if overnight_risk > L.max_overnight_defined_risk_pct * equity + 1e-6:
+            d.reject(
+                f"Overnight gap risk ${overnight_risk:.0f} would exceed "
+                f"{L.max_overnight_defined_risk_pct*100:.1f}% of equity "
+                f"(${L.max_overnight_defined_risk_pct*equity:.0f}) — this is the "
+                "worst case if every position gapped to max loss at once."
             )
 
         # NOTE — STILL NOT ENFORCED (needs per-symbol GICS metadata):

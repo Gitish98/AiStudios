@@ -78,7 +78,8 @@ def run_cycle(
     + an ANTHROPIC_API_KEY."""
     asof = asof or datetime.now(timezone.utc).date().isoformat()
     ts = _now_iso()
-    limits = RiskLimits.from_config(config.risk)
+    limits = RiskLimits.from_config(config.risk,
+                                (config.raw.get("overnight", {}) or {}))
     gate = RiskGate(limits)
 
     account = adapter.get_account()

@@ -88,3 +88,35 @@ def test_cluster_cap_is_configurable_and_can_be_relaxed():
     gate = RiskGate(RiskLimits(max_cluster_risk_pct=0.10))
     book = [_pos("SPY", 450.0), _pos("QQQ", 350.0)]
     assert gate.evaluate(_spread("XLK", 140.0), _ctx(book)).approved
+
+
+def test_overnight_gap_cap_binds_and_was_dead_config():
+    """The `overnight:` block had ZERO code references for months while the config
+    told the operator it bounded gap risk. The daily-loss kill switch is a
+    continuous INTRADAY trip and is asleep across the session boundary, so it can
+    never do this job. Measured VRP shows the worst 21-day episode was RV 81% vs
+    IV 14% — the tail is the risk, and it arrives overnight."""
+    from core.risk import RiskLimits
+
+    # Loaded from the separate top-level block, taking the TIGHTER of the two caps.
+    lim = RiskLimits.from_config(
+        {}, {"max_overnight_defined_risk_pct": 0.04, "max_aggregate_gap_loss_pct": 0.06})
+    assert lim.max_overnight_defined_risk_pct == 0.04
+
+    # On $30k equity that is $1200. A book at $1100 of carried defined risk must
+    # reject a further $140 spread, even though portfolio heat (6% = $1800) allows it.
+    gate = RiskGate(lim)
+    book = [_pos("XLE", 600.0), _pos("XLF", 500.0)]      # deliberately DIFFERENT clusters
+    d = gate.evaluate(_spread("IWM", 140.0), _ctx(book))  # third cluster again
+    assert not d.approved
+    assert any("overnight gap risk" in r.lower() for r in d.reasons)
+    assert 1240 < 0.06 * 30000, "portfolio heat alone would have allowed this"
+
+    # Under the cap it passes.
+    assert gate.evaluate(_spread("IWM", 140.0), _ctx([_pos("XLE", 300.0)])).approved
+
+
+def test_overnight_cap_defaults_when_config_block_absent():
+    from core.risk import RiskLimits
+    assert RiskLimits.from_config({}, None).max_overnight_defined_risk_pct == 0.04
+    assert RiskLimits.from_config({}, {}).max_overnight_defined_risk_pct == 0.04
