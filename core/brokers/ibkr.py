@@ -36,6 +36,13 @@ from .base import (
 # (premium_harvest 30-45 DTE) sit INSIDE this band — handing them only the
 # soonest expiry made signalling structurally impossible most of the month.
 EXPIRY_DTE_MIN, EXPIRY_DTE_MAX, TARGET_DTE, MAX_EXPIRIES = 20, 60, 35, 3
+# IBKR allows only ~100 SIMULTANEOUS market-data lines. reqTickers on a whole
+# multi-expiry chain at once silently exceeds that: the call returns, but the
+# throttled contracts arrive with modelGreeks=None, so every delta filter matches
+# nothing and the engine reports "0 signals" while looking healthy. Request in
+# chunks below the limit instead. (Measured: 732 contracts in one call -> 0 of 98
+# in-window puts had a delta; chunked -> greeks populate.)
+TICKER_CHUNK = 60
 
 LIVE_PORTS = {4001, 7496}
 PAPER_PORTS = {4002, 7497}
@@ -407,9 +414,10 @@ class IBKRAdapter(BrokerAdapter):
         if not exps:
             return []
 
-        # Strikes within ~12% of spot to bound request size.
+        # Strikes within ~8% of spot: the deltas the strategies want (0.12-0.45)
+        # sit well inside that, and a tighter band keeps the request count low.
         strikes = sorted(s for s in smart.strikes
-                         if spot * 0.88 <= s <= spot * 1.12) if spot else sorted(smart.strikes)
+                         if spot * 0.92 <= s <= spot * 1.08) if spot else sorted(smart.strikes)
         contracts = []
         for exp in exps:
             for K in strikes:
@@ -424,7 +432,13 @@ class IBKRAdapter(BrokerAdapter):
         contracts = [c for c in contracts if getattr(c, "conId", 0)]
         if not contracts:
             return []
-        tickers = live.reqTickers(*contracts)
+        tickers = []
+        for i in range(0, len(contracts), TICKER_CHUNK):
+            batch = contracts[i:i + TICKER_CHUNK]
+            try:
+                tickers.extend(live.reqTickers(*batch))
+            except Exception:
+                continue   # one bad batch must not lose the whole chain
 
         out: list[OptionContract] = []
         for tk in tickers:
