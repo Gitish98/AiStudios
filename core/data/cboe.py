@@ -106,10 +106,22 @@ def _default_http(url: str) -> str:
     return r.text
 
 
-def load_index_closes(index: str, today: Optional[_dt.date] = None,
-                      http: Optional[Callable[[str], str]] = None,
-                      cache_dir: Optional[Path] = None) -> Optional[list[float]]:
-    """Daily closes for a Cboe volatility index, oldest->newest, or None.
+def load_index_history(index: str, today: Optional[_dt.date] = None,
+                       http: Optional[Callable[[str], str]] = None,
+                       cache_dir: Optional[Path] = None
+                       ) -> Optional[list[tuple[_dt.date, float]]]:
+    """DATED closes for a volatility index — the VRP study needs the dates to
+    align implied vol with the realized vol that followed it. Same fetch/cache/
+    staleness rules as load_index_closes, which is a thin wrapper over this."""
+    rows = _load_rows(index, today=today, http=http, cache_dir=cache_dir)
+    return rows
+
+
+def _load_rows(index: str, today: Optional[_dt.date] = None,
+               http: Optional[Callable[[str], str]] = None,
+               cache_dir: Optional[Path] = None
+               ) -> Optional[list[tuple[_dt.date, float]]]:
+    """Daily (date, close) for a Cboe volatility index, oldest->newest, or None.
 
     Fetches at most once per calendar day and caches to disk; on any network or
     parse failure it falls back to the cache, and if that is stale too it returns
@@ -153,7 +165,7 @@ def load_index_closes(index: str, today: Optional[_dt.date] = None,
     rows = parse_history_csv(text or "")
     if is_stale(rows, today):
         return None                           # stale feed -> stand aside
-    return [v for _, v in rows]
+    return rows
 
 
 def proxy_iv_rank(underlying: str, today: Optional[_dt.date] = None,
@@ -180,3 +192,11 @@ def proxy_iv_rank(underlying: str, today: Optional[_dt.date] = None,
         return None
     return {"rank": rank, "source": f"cboe:{index}",
             "observations": len(window), "current": round(current, 4)}
+
+
+def load_index_closes(index: str, today: Optional[_dt.date] = None,
+                      http: Optional[Callable[[str], str]] = None,
+                      cache_dir: Optional[Path] = None) -> Optional[list[float]]:
+    """Undated closes (the IV-rank path only needs values)."""
+    rows = _load_rows(index, today=today, http=http, cache_dir=cache_dir)
+    return [v for _, v in rows] if rows else None

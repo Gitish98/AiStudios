@@ -327,6 +327,67 @@ def cmd_export_trades(args):
     print("question for a tax professional — this export is records, not advice.")
 
 
+def cmd_vrp(args):
+    """Measure the VOLATILITY RISK PREMIUM — the premise premium_harvest rests on.
+
+    Pairs each day's implied vol with the realized vol that actually followed it,
+    over decades of Cboe index history. If IV does not systematically exceed
+    subsequent RV on the instruments we trade, selling premium is not a business
+    and no amount of engineering fixes that."""
+    from core.data.cboe import PROXY_INDEX, load_index_history
+    from core.vrp import DEFAULT_HORIZON_TD, by_period, pair_iv_with_forward_rv, vrp_stats
+
+    config = load_config()
+    store = Store()
+    adapter = build_execution_adapter(config, store=store).adapter
+    horizon = int(getattr(args, "horizon", None) or DEFAULT_HORIZON_TD)
+
+    print("-" * 68)
+    print("  VOLATILITY RISK PREMIUM - IV vs the realized vol that followed it")
+    print(f"  horizon {horizon} trading days | prices from {adapter.name}")
+    print("-" * 68)
+
+    for etf, index in sorted(PROXY_INDEX.items()):
+        try:
+            iv_rows = load_index_history(index)
+            if not iv_rows:
+                print()
+                print(f"  {etf}: no {index} history available")
+                continue
+            bars = adapter.get_history(etf, days=6000)
+            closes = {str(b["date"])[:10]: b["c"] for b in bars if b.get("c")}
+            iv_by_date = {d.isoformat(): v for d, v in iv_rows}
+            pairs = pair_iv_with_forward_rv(iv_by_date, closes, horizon)
+            st = vrp_stats(pairs)
+            print()
+            if not st.get("observations"):
+                print(f"  {etf} ({index}): no overlapping days "
+                      f"(iv={len(iv_by_date)}, closes={len(closes)})")
+                continue
+            print(f"  {etf}  (IV from {index}, {st['observations']} paired days)")
+            print(f"    mean IV {st['mean_iv']:.1%}  vs  mean RV {st['mean_rv']:.1%}"
+                  f"   ->  MEAN VRP {st['mean_vrp']:+.2%}")
+            print(f"    median {st['median_vrp']:+.2%} | p25 {st['p25_vrp']:+.2%} | "
+                  f"p05 {st['p05_vrp']:+.2%} | worst {st['worst_vrp']:+.2%}")
+            print(f"    IV exceeded RV on {st['hit_rate']:.0%} of days")
+            split = by_period(pairs, years=5)
+            r, o = split["recent"], split["older"]
+            if r.get("observations") and o.get("observations"):
+                print(f"    DECAY CHECK - last 5y {r['mean_vrp']:+.2%} (n={r['observations']})"
+                      f"  vs  older {o['mean_vrp']:+.2%} (n={o['observations']})")
+        except Exception as e:
+            print()
+            print(f"  {etf}: unavailable ({e})")
+
+    print()
+    print("-" * 68)
+    print("  Read the TAIL, not just the mean: short premium wins often and loses")
+    print("  rarely and large, so a positive mean with a deep p05 can still be a")
+    print("  losing business after costs. GROSS of commissions/slippage; index vol")
+    print("  is a proxy for the ETF's own. Not financial advice.")
+    store.close()
+
+
 def cmd_go_live(args):
     """Interactive, five-gate, journaled path to ARM LIVE for today. Refuses unless
     ALL five go-live gates pass (core.golive / docs/05 §1.2). The per-session typed
@@ -420,6 +481,7 @@ def main():
     _force_utf8_console()
     p = argparse.ArgumentParser(prog="aistudios", description="AiStudios paper trading CLI")
     p.add_argument("--asof", help="Override the as-of date (YYYY-MM-DD) for deterministic runs")
+    p.add_argument("--horizon", type=int, help="VRP horizon in trading days (default 21)")
     p.add_argument("--force", action="store_true",
                    help="ignore the market-calendar guard (run even on a closed day)")
     sub = p.add_subparsers(dest="command", required=True)
@@ -430,6 +492,7 @@ def main():
         func=lambda a: cmd_run_cycle(a, dry_run=True))
     sub.add_parser("dashboard", help="Rebuild the HTML dashboard").set_defaults(func=cmd_dashboard)
     sub.add_parser("reconcile", help="Diff broker vs local journal").set_defaults(func=cmd_reconcile)
+    sub.add_parser("vrp", help="measure the volatility risk premium (the strategy premise)").set_defaults(func=cmd_vrp)
     sub.add_parser("performance", help="Net-of-cost paper performance + graduation status").set_defaults(func=cmd_performance)
     sub.add_parser("export-trades", help="Export closed trades to a CSV (tax/records)").set_defaults(func=cmd_export_trades)
     sub.add_parser("kill", help="Engage the kill switch").set_defaults(func=cmd_kill)

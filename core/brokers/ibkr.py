@@ -531,8 +531,11 @@ class IBKRAdapter(BrokerAdapter):
         live = self._require()
         stock = ib.Stock(symbol, "SMART", "USD")
         live.qualifyContracts(stock)
+        # IB rejects very large "D" durations for daily bars; switch to years past
+        # ~1y so a multi-year VRP study can pull one clean request.
+        dur = f"{max(days, 30)} D" if days <= 365 else f"{min(15, days // 365 + 1)} Y"
         bars = live.reqHistoricalData(
-            stock, endDateTime="", durationStr=f"{max(days, 30)} D",
+            stock, endDateTime="", durationStr=dur,
             barSizeSetting="1 day", whatToShow="TRADES", useRTH=True, formatDate=1)
         return [{"date": str(b.date), "o": float(b.open), "h": float(b.high),
                  "l": float(b.low), "c": float(b.close)} for b in bars]
