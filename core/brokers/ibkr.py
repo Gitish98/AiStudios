@@ -30,6 +30,7 @@ from .base import (
     Account, BrokerAdapter, OptionContract, OrderLeg, OrderRequest, OrderResult,
     Position, Quote,
 )
+from ..options_math import fill_greeks_from_mid
 
 # Expiry selection for chain fetches. We return SEVERAL expiries around
 # TARGET_DTE rather than just the nearest, because the strategies' own windows
@@ -43,6 +44,9 @@ EXPIRY_DTE_MIN, EXPIRY_DTE_MAX, TARGET_DTE, MAX_EXPIRIES = 20, 60, 35, 3
 # chunks below the limit instead. (Measured: 732 contracts in one call -> 0 of 98
 # in-window puts had a delta; chunked -> greeks populate.)
 TICKER_CHUNK = 60
+# Seconds to let a delayed-data batch stream in before reading it. reqTickers
+# does not wait long enough for delayed ticks (and never asks for open interest).
+CHAIN_SETTLE_SECS = 4.0
 
 LIVE_PORTS = {4001, 7496}
 PAPER_PORTS = {4002, 7497}
@@ -432,18 +436,24 @@ class IBKRAdapter(BrokerAdapter):
         contracts = [c for c in contracts if getattr(c, "conId", 0)]
         if not contracts:
             return []
-        tickers = []
+        # Stream with generic tick 101 (OPEN INTEREST) and wait, rather than
+        # reqTickers. Two reasons proven live: (1) OI is delivered ONLY when tick
+        # 101 is requested — reqTickers never asks, so putOpenInterest was always
+        # NaN and every min_open_interest filter failed on liquid strikes; (2)
+        # delayed ticks arrive slower than reqTickers waits, so it returned NaN for
+        # bid/ask/greeks too. A brief settle populates both.
+        tks = []
         for i in range(0, len(contracts), TICKER_CHUNK):
             batch = contracts[i:i + TICKER_CHUNK]
             try:
-                tickers.extend(live.reqTickers(*batch))
+                tks.extend((c, live.reqMktData(c, "101", False, False)) for c in batch)
+                live.sleep(CHAIN_SETTLE_SECS)
             except Exception:
                 continue   # one bad batch must not lose the whole chain
+        live.sleep(CHAIN_SETTLE_SECS)   # final settle for the last batch
 
         out: list[OptionContract] = []
-        for tk in tickers:
-            c = tk.contract
-            g = tk.modelGreeks
+        for c, tk in tks:
             # Each contract carries its OWN expiry now that the chain spans
             # several; deriving it from a single shared `exp` would mislabel them.
             raw_exp = getattr(c, "lastTradeDateOrContractMonth", "") or ""
@@ -451,17 +461,41 @@ class IBKRAdapter(BrokerAdapter):
                 continue
             c_exp = datetime.strptime(raw_exp[:8], "%Y%m%d").date()
             dte_val = (c_exp - today).days
+            otype = "call" if c.right == "C" else "put"
+            g = tk.modelGreeks
+            bid, ask, last = _to_float(tk.bid), _to_float(tk.ask), _to_float(tk.last)
+            iv = _to_float_opt(g.impliedVol) if g else None
+            delta = _to_float_opt(g.delta) if g else None
+            gamma = _to_float_opt(g.gamma) if g else None
+            theta = _to_float_opt(g.theta) if g else None
+            vega = _to_float_opt(g.vega) if g else None
+            greeks_modeled = False
+
+            # BS fallback: if the broker gave us no delta (delayed data, esp.
+            # after hours), recover it from the mid. Tagged modeled, never silently
+            # blended with real greeks — see options_math.fill_greeks_from_mid.
+            if delta is None:
+                mid = (bid + ask) / 2 if (bid > 0 and ask > 0) else last
+                filled = fill_greeks_from_mid(spot, float(c.strike), dte_val, otype, mid)
+                if filled:
+                    iv = iv if iv is not None else filled["implied_vol"]
+                    delta, gamma = filled["delta"], filled["gamma"]
+                    theta, vega = filled["theta"], filled["vega"]
+                    greeks_modeled = True
+
+            try:
+                live.cancelMktData(c)   # release the streaming line
+            except Exception:
+                pass
+
             out.append(OptionContract(
                 symbol=c.localSymbol or f"{underlying}{raw_exp[:8]}{c.right}{int(c.strike*1000):08d}",
                 underlying=underlying.upper(),
                 expiration=c_exp.strftime("%Y-%m-%d"),
-                strike=float(c.strike), option_type="call" if c.right == "C" else "put",
-                bid=_to_float(tk.bid), ask=_to_float(tk.ask), last=_to_float(tk.last),
-                implied_vol=_to_float_opt(g.impliedVol) if g else None,
-                delta=_to_float_opt(g.delta) if g else None,
-                gamma=_to_float_opt(g.gamma) if g else None,
-                theta=_to_float_opt(g.theta) if g else None,
-                vega=_to_float_opt(g.vega) if g else None,
+                strike=float(c.strike), option_type=otype,
+                bid=bid, ask=ask, last=last,
+                implied_vol=iv, delta=delta, gamma=gamma, theta=theta, vega=vega,
+                greeks_modeled=greeks_modeled,
                 open_interest=_to_int(tk.putOpenInterest if c.right == "P"
                                       else tk.callOpenInterest),
                 volume=_to_int(tk.volume), dte=dte_val,

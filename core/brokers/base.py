@@ -78,6 +78,7 @@ class OptionContract:
     open_interest: int = 0
     volume: int = 0
     dte: int = 0
+    greeks_modeled: bool = False  # True => greeks are OUR Black-Scholes, not the broker's
 
     @property
     def mid(self) -> float:

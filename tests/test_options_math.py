@@ -105,3 +105,32 @@ def test_strategies_inherit_the_iv_sample_floor():
     assert EarningsVol({}).min_iv_observations == MIN_IV_OBSERVATIONS
     # ...and stays operator-configurable.
     assert PremiumHarvest({"min_iv_observations": 252}).min_iv_observations == 252
+
+
+def test_fill_greeks_from_mid_recovers_a_sane_delta():
+    """The delayed-data fallback: recover greeks from the mid when the broker
+    sent none. Round-trips against bs_price so it must be internally consistent."""
+    from core.options_math import fill_greeks_from_mid, bs_price
+    S, K, dte, r, sigma = 690.0, 650.0, 36, 0.04, 0.25
+    t = dte / 365.0
+    mid = bs_price(S, K, t, r, sigma, "put")          # a known-good mid
+    g = fill_greeks_from_mid(S, K, dte, "put", mid)
+    assert g is not None
+    assert abs(g["implied_vol"] - sigma) < 1e-2       # inverts back to input vol
+    assert -0.5 < g["delta"] < 0.0                    # OTM put: small negative delta
+    assert g["gamma"] > 0 and g["vega"] > 0
+
+    # A 30-delta short put strike lands in the strategy's [0.12, 0.40] band.
+    atm_mid = bs_price(S, S * 0.96, t, r, 0.22, "put")
+    gd = fill_greeks_from_mid(S, S * 0.96, dte, "put", atm_mid)
+    assert 0.12 <= abs(gd["delta"]) <= 0.45
+
+
+def test_fill_greeks_from_mid_refuses_uninvertible_input():
+    from core.options_math import fill_greeks_from_mid
+    assert fill_greeks_from_mid(690, 650, 0, "put", 5.0) is None      # zero DTE
+    assert fill_greeks_from_mid(690, 650, 36, "put", 0.0) is None     # no price
+    assert fill_greeks_from_mid(690, 650, 36, "put", None) is None
+    assert fill_greeks_from_mid(0, 650, 36, "put", 5.0) is None       # no spot
+    # A mid below intrinsic can't be inverted -> None, never a garbage vol.
+    assert fill_greeks_from_mid(690, 800, 36, "put", 1.0) is None

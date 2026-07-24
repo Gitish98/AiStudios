@@ -147,6 +147,32 @@ def iv_percentile(current_iv: float, history: Sequence[float]) -> float | None:
     return below / len(vals)
 
 
+RISK_FREE_RATE = 0.04   # coarse annualized r; delta is nearly insensitive to it
+
+
+def fill_greeks_from_mid(spot: float, strike: float, dte: int, option_type: str,
+                         mid: float, r: float = RISK_FREE_RATE) -> dict | None:
+    """Recover implied_vol + greeks from an option's MID price when the broker
+    fed us none — the delayed-data case. Returns {implied_vol, delta, gamma,
+    theta, vega} or None if the mid can't be inverted (outside the no-arb band,
+    zero DTE, or no usable price).
+
+    These are OUR greeks, not the market's, so callers must tag them as modeled.
+    Caveat: Black-Scholes assumes European exercise and no dividends, while ETF
+    options are American and pay dividends — but for choosing a 0.12-0.45 delta
+    strike the error is small (well under one delta point near the money), and a
+    modeled delta beats no delta, which silently drops the contract entirely."""
+    if spot <= 0 or strike <= 0 or dte <= 0 or mid is None or mid <= 0:
+        return None
+    t = dte / 365.0
+    iv = implied_vol(mid, spot, strike, t, r, option_type)
+    if iv is None or iv <= 0:
+        return None
+    g = bs_greeks(spot, strike, t, r, iv, option_type)
+    return {"implied_vol": iv, "delta": g["delta"], "gamma": g["gamma"],
+            "theta": g["theta"], "vega": g["vega"]}
+
+
 def realized_vol(closes: Sequence[float], periods_per_year: int = 252) -> float | None:
     """Annualized realized volatility from a close series (log returns)."""
     cs = [c for c in closes if c and c > 0]
