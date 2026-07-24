@@ -1,13 +1,46 @@
 #!/usr/bin/env bash
-# Cron wrapper for one paper cycle. Resolves the repo dir regardless of where
-# cron invokes it, logs are handled by the crontab redirect (see docs/10 §7).
-set -euo pipefail
+# Cron wrapper for one paper cycle. Hardened for unattended operation:
+#   - a HARD timeout so a hung IB market-data fetch can never wedge the box or
+#     hold the data line indefinitely (chain fetches now stream + settle, so a
+#     stall is plausible),
+#   - a dead-man's-switch heartbeat: pings a monitor on BOTH success and failure,
+#     carrying the exit code, so total silence (VM off, cron removed, cycle
+#     killed before it can report) is itself an alert.
+# Logs are handled by the crontab redirect (see docs/10 §7).
+set -uo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_DIR"
 mkdir -p logs
 
-PY="$(command -v python3 || command -v python)"
-echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] run-cycle starting"
-"$PY" cli.py run-cycle
-echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] run-cycle done"
+PY="$REPO_DIR/.venv/bin/python"
+CYCLE_TIMEOUT="${CYCLE_TIMEOUT:-900}"   # 15 min; a healthy cycle is far under this
+# Optional heartbeat URL (healthchecks.io etc.). Read from a gitignored file so
+# the URL — which is a shared secret — never enters the repo or the crontab.
+HC_URL="$(cat "$REPO_DIR/.healthcheck_url" 2>/dev/null || true)"
+
+ping() {   # ping <suffix> [body-file] — best-effort, never fails the script
+    [ -n "$HC_URL" ] || return 0
+    local url="$HC_URL"; [ -n "${1:-}" ] && url="$HC_URL/$1"
+    if [ -n "${2:-}" ]; then
+        curl -fsS -m 15 --retry 3 --data-binary @"$2" "$url" >/dev/null 2>&1 || true
+    else
+        curl -fsS -m 15 --retry 3 "$url" >/dev/null 2>&1 || true
+    fi
+}
+
+ping start
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] run-cycle starting (timeout ${CYCLE_TIMEOUT}s)"
+
+LOG="$(mktemp)"
+timeout --signal=TERM --kill-after=30 "$CYCLE_TIMEOUT" "$PY" cli.py run-cycle 2>&1 | tee "$LOG"
+RC="${PIPESTATUS[0]}"
+
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] run-cycle done (exit $RC)"
+if [ "$RC" -eq 124 ]; then
+    echo "  ✗ TIMED OUT after ${CYCLE_TIMEOUT}s — a fetch likely hung."
+fi
+# Report the exit code to the monitor. /<n> marks failure on healthchecks.io.
+ping "$RC" "$LOG"
+rm -f "$LOG"
+exit "$RC"

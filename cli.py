@@ -124,6 +124,27 @@ def cmd_status(args):
 
 
 def cmd_run_cycle(args, dry_run=False):
+    """Wrapper so an unattended cron run FAILS LOUDLY. The body used to swallow
+    everything and always return 0, so a monitor could never distinguish a healthy
+    cycle from a broker outage or a hung fetch. Now a real error exits non-zero
+    (the crontab's `; ping $?` reports it) while still journaling the failure."""
+    try:
+        _run_cycle_body(args, dry_run=dry_run)
+    except Exception as e:
+        import traceback
+        try:
+            store = Store()
+            store.append(datetime.now(timezone.utc).isoformat(), "cycle_fatal",
+                         {"error": str(e), "trace": traceback.format_exc()[:2000]})
+            store.close()
+        except Exception:
+            pass
+        print(f"\n  ✗ CYCLE FAILED: {e}")
+        traceback.print_exc()
+        sys.exit(1)
+
+
+def _run_cycle_body(args, dry_run=False):
     config = load_config()
 
     # Market-calendar guard (unless --force). Honors --asof for deterministic runs.
