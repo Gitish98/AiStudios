@@ -31,6 +31,12 @@ from .base import (
     Position, Quote,
 )
 
+# Expiry selection for chain fetches. We return SEVERAL expiries around
+# TARGET_DTE rather than just the nearest, because the strategies' own windows
+# (premium_harvest 30-45 DTE) sit INSIDE this band — handing them only the
+# soonest expiry made signalling structurally impossible most of the month.
+EXPIRY_DTE_MIN, EXPIRY_DTE_MAX, TARGET_DTE, MAX_EXPIRIES = 20, 60, 35, 3
+
 LIVE_PORTS = {4001, 7496}
 PAPER_PORTS = {4002, 7497}
 
@@ -388,19 +394,28 @@ class IBKRAdapter(BrokerAdapter):
         else:
             def dte(e):
                 return (datetime.strptime(e, "%Y%m%d").date() - today).days
-            exps = [e for e in exps if 20 <= dte(e) <= 55][:1] or exps[:1]
+            # Return SEVERAL expiries spanning the strategies' windows, ordered by
+            # closeness to TARGET_DTE. Taking only the nearest expiry in a 20-55
+            # band was a silent structural bug: as expiries roll, the nearest one
+            # is usually ~20-30 DTE, while premium_harvest requires 30-45 — so the
+            # chain handed to the strategy frequently could not contain a single
+            # qualifying contract, and the engine could never fire AT ANY IV RANK.
+            # The system looked healthy while being incapable of signalling.
+            in_window = [e for e in exps if EXPIRY_DTE_MIN <= dte(e) <= EXPIRY_DTE_MAX]
+            in_window.sort(key=lambda e: abs(dte(e) - TARGET_DTE))
+            exps = in_window[:MAX_EXPIRIES] or exps[:1]
         if not exps:
             return []
-        exp = exps[0]
 
         # Strikes within ~12% of spot to bound request size.
         strikes = sorted(s for s in smart.strikes
                          if spot * 0.88 <= s <= spot * 1.12) if spot else sorted(smart.strikes)
         contracts = []
-        for K in strikes:
-            for right in ("P", "C"):
-                contracts.append(ib.Option(underlying, exp, K, right, "SMART",
-                                           currency="USD", tradingClass=trading_class))
+        for exp in exps:
+            for K in strikes:
+                for right in ("P", "C"):
+                    contracts.append(ib.Option(underlying, exp, K, right, "SMART",
+                                               currency="USD", tradingClass=trading_class))
         # qualifyContracts populates conId only for combos that actually exist as
         # listed contracts; a non-existent strike/right is left WITHOUT a conId.
         # Passing such a contract to reqTickers raises "can't be hashed because no
@@ -412,14 +427,20 @@ class IBKRAdapter(BrokerAdapter):
         tickers = live.reqTickers(*contracts)
 
         out: list[OptionContract] = []
-        dte_val = (datetime.strptime(exp, "%Y%m%d").date() - today).days
         for tk in tickers:
             c = tk.contract
             g = tk.modelGreeks
+            # Each contract carries its OWN expiry now that the chain spans
+            # several; deriving it from a single shared `exp` would mislabel them.
+            raw_exp = getattr(c, "lastTradeDateOrContractMonth", "") or ""
+            if len(raw_exp) < 8:
+                continue
+            c_exp = datetime.strptime(raw_exp[:8], "%Y%m%d").date()
+            dte_val = (c_exp - today).days
             out.append(OptionContract(
-                symbol=c.localSymbol or f"{underlying}{exp}{c.right}{int(c.strike*1000):08d}",
+                symbol=c.localSymbol or f"{underlying}{raw_exp[:8]}{c.right}{int(c.strike*1000):08d}",
                 underlying=underlying.upper(),
-                expiration=datetime.strptime(exp, "%Y%m%d").strftime("%Y-%m-%d"),
+                expiration=c_exp.strftime("%Y-%m-%d"),
                 strike=float(c.strike), option_type="call" if c.right == "C" else "put",
                 bid=_to_float(tk.bid), ask=_to_float(tk.ask), last=_to_float(tk.last),
                 implied_vol=_to_float_opt(g.impliedVol) if g else None,
