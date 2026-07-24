@@ -18,8 +18,11 @@ Enforces (per docs/05-risk-and-safety.md):
   - daily loss limit -> trips the kill switch
   - PDT awareness for margin accounts under $25k
 
-Deferred to Phase 2 (need per-symbol metadata; NOT silently treated as enforced):
-  - max_sector_pct, correlation_cluster_threshold.
+  - CLUSTER heat: correlated names (SPY/QQQ/DIA/XLK are one cluster) share a
+    single defined-risk budget, so "6 positions" cannot become one leveraged bet.
+
+Deferred (needs per-symbol GICS metadata; NOT silently treated as enforced):
+  - max_sector_pct.
 """
 
 from __future__ import annotations
@@ -28,6 +31,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from .brokers.base import Account, OrderRequest, Position
+from .clusters import cluster_exposure, cluster_of
 
 
 @dataclass
@@ -38,7 +42,13 @@ class RiskLimits:
     max_concurrent_positions: int = 6
     max_daily_new_positions: int = 5
     max_single_underlying_pct: float = 0.08
-    max_sector_pct: float = 0.25
+    max_sector_pct: float = 0.25          # NOT enforced (needs GICS metadata)
+    # Max DEFINED RISK in any one correlation cluster, as a fraction of equity.
+    # Deliberately tighter than portfolio_heat_pct (0.06): heat bounds the whole
+    # book, this bounds how much of it may be THE SAME BET. With 7 ETFs where
+    # SPY/QQQ/DIA/XLK are one cluster, without this the heat cap alone would
+    # happily allow the entire budget in a single beta exposure.
+    max_cluster_risk_pct: float = 0.03
     max_gross_leverage: float = 1.0
     daily_loss_limit_pct: float = 0.03
     allow_naked_short_options: bool = False
@@ -171,11 +181,26 @@ class RiskGate:
                 f"(${L.portfolio_heat_pct*equity:.0f})."
             )
 
-        # NOTE — NOT YET ENFORCED IN PHASE 0 (need metadata wired in Phase 2):
-        #   max_sector_pct, correlation_cluster_threshold.
-        # These require a sector/correlation map per symbol. They are documented
-        # limits in config but deliberately NOT silently treated as enforced.
-        # See docs/07-roadmap.md (Phase 2).
+        # 7c. CLUSTER heat — correlated names share ONE risk budget.
+        # The single most important cap for this watchlist: SPY/QQQ/DIA/XLK are
+        # largely the same bet, so six "diversified" spreads across them are close
+        # to one leveraged position on US large-cap beta — the exact "silent
+        # drift" failure docs/05 §0 names as design target #2. Risk inside a
+        # cluster is SUMMED, never diversified away. Was configured and documented
+        # as enforced for months while never being evaluated.
+        cluster_risk = cluster_exposure(ctx.positions, order.underlying)
+        if (cluster_risk + order_risk) > L.max_cluster_risk_pct * equity + 1e-6:
+            d.reject(
+                f"Cluster heat: {cluster_of(order.underlying)} would hold "
+                f"${cluster_risk + order_risk:.0f} of defined risk "
+                f"(> {L.max_cluster_risk_pct*100:.1f}% of equity, "
+                f"${L.max_cluster_risk_pct*equity:.0f}). Correlated names share one budget."
+            )
+
+        # NOTE — STILL NOT ENFORCED (needs per-symbol GICS metadata):
+        #   max_sector_pct. A true sector cap differs from the cluster cap above
+        #   (a sector can span clusters and vice versa). Documented in config but
+        #   deliberately NOT silently treated as enforced. See docs/07 (Phase 2).
 
         # 8. Concurrency caps.
         if len(ctx.positions) >= L.max_concurrent_positions:
