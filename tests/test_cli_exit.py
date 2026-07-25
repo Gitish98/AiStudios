@@ -13,29 +13,39 @@ import cli
 from core.store import Store
 
 
-def test_run_cycle_exits_nonzero_and_journals_on_fatal(monkeypatch=None):
-    # Force the cycle body to blow up.
-    def boom(args, dry_run=False):
-        raise RuntimeError("broker exploded")
-    orig = cli._run_cycle_body
-    cli._run_cycle_body = boom
-    try:
-        raised = None
-        try:
-            cli.cmd_run_cycle(SimpleNamespace(asof=None, force=False))
-        except SystemExit as e:
-            raised = e
-        assert raised is not None and raised.code == 1, "must exit non-zero on failure"
-    finally:
-        cli._run_cycle_body = orig
+def test_run_cycle_exits_nonzero_and_journals_on_fatal():
+    """The fatal path must exit 1 AND journal the failure.
 
-    # The failure is recorded for later diagnosis.
-    s = Store()
-    row = s.conn.execute(
-        "SELECT payload FROM journal WHERE kind='cycle_fatal' ORDER BY id DESC LIMIT 1"
-    ).fetchone()
-    s.close()
-    assert row is not None and "broker exploded" in row["payload"]
+    The store is redirected to a temp DB: an earlier version of this test used the
+    default Store(), so running the suite ON THE VM wrote fake 'cycle_fatal' events
+    ('broker exploded') into the PRODUCTION journal. That is not merely untidy — it
+    put fabricated failures into the audit trail and produced a false alarm during
+    a real end-of-day review. Tests must never touch production state."""
+    with tempfile.TemporaryDirectory() as td:
+        db = Path(td) / "test.db"
+
+        def boom(args, dry_run=False):
+            raise RuntimeError("broker exploded")
+
+        orig_body, orig_store = cli._run_cycle_body, cli.Store
+        cli._run_cycle_body = boom
+        cli.Store = lambda *a, **k: Store(db)      # redirect the fatal-path journal
+        try:
+            raised = None
+            try:
+                cli.cmd_run_cycle(SimpleNamespace(asof=None, force=False))
+            except SystemExit as e:
+                raised = e
+            assert raised is not None and raised.code == 1, "must exit non-zero on failure"
+        finally:
+            cli._run_cycle_body, cli.Store = orig_body, orig_store
+
+        s = Store(db)
+        row = s.conn.execute(
+            "SELECT payload FROM journal WHERE kind='cycle_fatal' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        s.close()
+        assert row is not None and "broker exploded" in row["payload"]
 
 
 def test_run_cycle_success_exits_zero():
