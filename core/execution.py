@@ -24,7 +24,7 @@ from .fills import entry_slippage_ps, signed_credit_ps
 from .options_math import MIN_IV_OBSERVATIONS
 from .manage import _is_filled, manage_open_positions
 from .positions import order_to_position
-from .reconcile import reconcile
+from .reconcile import broker_legs, reconcile
 from .risk import Decision, RiskContext, RiskGate, RiskLimits, _notional
 from .sizing import SizeParams, size_contracts
 from .store import DEAD_ORDER_STATUSES, Store
@@ -442,6 +442,49 @@ def _atm_iv_from_chain(chain, spot: float):
     return min(cands, key=lambda c: abs(c.strike - spot)).implied_vol
 
 
+def _today_iso() -> str:
+    return datetime.now(timezone.utc).date().isoformat()
+
+
+def _position_is_held(pos_row: dict, held: dict) -> tuple[bool, bool]:
+    """(all_legs_held, any_leg_held) for this tracked position at the broker.
+
+    Compares against reconcile's signed leg map. ALL legs in the correct direction
+    means the entry filled. ANY leg means the broker holds real exposure we must
+    NOT delete — a partial fill (or a single leg that filled) is a genuine position
+    needing attention, and dropping the row would leave it untracked and unmanaged
+    with nothing in the system aware of it."""
+    import json as _json
+    from .reconcile import _leg_key
+    n = int(pos_row.get("contracts") or 0)
+    if n <= 0:
+        return False
+    u, exp = pos_row.get("underlying"), pos_row.get("expiration")
+    want: list[tuple] = []
+    if pos_row.get("structure") == "iron_condor":
+        raw = pos_row.get("legs_json")
+        if not raw:
+            return False
+        j = _json.loads(raw)
+        want = [(_leg_key(u, exp, j["sp"], "P"), -n), (_leg_key(u, exp, j["lp"], "P"), +n),
+                (_leg_key(u, exp, j["sc"], "C"), -n), (_leg_key(u, exp, j["lc"], "C"), +n)]
+    else:
+        fam = pos_row.get("family") or ("call" if "call" in (pos_row.get("structure") or "") else "put")
+        r = "C" if fam == "call" else "P"
+        want = [(_leg_key(u, exp, pos_row["short_strike"], r), -n),
+                (_leg_key(u, exp, pos_row["long_strike"], r), +n)]
+    all_held, any_held = True, False
+    for key, qty in want:
+        have = float(held.get(key, 0.0))
+        if abs(have) > 1e-9:
+            any_held = True
+        if qty < 0 and have > qty + 1e-9:      # need at least this short
+            all_held = False
+        if qty > 0 and have < qty - 1e-9:      # need at least this long
+            all_held = False
+    return all_held, any_held
+
+
 def _finalize_pending_entries(adapter: BrokerAdapter, store: Store) -> None:
     """Flip 'pending' entry positions to 'open' once the broker confirms the fill,
     or drop them if the order died. Mirrors the pending-close finalizer."""
@@ -452,9 +495,50 @@ def _finalize_pending_entries(adapter: BrokerAdapter, store: Store) -> None:
         bro = {o.client_order_id: o for o in adapter.list_orders()}
     except Exception:
         return  # can't confirm -> leave pending (still counted for risk)
+    # Broker POSITIONS are the durable truth: unlike the session-scoped order
+    # feed they are repopulated on every connect. Used below to resolve entries
+    # the order feed can no longer see.
+    try:
+        held = broker_legs(adapter)
+    except Exception:
+        held = None
+
     for p in pend:
         o = bro.get(p["client_order_id"])
         if o is None:
+            # The order is GONE from the broker's view. With a one-process-per-run
+            # cron this is the COMMON case, not an exception: an order that filled
+            # (or was killed as a DAY order) between cycles simply is not in the
+            # feed. Treating that as "still working" strands the row as immortally
+            # 'pending' — never managed, never exited, yet still consuming the
+            # concurrency/heat/cluster budget, with a real position possibly live
+            # at the broker. So resolve it against positions instead.
+            if held is None:
+                continue                      # can't confirm -> leave pending
+            all_held, any_held = _position_is_held(p, held)
+            if all_held:
+                store.set_position_status(p["id"], "open")
+                store.append(_now_iso(), "entry_filled", {
+                    "position_id": p["id"], "underlying": p["underlying"],
+                    "via": "broker_positions", "entry_slip_ps": None,
+                    "note": "order feed no longer had it; legs confirmed held"})
+            elif any_held:
+                # PARTIAL: the broker holds some legs but not the full structure.
+                # Never delete — that would leave real, unhedged exposure with
+                # nothing tracking it. Keep it pending and say so loudly; this
+                # needs a human, because a half-filled vertical is not defined-risk.
+                store.append(_now_iso(), "partial_fill_detected", {
+                    "position_id": p["id"], "underlying": p["underlying"],
+                    "severity": "high",
+                    "note": "broker holds SOME legs of this spread but not all — "
+                            "the structure may be unhedged. Investigate before trading."})
+            elif str(p.get("opened_asof") or "") < _today_iso():
+                # Not held, and it is no longer today: the DAY order died unfilled.
+                store.set_order_status(p["client_order_id"], "canceled")
+                store.delete_position(p["id"])
+                store.append(_now_iso(), "entry_dropped", {
+                    "position_id": p["id"], "underlying": p["underlying"],
+                    "via": "stale_pending", "note": "day order expired unfilled"})
             continue
         st = (o.status or "").lower()
         if _is_filled(o, 1):

@@ -599,8 +599,21 @@ class IBKRAdapter(BrokerAdapter):
         return bag
 
     def list_orders(self) -> list[OrderResult]:
+        """Open AND completed orders.
+
+        `ib.trades()` is SESSION-scoped: it holds what this connection has seen.
+        Our cron is one process per run, so an order that filled between cycles is
+        simply absent — which the fill finalizers cannot distinguish from "still
+        working", stranding the position as immortally 'pending'. Explicitly
+        requesting completed orders repopulates that history on a fresh connect.
+        Best-effort: if the request fails we still return the live trades."""
         ib = self._require()
         out = []
+        try:
+            ib.reqCompletedOrders(apiOnly=False)
+            ib.sleep(1.0)          # let the completed-order feed arrive
+        except Exception:
+            pass
         for t in ib.trades():
             st = t.orderStatus
             out.append(OrderResult(

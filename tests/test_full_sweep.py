@@ -381,3 +381,137 @@ def test_debit_vertical_notional_not_double_counted():
         limit_price=1.00, strategy="call_debit_spread", est_credit=-100.0,
         max_loss=100.0, underlying="SPY")
     assert _notional(o) == 100.0      # net debit ×100, NOT 2×100×1.00 = 200
+
+
+def test_pending_close_handles_a_live_unfilled_order_without_crashing():
+    """REGRESSION (critical): _finalize_pending_closes referenced `st` after the
+    assignment was removed, so the FIRST time a close order was seen alive-but-
+    unfilled — the NORMAL case for a limit close — it raised NameError, which
+    escaped manage -> run_cycle -> cmd_run_cycle and aborted the whole cycle.
+    The bot would be bricked holding a live short-premium position it could never
+    manage or exit, with a nonzero exit code as the only symptom."""
+    import json, tempfile
+    from pathlib import Path
+    from core.manage import _finalize_pending_closes
+    from core.store import Store
+
+    class _O:
+        def __init__(self, status):
+            self.client_order_id = "CLOSE-x"
+            self.status = status
+            self.filled_qty = 0.0
+            self.filled_avg_price = 0.0
+
+    class _A:
+        def __init__(self, status):
+            self._s = status
+        def list_orders(self):
+            return [_O(self._s)]
+
+    for status in ("Submitted", "PreSubmitted", "Cancelled", "Inactive"):
+        with tempfile.TemporaryDirectory() as td:
+            store = Store(Path(td) / "p.db")
+            store.set_kv("pending_closes", json.dumps({
+                "1": {"coid": "CLOSE-x", "reason": "profit_target",
+                      "exit_value_ps": 0.10, "realized_pnl": 50.0}}))
+            # Must not raise for ANY status — the bug hit every non-filled branch.
+            pend = _finalize_pending_closes(_A(status), store, "2026-07-29")
+            if status in ("Cancelled", "Inactive"):
+                assert "1" not in pend, f"{status} should clear the pending entry"
+            else:
+                assert "1" in pend, f"{status} should stay pending"
+            store.close()
+
+
+def test_missing_quote_yields_no_mark_not_a_fabricated_zero():
+    """REGRESSION (critical): IB sends NaN for an absent quote and the adapter
+    collapses NaN to 0.0, so a quote-less contract looked like bid=ask=last=0 and
+    OptionContract.mid returned 0.0. For a SHORT credit spread a 0.0 mark reads as
+    MAXIMUM PROFIT and fires the profit-target exit — closing a live position at a
+    fabricated price on missing data. Absence must be None."""
+    from core.brokers.base import OptionContract
+    from core.manage import _usable_mid, mark_spread_value_ps
+
+    def _c(strike, bid, ask, last=0.0):
+        return OptionContract(symbol="X", underlying="QQQ", expiration="2026-08-28",
+                              strike=strike, option_type="put", bid=bid, ask=ask,
+                              last=last, dte=30)
+
+    assert _usable_mid(_c(645, 0.0, 0.0)) is None      # no data at all
+    assert _usable_mid(_c(645, 1.0, 1.2)) == 1.1       # real quote
+    assert _usable_mid(_c(645, 0.0, 0.0, 0.95)) == 0.95  # last-only fallback
+
+    class _A:
+        name = "fake"
+        def get_option_chain(self, u, exp=None):
+            return [_c(645, 0.0, 0.0), _c(640, 0.0, 0.0)]   # both quote-less
+
+    pos = {"underlying": "QQQ", "expiration": "2026-08-28", "structure": "put_credit_spread",
+           "family": "put", "short_strike": 645.0, "long_strike": 640.0, "contracts": 1}
+    # Must be None (hold), NOT 0.0 (which evaluate_exit would read as max profit).
+    assert mark_spread_value_ps(_A(), pos) is None
+
+
+def test_stranded_pending_entry_is_resolved_against_broker_positions():
+    """REGRESSION (critical): with one cron process per run, an order that filled
+    between cycles is simply ABSENT from the session-scoped order feed. Treating
+    that as 'still working' stranded the row as immortally pending — never managed,
+    never exited, still consuming risk budget, with a real position live at the
+    broker. Resolve against POSITIONS, which are repopulated on every connect."""
+    import tempfile
+    from pathlib import Path
+    from core.brokers.base import Position
+    from core.execution import _finalize_pending_entries
+    from core.store import Store
+
+    def _row(store, asof):
+        return store.open_position({
+            "client_order_id": "AIS-x", "strategy": "premium_harvest",
+            "structure": "put_credit_spread", "family": "put", "is_credit": 1,
+            "underlying": "QQQ", "status": "pending", "opened_asof": asof,
+            "opened_ts": asof + "T14:00:00+00:00", "expiration": "2026-08-28",
+            "contracts": 1, "short_strike": 645.0, "long_strike": 640.0, "width": 5.0,
+            "legs_json": "[]", "entry_credit_ps": 0.92, "max_loss": 408.0})
+
+    def _leg(strike, qty):
+        return Position(symbol="QQQ", qty=qty, avg_price=0.0, market_value=0.0,
+                        asset_class="option", underlying="QQQ",
+                        option_expiration="2026-08-28", option_strike=strike,
+                        option_right="P")
+
+    class _A:
+        name = "ibkr_paper"
+        def __init__(self, held): self._held = held
+        def list_orders(self): return []          # order feed has rolled over
+        def get_positions(self): return self._held
+
+    # (a) Broker HOLDS both legs -> the entry filled: promote to open.
+    with tempfile.TemporaryDirectory() as td:
+        st = Store(Path(td) / "p.db")
+        pid = _row(st, "2026-07-01")
+        _finalize_pending_entries(_A([_leg(645.0, -1), _leg(640.0, +1)]), st)
+        assert [p["id"] for p in st.get_open_positions()] == [pid]
+        st.close()
+
+    # (b) Broker holds NOTHING and the row is from a previous day -> the DAY order
+    #     died unfilled: drop it so it stops consuming risk budget forever.
+    with tempfile.TemporaryDirectory() as td:
+        st = Store(Path(td) / "p.db")
+        _row(st, "2026-07-01")
+        _finalize_pending_entries(_A([]), st)
+        assert st.get_active_positions() == []
+        st.close()
+
+    # (c) Only ONE leg held -> a PARTIAL fill. Must NOT be promoted (it is not a
+    #     complete defined-risk structure) and must NOT be deleted (the broker
+    #     holds real, possibly unhedged exposure). Stay pending + flag loudly.
+    with tempfile.TemporaryDirectory() as td:
+        st = Store(Path(td) / "p.db")
+        _row(st, "2026-07-01")
+        _finalize_pending_entries(_A([_leg(645.0, -1)]), st)
+        assert len(st.get_pending_positions()) == 1, "partial fill must not be deleted"
+        assert st.get_open_positions() == [], "partial fill must not be promoted"
+        flagged = st.conn.execute(
+            "SELECT COUNT(*) FROM journal WHERE kind='partial_fill_detected'").fetchone()[0]
+        assert flagged == 1, "a partial fill must be flagged for a human"
+        st.close()

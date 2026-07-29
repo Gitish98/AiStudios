@@ -23,15 +23,39 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _usable_mid(c) -> Optional[float]:
+    """A contract's mid, or None when the broker gave us NO usable price.
+
+    Critical distinction: IB fields arrive as NaN when absent and the adapter
+    collapses those to 0.0, so a quote-less contract presents as bid=ask=last=0
+    and `OptionContract.mid` returns 0.0 — indistinguishable from a genuine
+    "worthless" price. For a short credit spread a 0.0 mark reads as MAXIMUM
+    PROFIT and fires the profit-target exit, closing a live position at a
+    fabricated price on missing data. Absence must be None, never a number."""
+    bid, ask, last = (c.bid or 0.0), (c.ask or 0.0), (c.last or 0.0)
+    if bid > 0 and ask > 0:
+        return round((bid + ask) / 2, 4)
+    if last > 0:
+        return last
+    return None
+
+
 def _marker(adapter: BrokerAdapter, underlying: str, expiration: str):
-    """Return a mark(strike, right) -> per-share mid (or None)."""
+    """Return a mark(strike, right) -> per-share mid (or None).
+
+    The chain is fetched ONCE per position and cached across the leg lookups:
+    the adapter now streams with a settle delay per chunk, so calling it per leg
+    would multiply an already ~6-minute cycle."""
+    cache: dict = {}
+
     def _mark(strike: float, right: str) -> Optional[float]:
         if hasattr(adapter, "mark_option"):
             return adapter.mark_option(underlying, expiration, strike, right)
-        chain = adapter.get_option_chain(underlying, expiration)
-        c = next((c for c in chain if c.option_type == right
+        if "chain" not in cache:
+            cache["chain"] = adapter.get_option_chain(underlying, expiration)
+        c = next((c for c in cache["chain"] if c.option_type == right
                   and abs(c.strike - strike) < 1e-6), None)
-        return c.mid if c else None
+        return _usable_mid(c) if c else None
     return _mark
 
 
@@ -158,6 +182,7 @@ def _finalize_pending_closes(adapter: BrokerAdapter, store: Store, asof: str) ->
         o = bro.get(info["coid"])
         if o is None:
             continue
+        st = (o.status or "").lower()   # NEEDED by the dead-order branch below
         if _is_filled(o, 1):
             store.close_position(int(pid), asof, _now_iso(), info["reason"],
                                  info["exit_value_ps"], info["realized_pnl"])
