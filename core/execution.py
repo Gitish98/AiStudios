@@ -206,6 +206,11 @@ def run_cycle(
             advisor = None
     research_cache: dict[str, Any] = {}
 
+    # Per-symbol decision trace, persisted for the read-only dashboard so the
+    # operator can answer "why didn't it trade today?" without asking anyone. Five
+    # separate bugs have produced an identical healthy-looking "0 signals", so the
+    # REASON is as important as the count.
+    decisions: list[dict[str, Any]] = []
     seen_ids: set = set()   # idempotency within this cycle (covers dry-run too)
     for symbol in config.watchlist:
         try:
@@ -238,6 +243,14 @@ def run_cycle(
                 store.append(_now_iso(), "iv_rank_source", {
                     "symbol": symbol, "source": proxy["source"],
                     "rank": round(proxy["rank"], 4), "observations": proxy["observations"]})
+            decisions.append({
+                "symbol": symbol,
+                "spot": round(quote.mid, 2) if quote.mid else None,
+                "iv_rank": round(proxy["rank"], 4) if proxy else None,
+                "iv_source": (proxy["source"] if proxy else "bootstrap"),
+                "iv_obs": (proxy["observations"] if proxy else len(iv_hist or [])),
+                "chain": len(chain), "signals": 0, "note": "",
+            })
 
             sctx = StrategyContext(
                 underlying=symbol, spot=quote.mid, option_chain=chain,
@@ -257,6 +270,9 @@ def run_cycle(
             for signal in strat.generate(sctx):
                 summary["signals"].append({"symbol": symbol, "strategy": signal.strategy,
                                            "rationale": signal.rationale})
+                for _d in decisions:
+                    if _d["symbol"] == symbol:
+                        _d["signals"] += 1
                 base_order = signal_to_order(signal, asof)  # 1 contract (unit)
 
                 # Dedup against both the persisted store AND orders already
@@ -378,6 +394,19 @@ def run_cycle(
         "reconcile_ok": rec["ok"]})
 
     # Read-only last-cycle marker for the dashboard. Best-effort.
+    try:
+        for _d in decisions:
+            if _d["signals"]:
+                _d["note"] = "signal generated"
+            elif _d["iv_rank"] is None:
+                _d["note"] = f"no trusted IV rank yet ({_d['iv_obs']} obs)"
+            elif not _d["chain"]:
+                _d["note"] = "no option chain returned"
+            else:
+                _d["note"] = "IV/chain ok — no candidate cleared the filters"
+        store.set_kv("cycle_decisions", json.dumps(decisions))
+    except Exception:
+        pass
     try:
         store.set_kv("last_cycle", json.dumps({
             "asof": asof, "ts": _now_iso(), "dry_run": bool(dry_run),

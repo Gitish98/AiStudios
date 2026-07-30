@@ -100,8 +100,39 @@ def _open_view(open_positions: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "dte": _dte(p.get("opened_ts") or p.get("opened_asof"), p.get("expiration")),
             "credit_ps": round(credit_ps, 2),
             "max_loss": round(_num(p.get("max_loss")), 2),
+            "mark_ps": (round(_num(p.get("last_mark_ps")), 4)
+                        if p.get("last_mark_ps") is not None else None),
+            "unrealized": (round(_num(p.get("unrealized_pnl")), 2)
+                           if p.get("unrealized_pnl") is not None else None),
+            "mark_ts": (str(p.get("last_mark_ts") or "")[:16].replace("T", " ")),
+            "entry_fill_ps": (round(_num(p.get("entry_fill_ps")), 4)
+                              if p.get("entry_fill_ps") is not None else None),
+            "entry_slip_ps": (round(_num(p.get("entry_slip_ps")), 4)
+                              if p.get("entry_slip_ps") is not None else None),
+            # Exit proximity: how far to profit target / stop / the DTE close-out.
+            # Credit spreads take profit as value DECAYS toward 0; debit spreads as
+            # value GROWS. Reported as a 0-1 fraction so the UI can draw progress.
+            "target_pct": _target_progress(p),
         })
     return out
+
+
+def _target_progress(p: dict[str, Any]) -> Optional[float]:
+    """Fraction of the way to this structure's profit target, 0..1, or None.
+
+    Credit: entry credit decays toward 0 -> progress = (entry - mark) / (entry*0.5)
+    Debit:  entry debit grows          -> progress = (mark - entry) / (entry*1.0)
+    Uses the same default targets as core.positions.ManageParams."""
+    mark = p.get("last_mark_ps")
+    entry = _num(p.get("entry_credit_ps"))
+    if mark is None or entry <= 0:
+        return None
+    mark = _num(mark)
+    if bool(p.get("is_credit")):
+        goal = entry * 0.50                      # profit_target_pct
+        return round(max(0.0, min(1.0, (entry - mark) / goal)), 3) if goal > 0 else None
+    goal = entry * 1.00                          # debit_profit_gain
+    return round(max(0.0, min(1.0, (mark - entry) / goal)), 3) if goal > 0 else None
 
 
 def _iv_progress(store: Store, target: int = MIN_IV_OBSERVATIONS) -> dict[str, Any]:
@@ -151,6 +182,28 @@ def _graduation(closed: list[dict[str, Any]], min_days: int = 60,
     }
 
 
+def _decisions(store: Store) -> list[dict[str, Any]]:
+    """Per-symbol reason the last cycle did or did not trade. Five separate bugs
+    have produced an identical healthy-looking "0 signals", so the dashboard shows
+    the REASON, not just the count."""
+    try:
+        raw = store.get_kv("cycle_decisions")
+        return json.loads(raw) if raw else []
+    except Exception:
+        return []
+
+
+def _slippage(store: Store) -> dict[str, Any]:
+    """Realized execution quality across every position that has a captured fill.
+    This is the number that decides whether a few points of edge survive contact
+    with the market, so it belongs on the front page, not in a log."""
+    from core.fills import summarize_slippage
+    rows = [dict(r) for r in store.conn.execute(
+        "SELECT entry_slip_ps, exit_slip_ps FROM positions "
+        "WHERE entry_slip_ps IS NOT NULL OR exit_slip_ps IS NOT NULL").fetchall()]
+    return summarize_slippage(rows)
+
+
 def _gather(store: Store) -> dict[str, Any]:
     closed = store.get_closed_positions()
     open_positions = store.get_open_positions()
@@ -181,6 +234,8 @@ def _gather(store: Store) -> dict[str, Any]:
             "buying_power": _num(buying_power) if buying_power is not None else None,
         },
         "last_cycle": last_cycle,
+        "decisions": _decisions(store),
+        "slippage": _slippage(store),
         "iv": _iv_progress(store),
         "graduation": _graduation(closed),
         "watchlist": watchlist,
@@ -191,15 +246,21 @@ def _gather(store: Store) -> dict[str, Any]:
     }
 
 
-def build_pro(store_path: Optional[Path] = None) -> Path:
+def build_pro(store_path: Optional[Path] = None,
+              out_dir: Optional[Path] = None) -> Path:
+    """Render the dashboard. `out_dir` exists so TESTS never overwrite the served
+    file: build_pro used to write to the production path regardless of which store
+    it read, so running the suite on the VM replaced the live dashboard with test
+    fixtures until the next cycle regenerated it."""
     store = Store(Path(store_path) if store_path else None)
     try:
         data = _gather(store)
     finally:
         store.close()
 
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    out = OUT_DIR / "dashboard_pro.html"
+    out_root = Path(out_dir) if out_dir else OUT_DIR
+    out_root.mkdir(parents=True, exist_ok=True)
+    out = out_root / "dashboard_pro.html"
     out.write_text(_render(data), encoding="utf-8")
     return out
 
@@ -303,6 +364,21 @@ border-radius:12px;padding:12px 14px;margin-bottom:14px;font-size:13px;line-heig
 .barfill{{height:100%;background:#9fb9ff;border-radius:99px}}
 .gate{{display:flex;justify-content:space-between;font-size:13px;padding:4px 0;color:#b8b8d8}}
 .gate b{{color:#e8e8f4;font-weight:600}}
+.pos{{background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.09);
+border-radius:12px;padding:13px 15px;margin-bottom:10px}}
+.pos .hd{{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:8px}}
+.pos .sym{{font-size:15px;font-weight:700;letter-spacing:.02em}}
+.pnl{{font-size:19px;font-weight:700}}
+.grid3{{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:10px 0 6px}}
+.grid3 .k{{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#8888aa}}
+.grid3 .v{{font-size:13px;font-weight:600;margin-top:2px}}
+.prog{{height:6px;background:rgba(255,255,255,.08);border-radius:99px;overflow:hidden;margin:3px 0 2px}}
+.progf{{height:100%;border-radius:99px}}
+.tbl{{width:100%;border-collapse:collapse;font-size:12.5px}}
+.tbl th{{text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.08em;
+color:#8888aa;font-weight:600;padding:5px 6px;border-bottom:1px solid rgba(255,255,255,.09)}}
+.tbl td{{padding:6px;border-bottom:1px solid rgba(255,255,255,.05);color:#c8c8e0}}
+.dot{{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px}}
 </style></head><body>
 <div id="app">
 <div class="sec-title">Equity curve</div>
@@ -322,7 +398,17 @@ h += '<div class="banner '+(D.mode==='PAPER'?'paper':'live')+'">'+esc(D.mode)+' 
 if (D.kill_switch) h += '<div class="kill">\\u26a0\\ufe0e KILL SWITCH ENGAGED — orders blocked until cleared</div>';
 else h += '<div class="killoff">Kill switch: clear — trading enabled</div>';
 var iv = D.iv||{{}};
-if ((iv.days||0) < (iv.target||60)) h += '<div class="info">Bootstrapping IV rank — day '+(iv.days||0)+' of ~'+(iv.target||60)+'. premium_harvest stands aside until history accrues, so no signals yet. Expected, not a fault.</div>';
+// Only the symbols WITHOUT an external benchmark rank are still bootstrapping.
+// SPY/QQQ/IWM/DIA use real 252-day Cboe history, so claiming the whole system is
+// waiting (and that no signals are possible) would be flatly untrue — it has
+// already traded.
+var boot = (D.decisions||[]).filter(function(d){{ return d.iv_rank==null; }})
+                            .map(function(d){{ return d.symbol; }});
+if (boot.length && (iv.days||0) < (iv.target||60)) {{
+  h += '<div class="info">'+esc(boot.join(', '))+' still bootstrapping IV rank — day '+
+       (iv.days||0)+' of '+(iv.target||60)+'. Those symbols stand aside; the rest use a '+
+       'real 252-day benchmark rank and can trade today.</div>';
+}}
 h += '<h1>AiStudios</h1><div class="sub">'+esc(String(D.broker||'sim'))+' · generated '+esc((D.generated||'').slice(0,19).replace('T',' '))+' UTC</div>';
 var lc = D.last_cycle;
 if (lc) h += '<div class="sub" style="margin-top:-12px">last cycle '+esc(String(lc.ts||'').slice(0,16).replace('T',' '))+' · '+(lc.signals||0)+' signals · '+(lc.placed||0)+' placed · '+(lc.rejected||0)+' rejected · reconcile '+(lc.reconcile_ok?'in sync':'DRIFT')+'</div>';
@@ -366,14 +452,68 @@ h += '<div class="sec-title">Open positions</div>';
 var ops = D.open_positions||[];
 if (!ops.length) h += '<div class="empty">No open positions.</div>';
 ops.forEach(function(p){{
-  var cls = p.is_credit?'ok':'deb';
   var lbl = p.is_credit?'credit':'debit';
-  var strikes = (p.short_strike!=null?p.short_strike:'—')+' / '+(p.long_strike!=null?p.long_strike:'—');
-  h += '<div class="row"><div class="top"><b>'+esc(p.underlying||'—')+' · '+esc(p.structure||'')+'</b>'+
-       '<span class="tag '+cls+'">'+lbl+'</span></div>'+
-       '<div class="muted">strikes '+esc(strikes)+' · '+esc(p.contracts)+'x · DTE '+esc(p.dte==null?'—':p.dte)+' · exp '+esc(p.expiration||'—')+'</div>'+
-       '<div class="muted">'+lbl+' '+esc(p.credit_ps)+' /sh · max loss '+money(p.max_loss)+'</div></div>';
+  var strikes = (p.short_strike!=null?p.short_strike:'—')+'/'+(p.long_strike!=null?p.long_strike:'—');
+  var u = p.unrealized;
+  var pcls = (u==null)?'muted':(u>=0?'pos':'neg');
+  var pval = (u==null)?'—':((u>=0?'+':'-')+'$'+Math.abs(u).toLocaleString(undefined,{{maximumFractionDigits:0}}));
+  h += '<div class="pos">';
+  h += '<div class="hd"><span class="sym">'+esc(p.underlying||'—')+' '+esc(strikes)+
+       ' <span class="tag '+(p.is_credit?'ok':'deb')+'">'+lbl+'</span></span>'+
+       '<span class="pnl '+pcls+'">'+pval+'</span></div>';
+  h += '<div class="grid3">'+
+       '<div><div class="k">Entry</div><div class="v">'+esc(p.credit_ps)+' /sh'+
+         (p.entry_fill_ps!=null?' <span class="muted">(fill '+esc(p.entry_fill_ps)+')</span>':'')+'</div></div>'+
+       '<div><div class="k">Mark</div><div class="v">'+(p.mark_ps==null?'<span class="muted">—</span>':esc(p.mark_ps)+' /sh')+'</div></div>'+
+       '<div><div class="k">Max loss</div><div class="v">'+money(p.max_loss)+'</div></div>'+
+       '</div>';
+  var tp = p.target_pct;
+  if (tp!=null){{
+    h += '<div class="k" style="font-size:10px;color:#8888aa">Progress to profit target</div>'+
+         '<div class="prog"><div class="progf" style="width:'+Math.round(tp*100)+'%;background:'+(tp>=1?'#60cc88':'#9fb9ff')+'"></div></div>'+
+         '<div class="muted" style="font-size:11px">'+Math.round(tp*100)+'% there</div>';
+  }}
+  var dteTxt = (p.dte==null?'—':p.dte+'d');
+  var dteCls = (p.dte!=null && p.dte<=21)?'neg':'muted';
+  h += '<div class="muted" style="font-size:11.5px;margin-top:7px">'+
+       esc(p.contracts)+' contract'+(p.contracts==1?'':'s')+' · exp '+esc(p.expiration||'—')+
+       ' · <span class="'+dteCls+'">DTE '+dteTxt+'</span>'+
+       (p.entry_slip_ps!=null?' · slip '+(p.entry_slip_ps>=0?'+':'')+esc(p.entry_slip_ps)+'/sh':'')+
+       (p.mark_ts?' · marked '+esc(p.mark_ts)+'Z':'')+'</div>';
+  h += '</div>';
 }});
+
+// ── Execution quality: the number that decides whether edge survives costs ──
+var sl = D.slippage||{{}};
+if (sl.legs_measured){{
+  h += '<div class="sec-title">Execution quality</div><div class="card">';
+  h += '<div class="gate"><span>Mean entry slippage</span><b>'+
+       (sl.mean_entry_slip_ps==null?'—':(sl.mean_entry_slip_ps>=0?'+':'')+sl.mean_entry_slip_ps+' /sh')+'</b></div>';
+  if (sl.mean_exit_slip_ps!=null)
+    h += '<div class="gate"><span>Mean exit slippage</span><b>'+(sl.mean_exit_slip_ps>=0?'+':'')+sl.mean_exit_slip_ps+' /sh</b></div>';
+  h += '<div class="gate"><span>Worst</span><b>'+(sl.worst_slip_ps==null?'—':sl.worst_slip_ps+' /sh')+'</b></div>';
+  h += '<div class="gate"><span>Coverage</span><b>'+Math.round((sl.coverage||0)*100)+'% of positions</b></div>';
+  h += '<div class="muted" style="font-size:11px;margin-top:6px">Positive = worse than intended. '+
+       'On a few-cents credit this is the difference between edge and none.</div></div>';
+}}
+
+// ── Why it did / did not trade — the question worth answering daily ──
+var dec = D.decisions||[];
+if (dec.length){{
+  h += '<div class="sec-title">Last cycle — per symbol</div><div class="card" style="padding:8px 10px">';
+  h += '<table class="tbl"><tr><th>Sym</th><th>IV rank</th><th>Source</th><th>Chain</th><th>Outcome</th></tr>';
+  dec.forEach(function(d){{
+    var r = d.iv_rank;
+    var col = (r==null)?'#7a7a98':(r>=0.40?'#60cc88':'#8888aa');
+    var rtxt = (r==null)?'—':Math.round(r*100)+'%';
+    h += '<tr><td><b>'+esc(d.symbol)+'</b></td>'+
+         '<td><span class="dot" style="background:'+col+'"></span>'+rtxt+'</td>'+
+         '<td class="muted">'+esc((d.iv_source||'').replace('cboe:',''))+'</td>'+
+         '<td class="muted">'+esc(d.chain||0)+'</td>'+
+         '<td class="muted">'+esc(d.note||'')+'</td></tr>';
+  }});
+  h += '</table></div>';
+}}
 
 var wl = D.watchlist||[];
 if (wl.length){{ h += '<div class="sec-title">Watchlist</div><div class="reasons">'; wl.forEach(function(s){{ h += '<span class="chip">'+esc(s)+'</span>'; }}); h += '</div>'; }}

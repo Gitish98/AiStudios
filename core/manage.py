@@ -246,6 +246,9 @@ def manage_open_positions(adapter: BrokerAdapter, store: Store, config,
                                  asof, params)
 
         if decision.action == "hold":
+            # Persist the valuation for the read-only dashboard.
+            store.record_mark(pos["id"], value_ps, round(decision.realized_pnl, 2),
+                              _now_iso())
             summary["unrealized_open"] += decision.realized_pnl  # here = unrealized mark
             summary["held"].append({
                 "underlying": pos["underlying"],

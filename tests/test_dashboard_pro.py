@@ -62,7 +62,7 @@ def test_build_pro_self_contained_with_curve_and_winrate():
         db = Path(td) / "portfolio.db"
         _seed(db)
 
-        out = dashboard_pro.build_pro(store_path=db)
+        out = dashboard_pro.build_pro(store_path=db, out_dir=Path(td))
         assert out.exists(), "dashboard html was not written"
         assert out.name == "dashboard_pro.html"
 
@@ -83,7 +83,47 @@ def test_build_pro_self_contained_with_curve_and_winrate():
         # Honest empty-state sections are present (rendered from inlined JS).
         assert "IV-rank bootstrap" in html, "missing IV bootstrap section"
         assert "Graduation gate" in html, "missing graduation gate section"
-        assert "Bootstrapping IV rank" in html, "missing bootstrapping banner"
+        # The bootstrap banner is now CONDITIONAL: it names only the symbols that
+        # actually lack a benchmark rank. It must NOT claim the whole system is
+        # waiting — SPY/QQQ/IWM/DIA use real 252-day Cboe history and can trade.
+        assert "still bootstrapping IV rank" in html or "IV-rank bootstrap" in html
+
+
+def test_bootstrap_banner_names_only_the_waiting_symbols():
+    """REGRESSION: the banner used to say the whole system was bootstrapping and
+    that "no signals yet" were possible — which became flatly untrue once
+    SPY/QQQ/IWM/DIA got real 252-day Cboe ranks and the system placed its first
+    trade. A dashboard that misdescribes the system is worse than no dashboard."""
+    import json, tempfile
+    from pathlib import Path
+    import dashboard_pro as dp
+    from core.store import Store
+
+    with tempfile.TemporaryDirectory() as td:
+        db = Path(td) / "p.db"
+        store = Store(db)
+        store.record_iv_snapshot("XLF", "2026-07-29", 0.22)
+        store.set_kv("cycle_decisions", json.dumps([
+            {"symbol": "SPY", "iv_rank": 0.27, "iv_source": "cboe:VIX",
+             "iv_obs": 252, "chain": 574, "signals": 1, "note": "signal generated"},
+            {"symbol": "XLF", "iv_rank": None, "iv_source": "bootstrap",
+             "iv_obs": 20, "chain": 320, "signals": 0, "note": "no trusted IV rank yet"}]))
+        store.close()
+        html = dp.build_pro(store_path=db, out_dir=Path(td)).read_text(encoding="utf-8")
+
+    # The banner text is assembled client-side, so assert on the two things that
+    # ARE statically checkable: the payload the JS filters, and the template.
+    import json as _j
+    # raw_decode reads the first complete JSON object and ignores the JS after it.
+    payload, _ = _j.JSONDecoder().raw_decode(html.split("var D = ", 1)[1])
+    ranks = {d["symbol"]: d["iv_rank"] for d in payload["decisions"]}
+    assert ranks["XLF"] is None, "XLF must be flagged as having no trusted rank"
+    assert ranks["SPY"] == 0.27, "SPY must carry its real benchmark rank"
+    # The banner filters on exactly that null-rank condition...
+    assert "still bootstrapping IV rank" in html
+    assert "d.iv_rank==null" in html, "banner must filter to unranked symbols only"
+    # ...and the old blanket claim is gone for good.
+    assert "no signals yet" not in html, "must not claim signals are impossible"
 
 
 def test_iv_and_graduation_helpers():

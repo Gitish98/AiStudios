@@ -103,9 +103,12 @@ class Store:
             )""")
         # Migrate existing DBs (the VM has months of rows) — add any missing column.
         have = {r["name"] for r in self.conn.execute("PRAGMA table_info(positions)")}
-        for col in ("entry_fill_ps", "exit_fill_ps", "entry_slip_ps", "exit_slip_ps"):
+        for col in ("entry_fill_ps", "exit_fill_ps", "entry_slip_ps", "exit_slip_ps",
+                    "last_mark_ps", "unrealized_pnl"):
             if col not in have:
                 c.execute(f"ALTER TABLE positions ADD COLUMN {col} REAL")
+        if "last_mark_ts" not in have:
+            c.execute("ALTER TABLE positions ADD COLUMN last_mark_ts TEXT")
         self.conn.commit()
 
     # ── journal ──────────────────────────────────────────────────────────────
@@ -261,6 +264,15 @@ class Store:
         self.conn.execute(
             "UPDATE positions SET exit_fill_ps = ?, exit_slip_ps = ? WHERE id = ?",
             (fill_ps, slip_ps, pos_id))
+        self.conn.commit()
+
+    def record_mark(self, pos_id: int, mark_ps: Optional[float],
+                    unrealized: Optional[float], ts: str) -> None:
+        """Persist the management pass's valuation of an open position, so the
+        store-only dashboard can show live P&L without touching a broker."""
+        self.conn.execute(
+            "UPDATE positions SET last_mark_ps=?, unrealized_pnl=?, last_mark_ts=? "
+            "WHERE id=?", (mark_ps, unrealized, ts, pos_id))
         self.conn.commit()
 
     def adopt_partial_fill(self, pos_id: int, filled_contracts: int) -> None:
