@@ -138,3 +138,32 @@ def test_dashboard_graduation_matches_cli_cost_aware_gate():
     assert dash["gross"] > 0
     assert dash["net"] < dash["gross"]
     assert dash["eligible"] is False
+
+
+def test_net_debit_reconstructed_from_broker_position_costs():
+    """When an order dies after a PARTIAL fill, IB reports avgFillPrice=0.0 even
+    though the account holds the position — so the ORDER feed yields no fill price.
+    The POSITIONS feed still carries each leg's average cost, and that is the only
+    surviving record of what we actually paid.
+
+    These are the REAL numbers from the system's first trade (2026-07-29):
+    long SPY 736P avgCost 1011.7873, short 735P avgCost 979.189222."""
+    from core.fills import net_debit_from_positions
+
+    class _P:
+        def __init__(self, qty, avg): self.qty, self.avg_price = qty, avg
+
+    legs = [_P(1.0, 1011.7873), _P(-1.0, 979.189222)]
+    net = net_debit_from_positions(legs, 1)
+    assert net == -0.326, "a debit is a NEGATIVE credit in our convention"
+    # Intended debit was 0.31 -> signed intent -0.31 -> 1.6 cents adverse.
+    assert round(-0.31 - net, 4) == 0.016
+
+    # A genuine credit spread comes back positive.
+    credit = net_debit_from_positions([_P(-1.0, 120.0), _P(1.0, 94.0)], 1)
+    assert credit == 0.26
+
+    # Unusable input never fabricates a number.
+    assert net_debit_from_positions([], 1) is None
+    assert net_debit_from_positions([_P(0.0, 0.0)], 1) is None
+    assert net_debit_from_positions(legs, 0) is None

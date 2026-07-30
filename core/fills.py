@@ -97,3 +97,35 @@ def summarize_slippage(rows: list[dict]) -> dict:
         "note": "POSITIVE = adverse (worse than intended). Per share; x100 per contract. "
                 "Coverage < 1.0 means some fills were never reported by the broker.",
     }
+
+
+def net_debit_from_positions(legs: list, contracts: int = 1) -> Optional[float]:
+    """Derive the realized NET per-share price of a spread from the broker's
+    per-leg average costs, in our signed-credit convention (credit POSITIVE).
+
+    Why this exists: when an order dies after a PARTIAL fill, IB reports
+    avgFillPrice=0.0 on the order even though the account clearly holds the
+    position — so the order feed yields no fill price at all. The POSITIONS feed
+    still carries each leg's average cost, which is durable across sessions. That
+    is the only surviving record of what we actually paid, and it is the input to
+    every slippage number, so it is worth reconstructing.
+
+    `legs` is a list of broker Position objects for ONE structure. IB quotes option
+    avgCost per contract INCLUDING the 100x multiplier, so we divide it out.
+    Longs are money out, shorts are money in; the net is expressed as a credit."""
+    if not legs or contracts <= 0:
+        return None
+    net_paid = 0.0
+    seen = False
+    for p in legs:
+        qty = float(getattr(p, "qty", 0.0) or 0.0)
+        avg = float(getattr(p, "avg_price", 0.0) or 0.0)
+        if qty == 0.0 or avg <= 0.0:
+            continue
+        seen = True
+        per_share = avg / 100.0                 # strip the option multiplier
+        # qty > 0 is a long (we paid); qty < 0 is a short (we received).
+        net_paid += per_share if qty > 0 else -per_share
+    if not seen:
+        return None
+    return round(-net_paid, 4)                  # paid -> negative credit

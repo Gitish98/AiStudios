@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from .brokers.base import BrokerAdapter, OrderRequest, Position
-from .fills import entry_slippage_ps, signed_credit_ps
+from .fills import entry_slippage_ps, net_debit_from_positions, signed_credit_ps
 from .options_math import MIN_IV_OBSERVATIONS
 from .manage import _is_filled, manage_open_positions
 from .positions import order_to_position
@@ -475,6 +475,21 @@ def _today_iso() -> str:
     return datetime.now(timezone.utc).date().isoformat()
 
 
+def _legs_for_position(pos_row: dict, broker_positions: list) -> list:
+    """The broker Position objects belonging to this tracked structure."""
+    u = str(pos_row.get("underlying") or "").upper()
+    exp = str(pos_row.get("expiration") or "")
+    strikes = {float(pos_row.get("short_strike") or 0), float(pos_row.get("long_strike") or 0)}
+    out = []
+    for bp in broker_positions or []:
+        if (str(bp.underlying or bp.symbol).upper() == u
+                and str(bp.option_expiration or "") == exp
+                and bp.option_strike is not None
+                and float(bp.option_strike) in strikes):
+            out.append(bp)
+    return out
+
+
 def _held_units(pos_row: dict, held: dict) -> int:
     """How many COMPLETE units of this structure the broker actually holds.
 
@@ -635,6 +650,22 @@ def _finalize_pending_entries(adapter: BrokerAdapter, store: Store) -> None:
             if units > 0:
                 ordered = int(p.get("contracts") or 0)
                 store.adopt_partial_fill(p["id"], units)
+                # The ORDER feed gave no fill price (IB reports avgFillPrice=0.0 on
+                # a partially-filled order that then died), but the POSITIONS feed
+                # still carries each leg's average cost. Reconstruct the realized
+                # net price from it — otherwise the slippage for this trade, the
+                # one number that decides whether edge survives costs, is lost.
+                try:
+                    fill_ps = net_debit_from_positions(
+                        _legs_for_position(p, adapter.get_positions()), units)
+                    intended = p.get("entry_credit_ps")
+                    if fill_ps is not None and intended is not None:
+                        signed_intent = (float(intended) if p.get("is_credit")
+                                         else -float(intended))
+                        store.record_entry_fill(
+                            p["id"], fill_ps, round(signed_intent - fill_ps, 4))
+                except Exception:
+                    pass
                 store.append(_now_iso(), "partial_fill_adopted", {
                     "position_id": p["id"], "underlying": p["underlying"],
                     "ordered": ordered, "filled": units, "severity": "high",
