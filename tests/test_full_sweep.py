@@ -515,3 +515,81 @@ def test_stranded_pending_entry_is_resolved_against_broker_positions():
             "SELECT COUNT(*) FROM journal WHERE kind='partial_fill_detected'").fetchone()[0]
         assert flagged == 1, "a partial fill must be flagged for a human"
         st.close()
+
+
+def test_partial_fill_is_adopted_not_deleted_when_the_order_dies():
+    """REGRESSION from the FIRST REAL TRADE (2026-07-29).
+
+    We ordered a 10-contract SPY 736/735 put debit spread. ONE contract filled;
+    the remainder expired with the DAY order, and IB reported the order as
+    Cancelled with filled_qty=0.0 while still holding the 1-contract spread.
+
+    The old code saw a dead status and DELETED the position row — which would have
+    left a real, live position at the broker with nothing in the system tracking
+    it: never managed, never exited, riding to expiry. Adopt broker truth instead,
+    rescaling contracts and max_loss to what actually filled."""
+    import tempfile
+    from pathlib import Path
+    from core.brokers.base import Position
+    from core.execution import _finalize_pending_entries, _held_units
+    from core.store import Store
+
+    def _row(store):
+        return store.open_position({
+            "client_order_id": "AIS-44f1", "strategy": "volatility_breakout",
+            "structure": "put_debit_spread", "family": "put", "is_credit": 0,
+            "underlying": "SPY", "status": "pending", "opened_asof": "2026-07-29",
+            "opened_ts": "2026-07-29T14:01:32+00:00", "expiration": "2026-08-31",
+            "contracts": 10, "short_strike": 735.0, "long_strike": 736.0, "width": 1.0,
+            "legs_json": "[]", "entry_credit_ps": 0.31, "max_loss": 310.0})
+
+    def _leg(strike, qty):
+        return Position(symbol="SPY", qty=qty, avg_price=0.0, market_value=0.0,
+                        asset_class="option", underlying="SPY",
+                        option_expiration="2026-08-31", option_strike=strike,
+                        option_right="P")
+
+    class _O:
+        client_order_id = "AIS-44f1"
+        status = "Cancelled"          # exactly what IB reported
+        filled_qty = 0.0              # ...even though 1 contract DID fill
+        filled_avg_price = 0.0
+
+    class _A:
+        name = "ibkr_paper"
+        def __init__(self, held): self._held = held
+        def list_orders(self): return [_O()]
+        def get_positions(self): return self._held
+
+    # The real broker state: 1 complete spread held out of 10 ordered.
+    held_legs = [_leg(735.0, -1.0), _leg(736.0, +1.0)]
+    with tempfile.TemporaryDirectory() as td:
+        st = Store(Path(td) / "p.db")
+        pid = _row(st)
+        _finalize_pending_entries(_A(held_legs), st)
+        openp = st.get_open_positions()
+        assert len(openp) == 1, "a partially-filled position must NOT be deleted"
+        assert openp[0]["id"] == pid
+        assert openp[0]["contracts"] == 1, "must adopt the ACTUAL filled size"
+        assert openp[0]["max_loss"] == 31.0, "max_loss must rescale with size"
+        flagged = st.conn.execute(
+            "SELECT COUNT(*) FROM journal WHERE kind='partial_fill_adopted'").fetchone()[0]
+        assert flagged == 1
+        st.close()
+
+    # Nothing held at the broker -> the order truly died unfilled -> delete.
+    with tempfile.TemporaryDirectory() as td:
+        st = Store(Path(td) / "p.db")
+        _row(st)
+        _finalize_pending_entries(_A([]), st)
+        assert st.get_active_positions() == []
+        st.close()
+
+    # _held_units counts COMPLETE structures, not raw legs.
+    row = {"structure": "put_debit_spread", "family": "put", "underlying": "SPY",
+           "expiration": "2026-08-31", "contracts": 10,
+           "short_strike": 735.0, "long_strike": 736.0}
+    from core.reconcile import _leg_key
+    held = {_leg_key("SPY", "2026-08-31", 735.0, "P"): -3.0,
+            _leg_key("SPY", "2026-08-31", 736.0, "P"): +2.0}
+    assert _held_units(row, held) == 2, "limited by the smaller leg"

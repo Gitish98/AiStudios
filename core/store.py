@@ -263,6 +263,23 @@ class Store:
             (fill_ps, slip_ps, pos_id))
         self.conn.commit()
 
+    def adopt_partial_fill(self, pos_id: int, filled_contracts: int) -> None:
+        """Resize a partially-filled position to what the broker ACTUALLY holds and
+        mark it open so it gets managed.
+
+        max_loss scales with contract count, so it must be rescaled or the risk
+        gate will keep reserving budget for size that was never filled. Per-share
+        fields (entry_credit_ps, strikes, width) are unchanged by definition."""
+        row = self.conn.execute(
+            "SELECT contracts, max_loss FROM positions WHERE id = ?", (pos_id,)).fetchone()
+        if row is None or not row["contracts"]:
+            return
+        scale = float(filled_contracts) / float(row["contracts"])
+        self.conn.execute(
+            "UPDATE positions SET status='open', contracts=?, max_loss=? WHERE id=?",
+            (int(filled_contracts), round(float(row["max_loss"] or 0.0) * scale, 2), pos_id))
+        self.conn.commit()
+
     def set_position_status(self, pos_id: int, status: str) -> None:
         self.conn.execute("UPDATE positions SET status = ? WHERE id = ?", (status, pos_id))
         self.conn.commit()

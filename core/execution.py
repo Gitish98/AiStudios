@@ -446,6 +446,45 @@ def _today_iso() -> str:
     return datetime.now(timezone.utc).date().isoformat()
 
 
+def _held_units(pos_row: dict, held: dict) -> int:
+    """How many COMPLETE units of this structure the broker actually holds.
+
+    A partial fill is the normal outcome of a multi-contract limit combo: we asked
+    for 10, one filled, the rest expired with the DAY order. The broker then holds
+    a real 1-contract spread while our row says 10 and the order says Cancelled.
+    Returns the number of whole structures supported by the held legs (0 if the
+    structure is incomplete in either direction)."""
+    import json as _json
+    from .reconcile import _leg_key
+    n = int(pos_row.get("contracts") or 0)
+    if n <= 0:
+        return 0
+    u, exp = pos_row.get("underlying"), pos_row.get("expiration")
+    want: list[tuple] = []
+    if pos_row.get("structure") == "iron_condor":
+        raw = pos_row.get("legs_json")
+        if not raw:
+            return 0
+        j = _json.loads(raw)
+        want = [(_leg_key(u, exp, j["sp"], "P"), -n), (_leg_key(u, exp, j["lp"], "P"), +n),
+                (_leg_key(u, exp, j["sc"], "C"), -n), (_leg_key(u, exp, j["lc"], "C"), +n)]
+    else:
+        fam = pos_row.get("family") or ("call" if "call" in (pos_row.get("structure") or "") else "put")
+        r = "C" if fam == "call" else "P"
+        want = [(_leg_key(u, exp, pos_row["short_strike"], r), -n),
+                (_leg_key(u, exp, pos_row["long_strike"], r), +n)]
+    units = None
+    for key, qty in want:
+        per_unit = qty / n                      # +1 or -1 per structure
+        have = float(held.get(key, 0.0))
+        if per_unit < 0:
+            u_leg = int(max(0.0, -have))        # need short
+        else:
+            u_leg = int(max(0.0, have))         # need long
+        units = u_leg if units is None else min(units, u_leg)
+    return int(units or 0)
+
+
 def _position_is_held(pos_row: dict, held: dict) -> tuple[bool, bool]:
     """(all_legs_held, any_leg_held) for this tracked position at the broker.
 
@@ -555,6 +594,24 @@ def _finalize_pending_entries(adapter: BrokerAdapter, store: Store) -> None:
             # client_order_id dedup-blocked all day and the position can never be
             # re-entered.
             store.set_order_status(p["client_order_id"], "canceled")
+            # BEFORE deleting: does the broker actually hold anything? A dead order
+            # does NOT mean nothing filled. A multi-contract limit combo routinely
+            # fills PARTIALLY and the remainder is cancelled at the close, leaving a
+            # real position behind. Deleting the row then makes that position
+            # permanently invisible — never managed, never exited, riding to expiry
+            # with nothing in the system aware of it. (Observed live on the very
+            # first trade: 1 of 10 contracts filled, order reported Cancelled with
+            # filled_qty=0.0.) Adopt broker truth instead.
+            units = _held_units(p, held) if held is not None else 0
+            if units > 0:
+                ordered = int(p.get("contracts") or 0)
+                store.adopt_partial_fill(p["id"], units)
+                store.append(_now_iso(), "partial_fill_adopted", {
+                    "position_id": p["id"], "underlying": p["underlying"],
+                    "ordered": ordered, "filled": units, "severity": "high",
+                    "note": "order died after a PARTIAL fill; adopted the broker's "
+                            "actual size so the position is managed and exited"})
+                continue
             store.delete_position(p["id"])
             store.append(_now_iso(), "entry_dropped", {"position_id": p["id"],
                                                        "underlying": p["underlying"]})
