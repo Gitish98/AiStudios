@@ -203,6 +203,7 @@ def test_pending_close_finalizes_when_filled():
     from core.brokers.base import OrderResult
 
     class FillsLater(SimAdapter):
+        name = "ibkr_paper"   # impersonates a REAL broker: the finalizers refuse sim
         def list_orders(self):
             return [OrderResult(accepted=True, client_order_id="CLOSE-o",
                                 status="filled", filled_qty=2)]
@@ -272,6 +273,7 @@ def test_pending_entry_finalizes_on_fill_and_drops_on_reject():
                 "entry_credit_ps": 0.26, "max_loss": 74}
 
     class Orders(SimAdapter):
+        name = "ibkr_paper"   # impersonates a REAL broker: the finalizers refuse sim
         def list_orders(self):
             return [OrderResult(accepted=True, client_order_id="fill", status="filled", filled_qty=2),
                     OrderResult(accepted=True, client_order_id="dead", status="canceled", filled_qty=0)]
@@ -364,6 +366,7 @@ def test_dropped_entry_unblocks_same_day_reentry():
         assert store.has_order(coid) is True   # blocked before finalize
 
         class Canceled(SimAdapter):
+            name = "ibkr_paper"   # impersonates a REAL broker
             def list_orders(self):
                 return [OrderResult(accepted=True, client_order_id=coid,
                                     status="Cancelled", filled_qty=0)]
@@ -667,11 +670,59 @@ def test_vanished_close_order_releases_the_position():
             "SELECT COUNT(*) FROM journal WHERE kind='close_expired'").fetchone()[0] == 1
         st.close()
 
-    # (b) Legs gone => it really did fill; record the close rather than reopening it.
+    # (b) THIS position's legs gone while ANOTHER position's legs remain => the
+    #     close really did fill; record it. (The other-position leg is what proves
+    #     the feed is alive — see (c) for the empty-book case.)
+    other = Position(symbol="QQQ", qty=-1.0, avg_price=100.0, market_value=0.0,
+                     asset_class="option", underlying="QQQ",
+                     option_expiration="2026-09-18", option_strike=600.0,
+                     option_right="P")
+    with tempfile.TemporaryDirectory() as td:
+        st = Store(Path(td) / "p.db")
+        pid = _seed(st)
+        pend = _finalize_pending_closes(_A([other]), st, "2026-08-04")
+        assert str(pid) not in pend
+        assert len(st.get_closed_positions()) == 1
+        st.close()
+
+    # (c) The broker book is COMPLETELY empty while we track an open position:
+    #     the signature of a paper-account reset, NOT of a fill. Booking "all my
+    #     closes filled at intended prices" off an empty book would fabricate P&L
+    #     with zero alarms. Must refuse to resolve and journal a critical event.
     with tempfile.TemporaryDirectory() as td:
         st = Store(Path(td) / "p.db")
         pid = _seed(st)
         pend = _finalize_pending_closes(_A([]), st, "2026-08-04")
-        assert str(pid) not in pend
-        assert len(st.get_closed_positions()) == 1
+        assert str(pid) in pend, "an empty broker book must not resolve anything"
+        assert len(st.get_closed_positions()) == 0
+        assert st.conn.execute(
+            "SELECT COUNT(*) FROM journal WHERE kind='broker_book_empty'").fetchone()[0] == 1
+        st.close()
+
+    # (d) THE WHOLE-ACCOUNT BUG (found independently by three reviewers within
+    #     hours of the original fix shipping): with a SECOND position's legs held
+    #     and THIS position's close filled+vanished, the old any-leg-anywhere check
+    #     said "still held" and RELEASED the close — a duplicate close would then
+    #     go out for legs the account no longer holds. Leg checks must be scoped
+    #     to the position. Same setup as (b); asserting the non-release explicitly.
+    with tempfile.TemporaryDirectory() as td:
+        st = Store(Path(td) / "p.db")
+        pid = _seed(st)
+        _finalize_pending_closes(_A([other]), st, "2026-08-04")
+        released = st.conn.execute(
+            "SELECT COUNT(*) FROM journal WHERE kind='close_expired'").fetchone()[0]
+        assert released == 0, "another position's legs must NOT read as ours still held"
+        st.close()
+
+    # (e) PARTIAL: one of our legs alive, one gone — the assignment signature.
+    #     Neither a fill nor a release; flagged for a human, stays pending.
+    with tempfile.TemporaryDirectory() as td:
+        st = Store(Path(td) / "p.db")
+        pid = _seed(st)
+        pend = _finalize_pending_closes(_A([_leg(736.0, 1)]), st, "2026-08-04")
+        assert str(pid) in pend, "a partially-held structure must stay pending"
+        assert len(st.get_closed_positions()) == 0
+        assert st.conn.execute(
+            "SELECT COUNT(*) FROM journal WHERE kind='close_ambiguous_assignment'"
+        ).fetchone()[0] == 1
         st.close()

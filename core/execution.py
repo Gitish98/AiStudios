@@ -574,6 +574,12 @@ def _finalize_pending_entries(adapter: BrokerAdapter, store: Store) -> None:
     pend = store.get_pending_positions()
     if not pend:
         return
+    # Same rule as the close finalizer: a broker that cannot testify resolves
+    # nothing. On a failed IB connect the factory falls back to SIM, whose empty
+    # positions feed would read as "the day order died unfilled" and DELETE a live
+    # position's row from one bad connect.
+    if getattr(adapter, "name", "") == "sim":
+        return
     try:
         bro = {o.client_order_id: o for o in adapter.list_orders()}
     except Exception:

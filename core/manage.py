@@ -181,10 +181,52 @@ def _is_filled(result, contracts: int) -> bool:
     return (result.status or "").lower() == "filled"
 
 
-def _legs_still_held(info: dict, held: dict) -> bool:
-    """Does the broker still hold ANY leg recorded for this pending close?
-    Used to tell "the close never filled" from "it filled and the feed forgot"."""
-    return any(abs(float(v or 0.0)) > 1e-9 for v in (held or {}).values())
+def _close_leg_state(store: Store, pid: int, held: dict) -> str:
+    """Where do THIS position's legs stand at the broker: 'all_held' | 'none_held'
+    | 'partial' | 'unknown'.
+
+    The predecessor checked whether the broker held ANY leg of ANY position — it
+    only worked because the book held exactly one position. With a second position,
+    a filled close would read as "did not fill" (someone else's legs are held),
+    releasing it and placing a duplicate close for legs the account no longer
+    holds. Three independent reviewers found this within hours of it shipping.
+
+    'partial' matters on its own: it is the assignment/partial-close signature (one
+    leg gone, one alive) and must be neither booked as a fill nor blindly re-closed
+    — a lone surviving leg is not the structure we priced."""
+    import json as _json
+    from .reconcile import _leg_key
+    row = store.conn.execute("SELECT * FROM positions WHERE id = ?", (int(pid),)).fetchone()
+    if row is None:
+        return "unknown"
+    p = dict(row)
+    n = int(p.get("contracts") or 0)
+    u, exp = p.get("underlying"), p.get("expiration")
+    want: list = []
+    if p.get("structure") == "iron_condor":
+        raw = p.get("legs_json")
+        if not raw:
+            return "unknown"
+        j = _json.loads(raw)
+        want = [(_leg_key(u, exp, j["sp"], "P"), -n), (_leg_key(u, exp, j["lp"], "P"), +n),
+                (_leg_key(u, exp, j["sc"], "C"), -n), (_leg_key(u, exp, j["lc"], "C"), +n)]
+    else:
+        fam = p.get("family") or ("call" if "call" in (p.get("structure") or "") else "put")
+        r = "C" if fam == "call" else "P"
+        want = [(_leg_key(u, exp, p["short_strike"], r), -n),
+                (_leg_key(u, exp, p["long_strike"], r), +n)]
+    if not want or n <= 0:
+        return "unknown"
+    present = 0
+    for key, qty in want:
+        have = float((held or {}).get(key, 0.0))
+        if (qty < 0 and have <= qty + 1e-9) or (qty > 0 and have >= qty - 1e-9):
+            present += 1
+    if present == len(want):
+        return "all_held"
+    if present == 0:
+        return "none_held"
+    return "partial"
 
 
 def _load_pending(store: Store) -> dict:
@@ -202,6 +244,13 @@ def _finalize_pending_closes(adapter: BrokerAdapter, store: Store, asof: str) ->
     risk from the book) before the close actually executes."""
     pend = _load_pending(store)
     if not pend:
+        return pend
+    # A broker that cannot testify must not resolve anything. When the IB connect
+    # fails, the factory silently falls back to SIM — whose empty book would read
+    # as "all legs gone => every pending close FILLED", fabricating realized P&L on
+    # the live store from one bad connect. (Reconcile already no-ops on sim for the
+    # same reason.)
+    if getattr(adapter, "name", "") == "sim":
         return pend
     try:
         bro = {o.client_order_id: o for o in adapter.list_orders()}
@@ -226,23 +275,59 @@ def _finalize_pending_closes(adapter: BrokerAdapter, store: Store, asof: str) ->
             # Resolve against positions instead.
             if held is None:
                 continue                       # genuinely cannot confirm
-            if _legs_still_held(info, held):
-                # Still held => the close did NOT fill. Release it so the position
-                # is re-priced and re-decided from scratch next pass.
+            if not held:
+                # The broker book is COMPLETELY empty while we track an open
+                # position. That is the signature of a paper-account reset (or a
+                # broken positions feed), not of a routine fill — booking "all my
+                # closes filled at their intended prices" off it would fabricate
+                # P&L with zero alarms. Refuse to resolve; scream instead.
+                store.append(_now_iso(), "broker_book_empty", {
+                    "position_id": int(pid), "severity": "critical",
+                    "note": "broker reports NO option positions while we track an "
+                            "open one — possible paper-account reset. Not resolving "
+                            "pending closes; investigate."})
+                continue
+            state = _close_leg_state(store, int(pid), held)
+            if state == "all_held":
+                # Still fully held => the close did NOT fill. Best-effort cancel of
+                # the old broker order first (it may be live but absent from our
+                # feed snapshot — a surviving twin would sell legs twice), then
+                # release so the position is re-priced from scratch next pass.
+                try:
+                    row = store.conn.execute(
+                        "SELECT broker_order_id FROM orders WHERE client_order_id = ?",
+                        (info["coid"],)).fetchone()
+                    if row and row["broker_order_id"]:
+                        adapter.cancel_order(str(row["broker_order_id"]))
+                except Exception:
+                    pass
                 del pend[pid]; changed = True
                 store.set_order_status(info["coid"], "canceled")
                 store.append(_now_iso(), "close_expired", {
                     "position_id": int(pid), "coid": info["coid"],
                     "note": "close order gone from broker but legs still held — "
                             "releasing so the position is re-evaluated"})
-            else:
-                # Legs gone => it DID fill; the fill just never appeared in the feed.
+            elif state == "none_held":
+                # THIS position's legs are gone (others may remain) => the close
+                # filled and the feed forgot. Price is the INTENDED one, unverified.
                 store.close_position(int(pid), asof, _now_iso(), info["reason"],
                                      info["exit_value_ps"], info["realized_pnl"])
                 store.append(_now_iso(), "position_closed", {
                     "position_id": int(pid), "reason": info["reason"],
-                    "realized_pnl": info["realized_pnl"], "via": "positions_confirm"})
+                    "realized_pnl": info["realized_pnl"], "via": "positions_confirm",
+                    "note": "fill price unverified (intended values; feed had no fill)"})
                 del pend[pid]; changed = True
+            else:
+                # 'partial' / 'unknown': one leg alive, one gone — the signature of
+                # ASSIGNMENT or a partial close. Neither a fill nor a release: a
+                # lone surviving leg is not the structure we priced, and blindly
+                # re-closing would trade legs we no longer hold. Needs a human.
+                store.append(_now_iso(), "close_ambiguous_assignment", {
+                    "position_id": int(pid), "coid": info["coid"], "state": state,
+                    "severity": "high",
+                    "note": "this position's legs are PARTIALLY held at the broker "
+                            "— possible assignment/partial close. Holding pending; "
+                            "investigate before trading this underlying."})
             continue
         st = (o.status or "").lower()   # NEEDED by the dead-order branch below
         if _is_filled(o, 1):
