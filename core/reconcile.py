@@ -125,5 +125,29 @@ def reconcile(adapter: BrokerAdapter, store: Store) -> dict[str, Any]:
             "expected_qty": e, "broker_qty": b, "severity": "high",
         })
 
+    # ── ASSIGNMENT DETECTION ─────────────────────────────────────────────────
+    # An exercised/assigned short leg turns into ±100 SHARES per contract — an
+    # asset class the option-leg diff above is structurally blind to. This
+    # account exists only to trade defined-risk option structures, so ANY equity
+    # position at the broker is unexplained by construction and is the classic
+    # post-assignment signature. Severity is critical because shares are
+    # unbounded risk the gate never sized.
+    try:
+        for pos in adapter.get_positions():
+            if pos.asset_class == "option":
+                continue
+            qty = float(pos.qty or 0.0)
+            if abs(qty) < 1e-9:
+                continue
+            report["drift"].append({
+                "kind": "untracked_equity_at_broker",
+                "underlying": (pos.underlying or pos.symbol or "").upper(),
+                "leg": f"{pos.symbol} {qty:+g} shares",
+                "expected_qty": 0.0, "broker_qty": qty,
+                "severity": "critical",
+            })
+    except Exception:
+        pass  # the option-leg scan above already failed closed on fetch errors
+
     report["ok"] = len(report["drift"]) == 0
     return report

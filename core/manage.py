@@ -15,6 +15,7 @@ from typing import Any, Optional
 
 from .brokers.base import BrokerAdapter, OrderLeg, OrderRequest
 from .fills import exit_slippage_ps, signed_credit_ps
+from .exdiv import exdiv_risk
 from .positions import ManageParams, dte_from, evaluate_exit
 from .store import DEAD_ORDER_STATUSES, Store
 
@@ -229,6 +230,15 @@ def _close_leg_state(store: Store, pid: int, held: dict) -> str:
     return "partial"
 
 
+def _pnl_at(pos: dict, value_ps: float) -> float:
+    """Realized P&L if this position exits at `value_ps` (per share)."""
+    n = int(pos.get("contracts") or 0)
+    entry = float(pos.get("entry_credit_ps") or 0.0)
+    if bool(pos.get("is_credit", 1)):
+        return round((entry - value_ps) * 100 * n, 2)
+    return round((value_ps - entry) * 100 * n, 2)
+
+
 def _load_pending(store: Store) -> dict:
     raw = store.get_kv("pending_closes")
     return json.loads(raw) if raw else {}
@@ -322,6 +332,13 @@ def _finalize_pending_closes(adapter: BrokerAdapter, store: Store, asof: str) ->
                 # ASSIGNMENT or a partial close. Neither a fill nor a release: a
                 # lone surviving leg is not the structure we priced, and blindly
                 # re-closing would trade legs we no longer hold. Needs a human.
+                _row = store.conn.execute(
+                    "SELECT underlying FROM positions WHERE id = ?",
+                    (int(pid),)).fetchone()
+                if _row:
+                    store.freeze_underlying(
+                        _row["underlying"],
+                        "pending close partially held at broker — possible assignment")
                 store.append(_now_iso(), "close_ambiguous_assignment", {
                     "position_id": int(pid), "coid": info["coid"], "state": state,
                     "severity": "high",
@@ -362,6 +379,21 @@ def manage_open_positions(adapter: BrokerAdapter, store: Store, config,
     pending = _finalize_pending_closes(adapter, store, asof)
     open_positions = store.get_open_positions()
 
+    # The broker's leg map, fetched ONCE per pass. Every order this pass places
+    # is checked against it: a close must never blindly reverse legs the broker
+    # does not confirm holding — buying back an assigned-away short OPENS a new
+    # position instead of closing one. None => broker unverifiable => proceed
+    # without the check (you must always be able to exit; we only block on
+    # POSITIVE evidence of divergence, never on ignorance).
+    held_map = None
+    if getattr(adapter, "name", "") != "sim" and open_positions:
+        try:
+            from .reconcile import broker_legs
+            held_map = broker_legs(adapter)
+        except Exception:
+            held_map = None
+    frozen_map = store.frozen_underlyings()
+
     def _params_for(pos):
         if pos.get("structure") == "iron_condor":
             return condor_params
@@ -376,6 +408,12 @@ def manage_open_positions(adapter: BrokerAdapter, store: Store, config,
       try:
         if str(pos.get("id")) in pending:   # awaiting a fill on a prior close
             summary["held"].append({"underlying": pos["underlying"], "reason": "close_pending"})
+            continue
+        if pos["underlying"] in frozen_map:
+            # Assignment-review freeze: total lockdown on this name until the
+            # operator clears it. No marks, no orders — eyes first.
+            summary["held"].append({"underlying": pos["underlying"],
+                                    "reason": "frozen_operator_review"})
             continue
         value_ps = mark_spread_value_ps(adapter, pos)
         if value_ps is None:
@@ -392,6 +430,51 @@ def manage_open_positions(adapter: BrokerAdapter, store: Store, config,
         decision = evaluate_exit(pos, value_ps, spot if spot is not None else 0.0,
                                  asof, params)
 
+        # ── EXPIRY REALISM ──────────────────────────────────────────────────
+        # 'expire' used to book the position closed at the MORNING spot — pure
+        # local fiction: the real options trade until 16:00 and OCC then
+        # auto-exercises anything ITM by $0.01, potentially delivering ±100
+        # shares over a weekend (pin risk lands exactly between the strikes).
+        # Against a real broker we only book what the broker confirms:
+        #   still holds the legs -> place a REAL close now (get out, don't
+        #     pretend), via the normal pending/fill machinery;
+        #   legs gone -> the contracts are truly finished; book locally
+        #     (any shares they left behind trip the assignment freeze);
+        #   can't tell -> hold and say so; never fabricate a settlement.
+        if decision.action == "expire" and getattr(adapter, "name", "") != "sim":
+            state = (_close_leg_state(store, pos["id"], held_map)
+                     if held_map is not None else "unknown")
+            if state == "all_held":
+                decision.action, decision.reason = "close", "expiry_close"
+                decision.exit_value_ps = value_ps
+                decision.realized_pnl = _pnl_at(pos, value_ps)
+            elif state != "none_held":
+                store.append(_now_iso(), "expiry_unverified", {
+                    "position_id": pos["id"], "underlying": pos["underlying"],
+                    "state": state, "severity": "high",
+                    "note": "expiration reached but broker holdings unverifiable/"
+                            "partial — refusing to fabricate a settlement"})
+                summary["held"].append({"underlying": pos["underlying"],
+                                        "reason": "expiry_unverified"})
+                continue
+
+        # ── EX-DIVIDEND ASSIGNMENT RISK ─────────────────────────────────────
+        # A short ITM call within days of an (estimated) ex-div is a near-certain
+        # early assignment: shares + the dividend liability, overnight. Exit
+        # deliberately before the trap springs. Puts never trigger this.
+        if decision.action == "hold" and spot:
+            exd = exdiv_risk(pos, spot, asof)
+            if exd:
+                decision.action = "close"
+                decision.reason = "exdiv_assignment_risk"
+                decision.exit_value_ps = value_ps
+                decision.realized_pnl = _pnl_at(pos, value_ps)
+                store.append(_now_iso(), "exdiv_risk_exit", {
+                    "position_id": pos["id"], "underlying": pos["underlying"],
+                    "estimated_ex_div": exd,
+                    "note": "short ITM call near estimated ex-div; closing early "
+                            "rather than risking assignment + dividend liability"})
+
         # Persist the valuation for the read-only dashboard on EVERY pass, not just
         # on hold: a position with a close in flight was showing a blank mark, which
         # is exactly when you most want to see what it is worth.
@@ -407,6 +490,25 @@ def manage_open_positions(adapter: BrokerAdapter, store: Store, config,
 
         # Close (or settle at expiry). Expiry needs no order; a managed close does.
         if decision.action == "close":
+            # NEVER blindly reverse legs the broker does not confirm holding.
+            # none_held/partial here is the assignment/divergence signature: a
+            # buy-to-close for an assigned-away short would OPEN a new long.
+            # Freeze the name and wait for a human. (held_map None = broker
+            # unverifiable = proceed; we block on evidence, not ignorance.)
+            if getattr(adapter, "name", "") != "sim" and held_map is not None:
+                lstate = _close_leg_state(store, pos["id"], held_map)
+                if lstate in ("none_held", "partial"):
+                    store.freeze_underlying(
+                        pos["underlying"],
+                        f"close blocked: legs {lstate} at broker — possible assignment")
+                    store.append(_now_iso(), "close_blocked_legs_diverged", {
+                        "position_id": pos["id"], "underlying": pos["underlying"],
+                        "state": lstate, "severity": "critical",
+                        "note": "refusing to place a close for legs the broker does "
+                                "not confirm; underlying frozen for operator review"})
+                    summary["held"].append({"underlying": pos["underlying"],
+                                            "reason": "assignment_review"})
+                    continue
             order = _closing_order(pos, decision.exit_value_ps)
             result = adapter.place_order(order)
             store.record_order(_now_iso(), order, result)

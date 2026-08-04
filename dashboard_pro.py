@@ -228,6 +228,7 @@ def _gather(store: Store) -> dict[str, Any]:
         "mode": (store.get_kv("mode") or "paper").upper(),
         "broker": store.get_kv("broker") or "sim",
         "kill_switch": store.kill_switch,
+        "frozen": store.frozen_underlyings(),
         "account": {
             "equity": _num(equity) if equity is not None else None,
             "cash": _num(cash) if cash is not None else None,
@@ -396,6 +397,8 @@ var curveHTML = document.getElementById('curve').outerHTML;
 var h = '';
 h += '<div class="banner '+(D.mode==='PAPER'?'paper':'live')+'">'+esc(D.mode)+' MODE</div>';
 if (D.kill_switch) h += '<div class="kill">\\u26a0\\ufe0e KILL SWITCH ENGAGED — orders blocked until cleared</div>';
+var _fz = Object.keys(D.frozen||{{}});
+if (_fz.length) h += '<div class="kill">\\u2744\\ufe0e FROZEN (possible assignment): '+_fz.map(esc).join(', ')+' — no automated orders until cleared (cli.py unfreeze)</div>';
 else h += '<div class="killoff">Kill switch: clear — trading enabled</div>';
 var iv = D.iv||{{}};
 // Only the symbols WITHOUT an external benchmark rank are still bootstrapping.

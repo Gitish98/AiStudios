@@ -80,6 +80,11 @@ def cmd_status(args):
         print(f"  ⚠️  {w}")
     if store.kill_switch:
         print("\n  ⚠️  KILL SWITCH ENGAGED — orders are blocked. Clear with: python cli.py clear-kill")
+    froz = store.frozen_underlyings()
+    if froz:
+        print("\n  🧊 FROZEN (assignment review): "
+              + ", ".join(f"{k} — {v.get('reason','')}" for k, v in froz.items()))
+        print("     No new entries or automated closes on these until: python cli.py unfreeze <SYMBOL>")
 
     try:
         a = adapter.get_account()
@@ -477,6 +482,22 @@ def cmd_go_paper(args):
     store.close()
 
 
+def cmd_unfreeze(args):
+    """Clear an assignment-review freeze. Deliberately manual: the freeze exists
+    because the broker's book diverged from ours in a way that needs eyes — only
+    the operator, having looked, should clear it."""
+    store = Store()
+    if store.unfreeze_underlying(args.symbol):
+        store.append(datetime.now(timezone.utc).isoformat(), "underlying_unfrozen",
+                     {"underlying": args.symbol.upper(), "by": "operator"})
+        print(f"  {args.symbol.upper()} unfrozen — trading re-enabled next cycle.")
+    else:
+        froz = store.frozen_underlyings()
+        print(f"  {args.symbol.upper()} was not frozen."
+              + (f" Currently frozen: {', '.join(froz)}" if froz else " Nothing is frozen."))
+    store.close()
+
+
 def main():
     _force_utf8_console()
     p = argparse.ArgumentParser(prog="aistudios", description="AiStudios paper trading CLI")
@@ -495,6 +516,9 @@ def main():
     sub.add_parser("vrp", help="measure the volatility risk premium (the strategy premise)").set_defaults(func=cmd_vrp)
     sub.add_parser("performance", help="Net-of-cost paper performance + graduation status").set_defaults(func=cmd_performance)
     sub.add_parser("export-trades", help="Export closed trades to a CSV (tax/records)").set_defaults(func=cmd_export_trades)
+    pu = sub.add_parser("unfreeze", help="clear an assignment-review freeze on an underlying")
+    pu.add_argument("symbol", help="underlying to unfreeze, e.g. SPY")
+    pu.set_defaults(func=cmd_unfreeze)
     sub.add_parser("kill", help="Engage the kill switch").set_defaults(func=cmd_kill)
     sub.add_parser("clear-kill", help="Clear the kill switch").set_defaults(func=cmd_clear_kill)
     sub.add_parser("go-live", help="arm LIVE for today (interactive five-gate check)").set_defaults(func=cmd_go_live)

@@ -211,9 +211,17 @@ def run_cycle(
     # separate bugs have produced an identical healthy-looking "0 signals", so the
     # REASON is as important as the count.
     decisions: list[dict[str, Any]] = []
+    frozen_syms = store.frozen_underlyings()
     seen_ids: set = set()   # idempotency within this cycle (covers dry-run too)
     for symbol in config.watchlist:
         try:
+            if symbol in frozen_syms:
+                # Frozen = a human must look before ANY new risk on this name.
+                decisions.append({
+                    "symbol": symbol, "spot": None, "iv_rank": None,
+                    "iv_source": "", "iv_obs": 0, "chain": 0, "signals": 0,
+                    "note": "FROZEN pending operator review — no new entries"})
+                continue
             chain = adapter.get_option_chain(symbol)
             quote = adapter.get_quote(symbol)
             # Record today's ATM IV so a real broker BUILDS its own IV-rank history
@@ -388,6 +396,18 @@ def run_cycle(
     summary["reconcile"] = rec
     if not rec["ok"]:
         store.append(_now_iso(), "reconcile_drift", {"drift": rec["drift"]})
+        # Stray SHARES in a tracked account = the assignment signature. Freeze the
+        # underlying immediately: no new entries, no blind closes, until a human
+        # clears it (cli.py unfreeze). Journaled at critical.
+        for d in rec["drift"]:
+            if d.get("kind") == "untracked_equity_at_broker" and d.get("underlying"):
+                store.freeze_underlying(
+                    d["underlying"], "unexpected shares at broker — possible assignment")
+                store.append(_now_iso(), "underlying_frozen", {
+                    "underlying": d["underlying"], "severity": "critical",
+                    "leg": d.get("leg"),
+                    "note": "equity position with no tracked origin; trading frozen "
+                            "pending operator review (cli.py unfreeze)"})
 
     store.append(_now_iso(), "cycle_end", {
         "placed": len(summary["placed"]), "rejected": len(summary["rejected"]),
@@ -396,6 +416,8 @@ def run_cycle(
     # Read-only last-cycle marker for the dashboard. Best-effort.
     try:
         for _d in decisions:
+            if _d.get("note"):
+                continue        # a pre-set note (e.g. FROZEN) must not be clobbered
             if _d["signals"]:
                 _d["note"] = "signal generated"
             elif _d["iv_rank"] is None:

@@ -275,6 +275,40 @@ class Store:
             "WHERE id=?", (mark_ps, unrealized, ts, pos_id))
         self.conn.commit()
 
+    # ── assignment-review freeze ─────────────────────────────────────────────
+    # When the broker's book diverges from ours in a way that smells like
+    # ASSIGNMENT (stray shares, a half-held spread), the safe reflex is to stop
+    # trading that underlying entirely — no new entries, no blind closes — until
+    # a human looks. The freeze is per-underlying, journaled, and cleared only by
+    # `python cli.py unfreeze <SYM>`. Deliberately NOT auto-clearing: the whole
+    # point is that the situation needs eyes.
+    def frozen_underlyings(self) -> dict:
+        raw = self.get_kv("frozen_underlyings")
+        try:
+            return json.loads(raw) if raw else {}
+        except Exception:
+            return {}
+
+    def freeze_underlying(self, symbol: str, reason: str) -> None:
+        sym = (symbol or "").upper()
+        if not sym:
+            return
+        froz = self.frozen_underlyings()
+        if sym not in froz:                       # idempotent; keep first reason
+            from datetime import datetime, timezone
+            froz[sym] = {"reason": reason,
+                         "ts": datetime.now(timezone.utc).isoformat()}
+            self.set_kv("frozen_underlyings", json.dumps(froz))
+
+    def unfreeze_underlying(self, symbol: str) -> bool:
+        sym = (symbol or "").upper()
+        froz = self.frozen_underlyings()
+        if sym in froz:
+            del froz[sym]
+            self.set_kv("frozen_underlyings", json.dumps(froz))
+            return True
+        return False
+
     def adopt_partial_fill(self, pos_id: int, filled_contracts: int) -> None:
         """Resize a partially-filled position to what the broker ACTUALLY holds and
         mark it open so it gets managed.
