@@ -129,6 +129,46 @@ much of it, and our own cost-aware backtest still showed 57% wins with negative 
 expectancy. The finding validates the DEFINED-RISK ARCHITECTURE as much as the
 strategy: that -67% tail is exactly what the long wing exists to bound.
 
+**Session 2026-08-04/05 — first-trade fallout + assignment defense (see git log):**
+The FIRST REAL TRADE (SPY 736/735 put debit, 1-of-10 partial fill, 2026-07-29)
+plus two adversarial hunts (24 + 25 agents) drove: partial-fill ADOPTION (broker
+truth wins; max_loss rescales); the five-day close_pending freeze fix (impossible
+marks REJECTED not clamped — a >width value is bad quotes, not max profit; a
+vanished close resolves against POSITIONS); position-SCOPED leg checks (the
+whole-account bug — three reviewers found it in my own fix within hours); sim-
+fallback guard (a failed IB connect must never let sim's empty book fabricate
+fills or delete rows); broker_book_empty guard (paper-account reset signature);
+and the **Tier 1 assignment defense**: reconcile flags ANY broker equity as
+critical drift -> the cycle FREEZES that underlying (no entries, no closes) until
+`python cli.py unfreeze SYM`; closes are leg-verified against the broker before
+placement (none_held/partial -> freeze, never a blind reversal); expiry books
+ONLY what the broker confirms (still-held legs get a REAL close, reason
+expiry_close; unverifiable -> hold loudly); `core/exdiv.py` estimates ex-div
+dates (3rd-Friday heuristic, honestly labeled) and force-exits short ITM calls
+within 4 days of one. Dashboard: live marks/unrealized/target-progress per
+position, execution-quality (slippage) panel, per-symbol decision trace, frozen
+banner. First trade's slippage: intended 0.31 debit, filled 0.326 = 5.2% adverse
+(measured, not modeled).
+
+> **THE STANDING LESSONS:** (1) "0 signals" / a green cycle is a QUESTION, not a
+> status. (2) Absence/ambiguity must be UNREPRESENTABLE as a confident number
+> (None, never 0.0 or a clamped boundary). (3) The BROKER's book is truth; ours
+> is a hypothesis — resolve against positions, which survive session rolls.
+> (4) Deferred findings on the money path go live faster than you expect: the
+> partial-fill finding was deferred as "not catastrophic" and hit on trade #1.
+
+**Scenario-hunt remainder (16 confirmed, ranked; do deliberately):** Tier 2 —
+chasing-stop needs marketable escalation (mid-limit DAY closes can chase a
+falling market forever); cycle time ~30-120s/position blows the 900s cron
+timeout around 4-6 open positions (later positions silently unmanaged); half-day
+closes (post-Thanksgiving, Christmas Eve 13:00 ET) make the 15:30 cron run on
+stale quotes; paper-fill optimism needs a provenance flag so the graduation
+verdict carries the caveat. Tier 3 — crontab TZ= line may not schedule (system
+tz is ET so currently correct); fallback calendar fails OPEN past its hardcoded
+2027 holiday list; missing FX rate would feed raw CAD to the gate; duplicate
+clientId collisions; SQLite races on overlapping processes; caps arithmetic on a
+VIX-spike morning (cluster/overnight may be unreachable given per-trade sizing).
+
 **Next, in priority:** (1) **activate the heartbeat** — `scripts/run_cycle.sh`
 pings a monitor on start/success/failure but is DORMANT until a healthchecks.io URL
 is written to the gitignored `.healthcheck_url` on the VM (operator action, 2 min);
