@@ -157,13 +157,16 @@ banner. First trade's slippage: intended 0.31 debit, filled 0.326 = 5.2% adverse
 > (4) Deferred findings on the money path go live faster than you expect: the
 > partial-fill finding was deferred as "not catastrophic" and hit on trade #1.
 
-**Scenario-hunt remainder (16 confirmed, ranked; do deliberately):** Tier 2 —
-chasing-stop needs marketable escalation (mid-limit DAY closes can chase a
-falling market forever); cycle time ~30-120s/position blows the 900s cron
-timeout around 4-6 open positions (later positions silently unmanaged); half-day
-closes (post-Thanksgiving, Christmas Eve 13:00 ET) make the 15:30 cron run on
-stale quotes; paper-fill optimism needs a provenance flag so the graduation
-verdict carries the caveat. Tier 3 — crontab TZ= line may not schedule (system
+**Tier 2 DONE (2026-08-05, commit e4d8585):** closes now ESCALATE 15%/attempt
+(cap 45%, floor $0.01; attempts counted from close_pending journal events; the
+booked exit value stays the honest mark); `IBKRAdapter.mark_option` marks a
+position's own legs in ~8s instead of a ~60-120s chain fetch (verified live) and
+cron timeout is 1800s with duration_secs journaled per cycle; `early_close_et()`
+skips the 15:30 cron on 13:00-ET half days; every fill records `fill_mode`
+(paper|live) and both `cli.py performance` and the dashboard state the
+paper-optimism caveat until live fills exist.
+
+**Scenario-hunt remainder (Tier 3 — latent, watch deliberately):** crontab TZ= line may not schedule (system
 tz is ET so currently correct); fallback calendar fails OPEN past its hardcoded
 2027 holiday list; missing FX rate would feed raw CAD to the gate; duplicate
 clientId collisions; SQLite races on overlapping processes; caps arithmetic on a
