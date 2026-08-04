@@ -525,6 +525,44 @@ class IBKRAdapter(BrokerAdapter):
             ))
         return out
 
+    def mark_option(self, underlying: str, expiration: str, strike: float,
+                    right: str, asof=None):
+        """Per-share mid for ONE option contract, or None when no usable quote.
+
+        WHY: the management pass used to mark positions by fetching the WHOLE
+        multi-expiry chain (~30-120s each with streaming settles). At 4-6 open
+        positions that blows the cron's timeout and later positions silently go
+        unmanaged. Marking needs exactly the position's own strikes — four
+        contracts at most — so fetch exactly those. `_marker` in core/manage.py
+        prefers this method automatically when an adapter provides it.
+
+        Same honesty rules as the chain path: 0/NaN quotes are ABSENT (None),
+        never a fabricated price; tradingClass is pinned to the underlying so
+        SPY/IWM dual-class ambiguity cannot pick the wrong contract."""
+        ib = _load_ib()
+        live = self._require()
+        try:
+            c = ib.Option(underlying, ib_expiry(expiration), float(strike),
+                          option_right(right), "SMART", currency="USD",
+                          tradingClass=underlying)
+            live.qualifyContracts(c)
+            if not getattr(c, "conId", 0):
+                return None
+            tk = live.reqMktData(c, "", False, False)
+            live.sleep(CHAIN_SETTLE_SECS)
+            bid, ask, last = _to_float(tk.bid), _to_float(tk.ask), _to_float(tk.last)
+            try:
+                live.cancelMktData(c)
+            except Exception:
+                pass
+            if bid > 0 and ask > 0:
+                return round((bid + ask) / 2, 4)
+            if last > 0:
+                return last
+            return None
+        except Exception:
+            return None                      # no mark -> the caller HOLDS, never guesses
+
     def get_history(self, symbol: str, days: int = 120,
                     asof: Optional[str] = None) -> list[dict]:
         ib = _load_ib()

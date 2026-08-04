@@ -135,7 +135,7 @@ def _occ(underlying: str, expiration: str, right: str, strike: float) -> str:
     return f"{underlying}{yymmdd}{cp}{int(round(strike * 1000)):08d}"
 
 
-def _closing_order(pos: dict, value_ps: float) -> OrderRequest:
+def _closing_order(pos: dict, value_ps: float, attempt: int = 0) -> OrderRequest:
     """Close the spread by reversing every leg (sell longs, buy back shorts)."""
     contracts = int(pos["contracts"])
     exp, u = pos["expiration"], pos["underlying"]
@@ -160,10 +160,33 @@ def _closing_order(pos: dict, value_ps: float) -> OrderRequest:
     # is genuinely a debit -> est_credit 0 -> positive (debit) price. (Magnitude
     # is irrelevant to the adapters; only the sign drives the price sign.)
     is_debit_close = not bool(pos.get("is_credit", 1))
+
+    # ── ESCALATION LADDER (the chasing-stop fix) ────────────────────────────
+    # A mid-price DAY limit re-priced once per cycle can chase a falling market
+    # forever: each cycle honestly re-prices, never crosses, and the exit the
+    # stop-loss ordered never happens. Each failed attempt therefore concedes
+    # 15% more of the price (capped at 3 steps = 45%): when SELLING to close a
+    # debit spread we accept less; when PAYING to close a credit spread we offer
+    # more, capped at the width (the max the spread can be worth). Floor $0.01 —
+    # a $0.00 combo limit is 'give it away at any price' and brokers commonly
+    # reject it; one tick is the honest minimum. The BOOKED exit value stays the
+    # mark (decision.exit_value_ps); only the working limit escalates, and the
+    # realized fill is captured separately, so P&L never inherits the concession
+    # as an assumption.
+    esc = 0.15 * min(max(0, int(attempt)), 3)
+    width = float(pos.get("width") or 0.0)
+    if is_debit_close:                            # we RECEIVE: concede downward
+        limit = round(max(0.01, value_ps * (1.0 - esc)), 2)
+    else:                                         # we PAY: concede upward, <= width
+        limit = round(value_ps * (1.0 + esc), 2)
+        if width > 0:
+            limit = min(limit, round(width, 2))
+        limit = max(0.01, limit)
+
     est_credit = round(max(0.0, value_ps) * 100, 2) if is_debit_close else 0.0
     return OrderRequest(
         client_order_id=f"CLOSE-{pos['client_order_id']}",
-        legs=legs, order_type="limit", limit_price=round(max(0.0, value_ps), 2),
+        legs=legs, order_type="limit", limit_price=limit,
         strategy=f"close_{pos.get('structure', 'vertical')}", est_credit=est_credit,
         max_loss=0.0, underlying=pos["underlying"],
     )
@@ -228,6 +251,21 @@ def _close_leg_state(store: Store, pid: int, held: dict) -> str:
     if present == 0:
         return "none_held"
     return "partial"
+
+
+def _close_attempts(store: Store, pos_id: int) -> int:
+    """How many times a close has already been placed for this position.
+
+    Counted from the journal (close_pending is written at every placement)
+    because the orders table keys on client_order_id and INSERT OR REPLACEs —
+    re-placements are invisible there. Drives the escalation ladder below."""
+    try:
+        return int(store.conn.execute(
+            "SELECT COUNT(*) FROM journal WHERE kind='close_pending' "
+            "AND json_extract(payload,'$.position_id') = ?", (int(pos_id),)
+        ).fetchone()[0] or 0)
+    except Exception:
+        return 0
 
 
 def _pnl_at(pos: dict, value_ps: float) -> float:
@@ -509,7 +547,14 @@ def manage_open_positions(adapter: BrokerAdapter, store: Store, config,
                     summary["held"].append({"underlying": pos["underlying"],
                                             "reason": "assignment_review"})
                     continue
-            order = _closing_order(pos, decision.exit_value_ps)
+            attempt = _close_attempts(store, pos["id"])
+            order = _closing_order(pos, decision.exit_value_ps, attempt)
+            if attempt > 0:
+                store.append(_now_iso(), "close_escalated", {
+                    "position_id": pos["id"], "underlying": pos["underlying"],
+                    "attempt": attempt, "limit": order.limit_price,
+                    "mark": decision.exit_value_ps,
+                    "note": "prior close(s) never filled; conceding price to get out"})
             result = adapter.place_order(order)
             store.record_order(_now_iso(), order, result)
             if not result.accepted:

@@ -199,9 +199,12 @@ def _slippage(store: Store) -> dict[str, Any]:
     with the market, so it belongs on the front page, not in a log."""
     from core.fills import summarize_slippage
     rows = [dict(r) for r in store.conn.execute(
-        "SELECT entry_slip_ps, exit_slip_ps FROM positions "
+        "SELECT entry_slip_ps, exit_slip_ps, fill_mode FROM positions "
         "WHERE entry_slip_ps IS NOT NULL OR exit_slip_ps IS NOT NULL").fetchall()]
-    return summarize_slippage(rows)
+    out = summarize_slippage(rows)
+    out["paper_fills"] = sum(1 for r in rows if (r.get("fill_mode") or "paper") == "paper")
+    out["live_fills"] = sum(1 for r in rows if r.get("fill_mode") == "live")
+    return out
 
 
 def _gather(store: Store) -> dict[str, Any]:
@@ -497,7 +500,12 @@ if (sl.legs_measured){{
   h += '<div class="gate"><span>Worst</span><b>'+(sl.worst_slip_ps==null?'—':sl.worst_slip_ps+' /sh')+'</b></div>';
   h += '<div class="gate"><span>Coverage</span><b>'+Math.round((sl.coverage||0)*100)+'% of positions</b></div>';
   h += '<div class="muted" style="font-size:11px;margin-top:6px">Positive = worse than intended. '+
-       'On a few-cents credit this is the difference between edge and none.</div></div>';
+       'On a few-cents credit this is the difference between edge and none.</div>';
+  if (sl.paper_fills && !sl.live_fills)
+    h += '<div class="muted" style="font-size:11px;margin-top:4px">All measured fills are PAPER. '+
+         'IBKR paper fills limit orders optimistically (near mid, no queue) — treat these '+
+         'slippage numbers as a LOWER bound until live fills exist.</div>';
+  h += '</div>';
 }}
 
 // ── Why it did / did not trade — the question worth answering daily ──

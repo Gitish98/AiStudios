@@ -109,6 +109,13 @@ class Store:
                 c.execute(f"ALTER TABLE positions ADD COLUMN {col} REAL")
         if "last_mark_ts" not in have:
             c.execute("ALTER TABLE positions ADD COLUMN last_mark_ts TEXT")
+        if "fill_mode" not in have:
+            # paper|live provenance on every captured fill. IBKR paper fills limit
+            # orders optimistically (near mid, no queue), so the slippage series —
+            # the number the edge verdict rests on — is a LOWER bound until it
+            # contains live fills. The verdict must carry that caveat with data,
+            # not memory.
+            c.execute("ALTER TABLE positions ADD COLUMN fill_mode TEXT")
         self.conn.commit()
 
     # ── journal ──────────────────────────────────────────────────────────────
@@ -252,8 +259,9 @@ class Store:
         if fill_ps is None and slip_ps is None:
             return
         self.conn.execute(
-            "UPDATE positions SET entry_fill_ps = ?, entry_slip_ps = ? WHERE id = ?",
-            (fill_ps, slip_ps, pos_id))
+            "UPDATE positions SET entry_fill_ps = ?, entry_slip_ps = ?, "
+            "fill_mode = COALESCE(fill_mode, ?) WHERE id = ?",
+            (fill_ps, slip_ps, self.get_kv("mode") or "paper", pos_id))
         self.conn.commit()
 
     def record_exit_fill(self, pos_id: int, fill_ps: Optional[float],
@@ -262,8 +270,9 @@ class Store:
         if fill_ps is None and slip_ps is None:
             return
         self.conn.execute(
-            "UPDATE positions SET exit_fill_ps = ?, exit_slip_ps = ? WHERE id = ?",
-            (fill_ps, slip_ps, pos_id))
+            "UPDATE positions SET exit_fill_ps = ?, exit_slip_ps = ?, "
+            "fill_mode = COALESCE(fill_mode, ?) WHERE id = ?",
+            (fill_ps, slip_ps, self.get_kv("mode") or "paper", pos_id))
         self.conn.commit()
 
     def record_mark(self, pos_id: int, mark_ps: Optional[float],

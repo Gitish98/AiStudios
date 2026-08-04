@@ -14,7 +14,7 @@ cd "$REPO_DIR"
 mkdir -p logs
 
 PY="$REPO_DIR/.venv/bin/python"
-CYCLE_TIMEOUT="${CYCLE_TIMEOUT:-900}"   # 15 min; a healthy cycle is far under this
+CYCLE_TIMEOUT="${CYCLE_TIMEOUT:-1800}"  # 30 min: cycles grow with the book (chains + per-leg marks); a stall still dies well before the next cron slot
 # Optional heartbeat URL (healthchecks.io etc.). Read from a gitignored file so
 # the URL — which is a shared secret — never enters the repo or the crontab.
 HC_URL="$(cat "$REPO_DIR/.healthcheck_url" 2>/dev/null || true)"

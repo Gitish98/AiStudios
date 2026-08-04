@@ -161,6 +161,22 @@ def _run_cycle_body(args, dry_run=False):
         print(f"  Skipping cycle — {trading_day_reason(check_day)}. "
               f"Use --force to override.")
         return
+    # HALF DAYS (13:00 ET close): the 15:30 cron would otherwise run a full cycle
+    # hours after the close on stale quotes. Live runs only (an explicit --asof is
+    # a deterministic backfill and knows what it is doing).
+    if enforce and not getattr(args, "force", False) and args.asof is None:
+        from core.market_calendar import early_close_et
+        ec = early_close_et(check_day)
+        if ec is not None:
+            try:
+                from zoneinfo import ZoneInfo
+                now_et = datetime.now(ZoneInfo("America/New_York"))
+            except Exception:
+                now_et = None      # tz database unavailable -> run normally
+            if now_et is not None and now_et.hour >= ec:
+                print(f"  Skipping cycle — market closed early today ({ec}:00 ET "
+                      f"half day); quotes are stale. Use --force to override.")
+                return
 
     store = Store()
     build_res = build_execution_adapter(config, asof=args.asof, store=store)
@@ -303,6 +319,13 @@ def cmd_performance(args):
         print("  ⛔ Not yet eligible to even consider live:")
         for r in grad["reasons"]:
             print(f"       - {r}")
+    n_paper = store.conn.execute(
+        "SELECT COUNT(*) FROM positions WHERE fill_mode='paper'").fetchone()[0]
+    n_live = store.conn.execute(
+        "SELECT COUNT(*) FROM positions WHERE fill_mode='live'").fetchone()[0]
+    if n_paper and not n_live:
+        print("\n  ⚠️  All measured fills are PAPER: IBKR paper fills optimistically, so")
+        print("  realized slippage here is a LOWER bound. Live re-validation required.")
     print("\n  Reminder: paper/backtest curves are optimistic; option prices here are")
     print("  modeled. Not financial advice.")
     store.close()

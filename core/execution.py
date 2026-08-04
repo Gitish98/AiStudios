@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -78,6 +79,7 @@ def run_cycle(
     + an ANTHROPIC_API_KEY."""
     asof = asof or datetime.now(timezone.utc).date().isoformat()
     ts = _now_iso()
+    _t0 = time.monotonic()
     limits = RiskLimits.from_config(config.risk,
                                 (config.raw.get("overnight", {}) or {}))
     gate = RiskGate(limits)
@@ -409,9 +411,10 @@ def run_cycle(
                     "note": "equity position with no tracked origin; trading frozen "
                             "pending operator review (cli.py unfreeze)"})
 
+    summary["duration_secs"] = round(time.monotonic() - _t0, 1)
     store.append(_now_iso(), "cycle_end", {
         "placed": len(summary["placed"]), "rejected": len(summary["rejected"]),
-        "reconcile_ok": rec["ok"]})
+        "reconcile_ok": rec["ok"], "duration_secs": summary["duration_secs"]})
 
     # Read-only last-cycle marker for the dashboard. Best-effort.
     try:
