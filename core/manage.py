@@ -88,7 +88,31 @@ def mark_spread_value_ps(adapter: BrokerAdapter, pos: dict) -> Optional[float]:
         return None
     value = (hi - lo) if family == "put" else (lo - hi)
     width = abs(pos["short_strike"] - pos["long_strike"])
-    return round(max(0.0, min(width, value)), 4)
+    return _sane_spread_value(value, width)
+
+
+def _sane_spread_value(raw: float, width: float) -> Optional[float]:
+    """Clamp a spread value into [0, width] — but REFUSE a value that was never
+    plausible in the first place.
+
+    A vertical spread cannot be worth less than 0 or more than its width; those are
+    arbitrage bounds, not preferences. So a raw value outside them means the QUOTES
+    are bad, not that the spread is extreme. Silently clamping hides that: it turns
+    garbage into a confident-looking price at exactly the boundary.
+
+    This is not hypothetical. On 2026-07-30, after hours, stale quotes on a 1.00-wide
+    SPY debit spread produced a raw value >= 1.00, which clamped to exactly the width
+    — the maximum possible — and read as "profit target hit, +$69". The system placed
+    a close at a $1.00 limit on a spread actually worth 0.08. The order never filled,
+    and the position was frozen for five days. An unusable mark must be None (hold),
+    never a number at the boundary.
+
+    A small tolerance is allowed because bid/ask noise on two legs can legitimately
+    overshoot by a cent or two near expiry."""
+    tol = max(0.02, 0.05 * width)
+    if raw < -tol or raw > width + tol:
+        return None
+    return round(max(0.0, min(width, raw)), 4)
 
 
 def _spot(adapter: BrokerAdapter, underlying: str) -> Optional[float]:
@@ -157,6 +181,12 @@ def _is_filled(result, contracts: int) -> bool:
     return (result.status or "").lower() == "filled"
 
 
+def _legs_still_held(info: dict, held: dict) -> bool:
+    """Does the broker still hold ANY leg recorded for this pending close?
+    Used to tell "the close never filled" from "it filled and the feed forgot"."""
+    return any(abs(float(v or 0.0)) > 1e-9 for v in (held or {}).values())
+
+
 def _load_pending(store: Store) -> dict:
     raw = store.get_kv("pending_closes")
     return json.loads(raw) if raw else {}
@@ -177,10 +207,42 @@ def _finalize_pending_closes(adapter: BrokerAdapter, store: Store, asof: str) ->
         bro = {o.client_order_id: o for o in adapter.list_orders()}
     except Exception:
         return pend  # can't confirm -> leave pending, the position stays tracked
+    # Broker POSITIONS are durable across sessions; the order feed is not.
+    try:
+        from .reconcile import broker_legs
+        held = broker_legs(adapter)
+    except Exception:
+        held = None
+
     changed = False
     for pid, info in list(pend.items()):
         o = bro.get(info["coid"])
         if o is None:
+            # The close order has VANISHED from the broker (a DAY order that
+            # expired unfilled, or a session roll). Skipping meant the position was
+            # frozen in close_pending FOREVER: never marked, never re-evaluated,
+            # never exited — observed live, frozen for five days while its real
+            # value moved from a fabricated profit to a genuine stop-loss.
+            # Resolve against positions instead.
+            if held is None:
+                continue                       # genuinely cannot confirm
+            if _legs_still_held(info, held):
+                # Still held => the close did NOT fill. Release it so the position
+                # is re-priced and re-decided from scratch next pass.
+                del pend[pid]; changed = True
+                store.set_order_status(info["coid"], "canceled")
+                store.append(_now_iso(), "close_expired", {
+                    "position_id": int(pid), "coid": info["coid"],
+                    "note": "close order gone from broker but legs still held — "
+                            "releasing so the position is re-evaluated"})
+            else:
+                # Legs gone => it DID fill; the fill just never appeared in the feed.
+                store.close_position(int(pid), asof, _now_iso(), info["reason"],
+                                     info["exit_value_ps"], info["realized_pnl"])
+                store.append(_now_iso(), "position_closed", {
+                    "position_id": int(pid), "reason": info["reason"],
+                    "realized_pnl": info["realized_pnl"], "via": "positions_confirm"})
+                del pend[pid]; changed = True
             continue
         st = (o.status or "").lower()   # NEEDED by the dead-order branch below
         if _is_filled(o, 1):

@@ -593,3 +593,85 @@ def test_partial_fill_is_adopted_not_deleted_when_the_order_dies():
     held = {_leg_key("SPY", "2026-08-31", 735.0, "P"): -3.0,
             _leg_key("SPY", "2026-08-31", 736.0, "P"): +2.0}
     assert _held_units(row, held) == 2, "limited by the smaller leg"
+
+
+def test_impossible_spread_value_is_rejected_not_clamped():
+    """REGRESSION from a LIVE five-day freeze (2026-07-30).
+
+    Stale after-hours quotes on a 1.00-wide SPY debit spread produced a raw value
+    >= 1.00. The old code clamped it to exactly the width — the maximum possible —
+    which read as 'profit target hit, +$69'. The system then placed a close at a
+    $1.00 limit on a spread actually worth 0.08.
+
+    A vertical cannot be worth <0 or >width; those are arbitrage bounds. A value
+    outside them means the QUOTES are bad, and clamping turns garbage into a
+    confident price at the boundary. It must be None (hold) instead."""
+    from core.manage import _sane_spread_value
+
+    assert _sane_spread_value(0.08, 1.0) == 0.08        # ordinary
+    assert _sane_spread_value(1.0, 1.0) == 1.0          # legitimately at max
+    assert _sane_spread_value(1.03, 1.0) == 1.0         # bid/ask noise -> clamp
+    assert _sane_spread_value(1.5, 1.0) is None         # impossible -> BAD DATA
+    assert _sane_spread_value(-0.5, 1.0) is None
+    # Wider spreads get a proportionally wider tolerance.
+    assert _sane_spread_value(5.2, 5.0) == 5.0
+    assert _sane_spread_value(7.0, 5.0) is None
+
+
+def test_vanished_close_order_releases_the_position():
+    """REGRESSION from the same live freeze. The close was a DAY order; it expired
+    unfilled and vanished from the broker feed entirely. `_finalize_pending_closes`
+    did `order not found -> continue`, so the position stayed in close_pending
+    FOREVER: skipped by management every cycle, never marked, never re-evaluated,
+    never exited — while its real value drifted into a genuine stop-loss it could
+    not act on. Resolve against POSITIONS, which are durable across sessions."""
+    import json, tempfile
+    from pathlib import Path
+    from core.brokers.base import Position
+    from core.manage import _finalize_pending_closes
+    from core.store import Store
+
+    def _seed(store):
+        pid = store.open_position({
+            "client_order_id": "AIS-x", "strategy": "volatility_breakout",
+            "structure": "put_debit_spread", "family": "put", "is_credit": 0,
+            "underlying": "SPY", "status": "open", "opened_asof": "2026-07-29",
+            "opened_ts": "2026-07-29T14:00:00+00:00", "expiration": "2026-08-31",
+            "contracts": 1, "short_strike": 735.0, "long_strike": 736.0, "width": 1.0,
+            "legs_json": "[]", "entry_credit_ps": 0.31, "max_loss": 31.0})
+        store.set_kv("pending_closes", json.dumps({str(pid): {
+            "coid": "CLOSE-AIS-x", "reason": "profit_target",
+            "exit_value_ps": 1.0, "realized_pnl": 69.0}}))
+        return pid
+
+    def _leg(strike, qty):
+        return Position(symbol="SPY", qty=qty, avg_price=100.0, market_value=0.0,
+                        asset_class="option", underlying="SPY",
+                        option_expiration="2026-08-31", option_strike=strike,
+                        option_right="P")
+
+    class _A:
+        name = "ibkr_paper"
+        def __init__(self, held): self._held = held
+        def list_orders(self): return []          # the close order is GONE
+        def get_positions(self): return self._held
+
+    # (a) Legs still held => the close never filled => release for re-evaluation.
+    with tempfile.TemporaryDirectory() as td:
+        st = Store(Path(td) / "p.db")
+        pid = _seed(st)
+        pend = _finalize_pending_closes(_A([_leg(735.0, -1), _leg(736.0, 1)]), st, "2026-08-04")
+        assert str(pid) not in pend, "a vanished close must not freeze the position"
+        assert len(st.get_open_positions()) == 1, "position stays OPEN and manageable"
+        assert st.conn.execute(
+            "SELECT COUNT(*) FROM journal WHERE kind='close_expired'").fetchone()[0] == 1
+        st.close()
+
+    # (b) Legs gone => it really did fill; record the close rather than reopening it.
+    with tempfile.TemporaryDirectory() as td:
+        st = Store(Path(td) / "p.db")
+        pid = _seed(st)
+        pend = _finalize_pending_closes(_A([]), st, "2026-08-04")
+        assert str(pid) not in pend
+        assert len(st.get_closed_positions()) == 1
+        st.close()

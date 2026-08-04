@@ -147,13 +147,30 @@ def test_breakout_accepts_liquid_short_leg():
     assert sigs and sigs[0].strategy == "call_debit_spread"
 
 
-# ── #6: a vertical's mark is clamped to [0, width] ───────────────────────────
+# ── #6: a vertical's mark is bounded by [0, width] — and an IMPOSSIBLE value is
+# rejected rather than clamped. This test originally asserted that a raw 8.0 on a
+# 5-wide spread clamps to 5.0. That behaviour caused a live five-day incident
+# (2026-07-30): stale after-hours quotes produced a raw value above the width, it
+# clamped to exactly the maximum, and that read as "profit target hit" on a spread
+# actually worth almost nothing. Small overshoot is bid/ask noise and still clamps;
+# a value far outside the arbitrage bounds means the QUOTES are bad. ───────────
 
-def test_mark_clamped_to_width():
-    class WideMark:
-        name = "ibkr_paper"
-        def mark_option(self, u, exp, strike, right, asof=None):
-            return {545: 10.0, 540: 2.0}[strike]   # raw value 8 > width 5
-    pos = {"underlying": "SPY", "expiration": "2026-02-19", "family": "put",
-           "structure": "put_credit_spread", "short_strike": 545, "long_strike": 540}
-    assert mark_spread_value_ps(WideMark(), pos) == 5.0
+def _pos(short=545, long_=540):
+    return {"underlying": "SPY", "expiration": "2026-02-19", "family": "put",
+            "structure": "put_credit_spread", "short_strike": short, "long_strike": long_}
+
+
+def test_mark_clamps_small_overshoot_but_rejects_impossible_values():
+    def _marker(prices):
+        class M:
+            name = "ibkr_paper"
+            def mark_option(self, u, exp, strike, right, asof=None):
+                return prices[strike]
+        return M()
+
+    # Raw 5.1 on a 5-wide spread: within tolerance -> clamp to the bound.
+    assert mark_spread_value_ps(_marker({545: 7.1, 540: 2.0}), _pos()) == 5.0
+    # Raw 8.0 on a 5-wide spread: 60% beyond the arbitrage bound -> BAD DATA.
+    assert mark_spread_value_ps(_marker({545: 10.0, 540: 2.0}), _pos()) is None
+    # A normal value passes through untouched.
+    assert mark_spread_value_ps(_marker({545: 4.0, 540: 2.0}), _pos()) == 2.0
