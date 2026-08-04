@@ -307,10 +307,12 @@ def manage_open_positions(adapter: BrokerAdapter, store: Store, config,
         decision = evaluate_exit(pos, value_ps, spot if spot is not None else 0.0,
                                  asof, params)
 
+        # Persist the valuation for the read-only dashboard on EVERY pass, not just
+        # on hold: a position with a close in flight was showing a blank mark, which
+        # is exactly when you most want to see what it is worth.
+        store.record_mark(pos["id"], value_ps, round(decision.realized_pnl, 2), _now_iso())
+
         if decision.action == "hold":
-            # Persist the valuation for the read-only dashboard.
-            store.record_mark(pos["id"], value_ps, round(decision.realized_pnl, 2),
-                              _now_iso())
             summary["unrealized_open"] += decision.realized_pnl  # here = unrealized mark
             summary["held"].append({
                 "underlying": pos["underlying"],
