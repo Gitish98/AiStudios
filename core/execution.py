@@ -36,6 +36,63 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def degraded_sim(store: Store, adapter) -> bool:
+    """True when a SIM adapter is about to run against a store that has REAL
+    broker history. Such a cycle must not run: it would bank synthetic IV
+    snapshots into the real IV series and could open fictional sim-filled
+    positions in the real book. A fresh dev store is unaffected.
+
+    Checks the STICKY 'ever_real_broker' flag (write-once, set by any real-broker
+    cycle), falling back to the rolling 'broker' kv. The rolling kv alone is not
+    enough: it is overwritten every cycle, so one sim-fallback cycle would blind
+    the check exactly when it matters."""
+    return (getattr(adapter, "name", "") == "sim"
+            and ((store.get_kv("ever_real_broker") == "1")
+                 or (store.get_kv("broker") or "sim") != "sim"))
+
+
+def _order_overlaps_book(order: OrderRequest, store: Store):
+    """The leg (as 'SYM exp strike right') this order shares with any tracked
+    ACTIVE position, or None.
+
+    Two positions holding the same contract make the broker's per-key leg map
+    ambiguous: fills, closes and assignment checks can no longer attribute a leg
+    to a position (the resolvers read NET quantities per contract key). Rather
+    than make every resolver quantity-aware for a rare case, refuse to create
+    the ambiguity: one tracked position per option contract, ever."""
+    import json as _json
+    from .reconcile import _leg_key
+    held: set = set()
+    blocked_underlyings: set = set()
+    for p in store.get_active_positions():
+        try:
+            u, exp = p.get("underlying"), p.get("expiration")
+            if p.get("structure") == "iron_condor":
+                j = _json.loads(p["legs_json"])         # raises if absent/corrupt
+                for k, r in (("sp", "P"), ("lp", "P"), ("sc", "C"), ("lc", "C")):
+                    held.add(_leg_key(u, exp, j[k], r))
+            else:
+                fam = p.get("family") or ("call" if "call" in (p.get("structure") or "") else "put")
+                r = "C" if fam == "call" else "P"
+                held.add(_leg_key(u, exp, p["short_strike"], r))
+                held.add(_leg_key(u, exp, p["long_strike"], r))
+        except Exception:
+            # FAIL CLOSED PER ROW: a row whose legs cannot be parsed might hold
+            # anything on its underlying — block that underlying rather than
+            # either crashing every future entry or silently ignoring the row.
+            blocked_underlyings.add(str(p.get("underlying") or "").upper())
+    if (order.underlying or "").upper() in blocked_underlyings:
+        return f"{order.underlying} (unparseable tracked position — failing closed)"
+    for leg in order.legs:
+        if leg.strike is None or not leg.expiration:
+            continue
+        key = _leg_key(order.underlying or leg.symbol, leg.expiration,
+                       leg.strike, "C" if leg.option_type == "call" else "P")
+        if key in held:
+            return f"{key[0]} {key[2]:g}{key[3]} {key[1]}"
+    return None
+
+
 def _client_order_id(signal: Signal, asof: str) -> str:
     """Deterministic idempotency key: same signal on same day never double-places."""
     basis = f"{signal.strategy}|{signal.underlying}|{asof}|" + "|".join(
@@ -94,6 +151,13 @@ def run_cycle(
         store.set_kv("buying_power", str(account.buying_power))
         store.set_kv("broker", adapter.name)
         store.set_kv("mode", "paper" if adapter.is_paper else "live")
+        if adapter.name != "sim":
+            # WRITE-ONCE, never cleared: "this store has traded against a real
+            # broker". The rolling 'broker' kv is overwritten every cycle, so a
+            # single pre-guard sim-fallback cycle would blind a guard that read
+            # it — the sticky flag cannot be blinded by the thing it guards
+            # against. (Preflight review finding, before this ever shipped.)
+            store.set_kv("ever_real_broker", "1")
     except Exception:
         pass
 
@@ -293,6 +357,16 @@ def run_cycle(
                     summary["skipped_duplicates"].append(base_order.client_order_id)
                     continue
                 seen_ids.add(base_order.client_order_id)
+
+                clash = _order_overlaps_book(base_order, store)
+                if clash:
+                    summary["rejected"].append({
+                        "underlying": base_order.underlying,
+                        "strategy": base_order.strategy,
+                        "reasons": [f"legs overlap a tracked position ({clash}) — "
+                                    "one position per contract, or fills/closes "
+                                    "become unattributable"]})
+                    continue
 
                 # SIZE the order to the account (before the gate, so the gate
                 # re-checks the SIZED order). 0 contracts => one contract already

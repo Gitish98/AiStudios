@@ -13,6 +13,18 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_DIR"
 mkdir -p logs
 
+# SINGLE-INSTANCE LOCK: two cycles at once fight over the one IB clientId, the
+# one market-data session, and the SQLite store. A cron overrun meeting the next
+# slot (cycles grow with the book) or a manual run beside the cron should skip
+# loudly, not collide.
+LOCK="$REPO_DIR/data/.cycle.lock"
+mkdir -p "$REPO_DIR/data"
+exec 9>"$LOCK"
+if ! flock -n 9; then
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] another cycle is already running — skipping (single-instance lock)"
+    exit 0
+fi
+
 PY="$REPO_DIR/.venv/bin/python"
 CYCLE_TIMEOUT="${CYCLE_TIMEOUT:-1800}"  # 30 min: cycles grow with the book (chains + per-leg marks); a stall still dies well before the next cron slot
 # Optional heartbeat URL (healthchecks.io etc.). Read from a gitignored file so

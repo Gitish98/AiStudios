@@ -1,20 +1,84 @@
 """
 US market-calendar guard. Prevents unattended cycles from firing on weekends and
-holidays. Uses pandas_market_calendars (NYSE) when installed; otherwise a stdlib
-fallback (weekends + a hardcoded US market-holiday set).
+holidays. Uses pandas_market_calendars (NYSE) when installed; otherwise a
+RULE-BASED stdlib fallback valid for ANY year.
 
-The fallback is deliberately conservative: if it isn't sure, it treats the day as
-a NON-trading day (fail closed — better to skip a cycle than run on a closed
-market). Override with --force on the CLI.
+Why rule-based and not a hardcoded list: the previous fallback enumerated
+2026-2027 and silently failed OPEN beyond it — every 2028 weekday, New Year's
+Day included, would have counted as a trading day on an unattended VM. But US
+market holidays are deterministic (fixed dates with weekend-observation shifts,
+nth-weekday rules, and Good Friday via the Easter computus), so the right fix is
+to compute them. The old hardcoded sets are kept below purely as a cross-check:
+a test asserts the rules reproduce them exactly for both years.
 """
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 
-# Fixed/observed US equity-market holidays (extend yearly). Conservative fallback
-# only; pandas_market_calendars is authoritative when available.
+def easter(year: int) -> date:
+    """Easter Sunday (Gregorian) — the Anonymous Gregorian computus."""
+    a = year % 19
+    b, c = divmod(year, 100)
+    d, e = divmod(b, 4)
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i, k = divmod(c, 4)
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    month, day = divmod(h + l - 7 * m + 114, 31)
+    return date(year, month, day + 1)
+
+
+def _nth_weekday(year: int, month: int, weekday: int, n: int) -> date:
+    d = date(year, month, 1)
+    first = d + timedelta(days=(weekday - d.weekday()) % 7)
+    return first + timedelta(weeks=n - 1)
+
+
+def _last_weekday(year: int, month: int, weekday: int) -> date:
+    if month == 12:
+        d = date(year, 12, 31)
+    else:
+        d = date(year, month + 1, 1) - timedelta(days=1)
+    return d - timedelta(days=(d.weekday() - weekday) % 7)
+
+
+def _observed(d: date) -> date:
+    """NYSE weekend observation: Sunday -> Monday after; Saturday -> Friday
+    before. (A Saturday New Year's Day is the one exception — simply not
+    observed — and is handled at its call site.)"""
+    if d.weekday() == 6:
+        return d + timedelta(days=1)
+    if d.weekday() == 5:
+        return d - timedelta(days=1)
+    return d
+
+
+def us_market_holidays(year: int) -> set[date]:
+    """Full US equity-market holiday set for any year, from the NYSE rules."""
+    out: set[date] = set()
+    ny = date(year, 1, 1)
+    if ny.weekday() == 6:                       # Sunday -> observed Monday
+        out.add(ny + timedelta(days=1))
+    elif ny.weekday() != 5:                     # Saturday -> NOT observed (NYSE rule)
+        out.add(ny)
+    out.add(_nth_weekday(year, 1, 0, 3))        # MLK: 3rd Monday of January
+    out.add(_nth_weekday(year, 2, 0, 3))        # Washington: 3rd Monday of February
+    out.add(easter(year) - timedelta(days=2))   # Good Friday
+    out.add(_last_weekday(year, 5, 0))          # Memorial Day: last Monday of May
+    out.add(_observed(date(year, 6, 19)))       # Juneteenth
+    out.add(_observed(date(year, 7, 4)))        # Independence Day
+    out.add(_nth_weekday(year, 9, 0, 1))        # Labor Day: 1st Monday of September
+    out.add(_nth_weekday(year, 11, 3, 4))       # Thanksgiving: 4th Thursday of November
+    out.add(_observed(date(year, 12, 25)))      # Christmas
+    return out
+
+
+# The previous hardcoded fallback, kept ONLY as a cross-check fixture: a test
+# asserts us_market_holidays() reproduces these exactly. Not consulted at runtime.
 _FALLBACK_HOLIDAYS = {
     # 2026
     "2026-01-01", "2026-01-19", "2026-02-16", "2026-04-03", "2026-05-25",
@@ -28,7 +92,7 @@ _FALLBACK_HOLIDAYS = {
 def _fallback_is_trading_day(d: date) -> bool:
     if d.weekday() >= 5:  # Sat/Sun
         return False
-    return d.isoformat() not in _FALLBACK_HOLIDAYS
+    return d not in us_market_holidays(d.year)
 
 
 def is_trading_day(d: date | None = None) -> bool:
@@ -57,11 +121,8 @@ def early_close_et(d: date | None = None) -> int | None:
     d = d or datetime.now().date()
     if not is_trading_day(d):
         return None
-    # Day after Thanksgiving: Thanksgiving = 4th Thursday of November.
-    if d.month == 11:
-        first_thu = 1 + (3 - date(d.year, 11, 1).weekday()) % 7
-        if d.day == first_thu + 22:              # Thursday + 21 days, +1 for Friday
-            return 13
+    if d.month == 11 and d == _nth_weekday(d.year, 11, 3, 4) + timedelta(days=1):
+        return 13                                # day after Thanksgiving
     if d.month == 12 and d.day == 24:
         return 13
     if d.month == 7 and d.day == 3:
@@ -69,10 +130,25 @@ def early_close_et(d: date | None = None) -> int | None:
     return None
 
 
+def within_rth(hour: int, minute: int, close_hour: int = 16) -> bool:
+    """Is (hour, minute) ET inside regular trading hours [09:30, close)?
+
+    Minutes matter: an hour-only check admits 9:00-9:29 premarket — exactly
+    where a stale-quote cycle lands when a UTC-written crontab drifts an hour
+    after a DST transition."""
+    return (hour, minute) >= (9, 30) and hour < close_hour
+
+
 def trading_day_reason(d: date | None = None) -> str:
     d = d or datetime.now().date()
     if d.weekday() >= 5:
         return f"{d.isoformat()} is a weekend"
-    if d.isoformat() in _FALLBACK_HOLIDAYS:
+    if d in us_market_holidays(d.year):
         return f"{d.isoformat()} is a US market holiday"
-    return f"{d.isoformat()} is a trading day"
+    # Reachable when the authoritative NYSE calendar (pandas_market_calendars)
+    # declared the day closed but the rule-based fallback has no rule for it —
+    # an ad-hoc/special closure (e.g. a national day of mourning). Say THAT,
+    # not the self-contradictory "is a trading day" in a skip message that
+    # would invite --force on a genuinely closed market.
+    return (f"{d.isoformat()} is closed per the NYSE calendar "
+            "(special closure not covered by the fallback rules)")

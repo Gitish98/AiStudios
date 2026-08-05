@@ -30,6 +30,12 @@ from .sim import SimAdapter
 class BrokerBuild:
     adapter: BrokerAdapter
     note: str  # human-readable explanation of what was built and why
+    # True ONLY when a real broker was requested and the factory FELL BACK to sim
+    # (Gateway unreachable, keys missing, unknown broker name). Explicitly
+    # configured sim is not degraded. The run-cycle guard keys on this instead of
+    # adapter.name so it can never confuse "dev chose sim" with "the connect
+    # failed" — the latter must refuse to run against a store with real history.
+    degraded: bool = False
 
 
 def build_execution_adapter(config: Config, asof: Optional[str] = None,
@@ -37,8 +43,9 @@ def build_execution_adapter(config: Config, asof: Optional[str] = None,
     equity = float(config.account.get("starting_equity_usd", 30000))
     acct_type = str(config.account.get("type", "margin")).lower()
 
-    def _sim(note: str) -> BrokerBuild:
-        return BrokerBuild(SimAdapter(asof=asof, equity=equity, account_type=acct_type), note)
+    def _sim(note: str, degraded: bool = False) -> BrokerBuild:
+        return BrokerBuild(SimAdapter(asof=asof, equity=equity, account_type=acct_type),
+                           note, degraded=degraded)
 
     def _build_paper() -> BrokerBuild:
         requested = str(config.brokers.get("execution", "alpaca_paper")).lower()
@@ -62,7 +69,7 @@ def build_execution_adapter(config: Config, asof: Optional[str] = None,
                 f"ibkr_paper requested but no IB Gateway answered at {host}:{port} "
                 "(or ib_async/ib_insync isn't installed) — falling back to SIM so the "
                 "cycle still runs. Start IB Gateway on a host and re-run. "
-                "See docs/08-ibkr-gateway-runbook.md.")
+                "See docs/08-ibkr-gateway-runbook.md.", degraded=True)
 
         if requested in ("alpaca", "alpaca_paper"):
             key = os.environ.get("ALPACA_PAPER_KEY", "")
@@ -74,9 +81,9 @@ def build_execution_adapter(config: Config, asof: Optional[str] = None,
             return _sim(
                 "alpaca_paper requested but ALPACA_PAPER_KEY/SECRET are missing — "
                 "falling back to SIM so the cycle still runs. Add keys to .env to use "
-                "the real paper account.")
+                "the real paper account.", degraded=True)
 
-        return _sim(f"Unknown broker '{requested}'; defaulted to SIM.")
+        return _sim(f"Unknown broker '{requested}'; defaulted to SIM.", degraded=True)
 
     # ── PAPER (the default) ───────────────────────────────────────────────────
     if config.is_paper:

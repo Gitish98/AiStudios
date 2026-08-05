@@ -96,6 +96,20 @@ def cmd_status(args):
         fx_note = getattr(adapter, "fx_note", None)
         if fx_note:
             print(f"  FX               : {fx_note}")
+        try:
+            from core.risk import RiskLimits
+            L = RiskLimits.from_config(config.risk,
+                                       (config.raw.get("overnight", {}) or {}))
+            worst = L.max_concurrent_positions * L.per_trade_risk_pct * a.equity
+            binding = min(("cluster", L.max_cluster_risk_pct),
+                          ("overnight", L.max_overnight_defined_risk_pct),
+                          ("heat", L.portfolio_heat_pct), key=lambda t: t[1])
+            print(f"  Risk structure   : worst-case book "
+                  f"{L.max_concurrent_positions}x{L.per_trade_risk_pct:.2%} = "
+                  f"${worst:,.0f}; tightest portfolio cap: {binding[0]} "
+                  f"({binding[1]:.1%} = ${binding[1]*a.equity:,.0f})")
+        except Exception:
+            pass
     except Exception as e:
         print(f"\n  Account: unavailable ({e})")
 
@@ -128,6 +142,40 @@ def cmd_status(args):
     store.close()
 
 
+_CYCLE_LOCK_HANDLE = None
+
+
+def _acquire_cycle_lock() -> bool:
+    """Cross-entrypoint single-instance lock. The shell wrapper's flock only
+    covers cron; the documented manual path (`python cli.py run-cycle`, the VM's
+    `ais` alias) bypassed it, and two concurrent cycles fight over the one IB
+    clientId, the one market-data session, and the SQLite store. Held for the
+    process lifetime; released by the OS on any exit, crash included."""
+    global _CYCLE_LOCK_HANDLE
+    import os
+    try:
+        path = REPO_ROOT / "data" / ".cycle.pylock"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        f = open(path, "a+")
+        f.seek(0)
+        if os.name == "nt":
+            import msvcrt
+            msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        try:
+            f.close()
+        except Exception:
+            pass
+        return False
+    except Exception:
+        return True          # lock machinery unavailable -> do not block trading
+    _CYCLE_LOCK_HANDLE = f
+    return True
+
+
 def cmd_run_cycle(args, dry_run=False):
     """Wrapper so an unattended cron run FAILS LOUDLY. The body used to swallow
     everything and always return 0, so a monitor could never distinguish a healthy
@@ -150,39 +198,99 @@ def cmd_run_cycle(args, dry_run=False):
 
 
 def _run_cycle_body(args, dry_run=False):
+    # SINGLE INSTANCE, before anything else: two cycles fight over the one IB
+    # clientId, the one market-data session, and the store. The overlapping run
+    # skips benignly (the other instance is doing the work).
+    if not _acquire_cycle_lock():
+        print("  Another cycle is already running — skipping (single-instance lock).")
+        return
+
     config = load_config()
 
-    # Market-calendar guard (unless --force). Honors --asof for deterministic runs.
+    # Market-calendar + market-hours guards, sharing ONE clock: on a live run the
+    # ET wall clock supplies BOTH the date and the hour, so a UTC system clock
+    # can never split them (date from one timezone, hour from another).
     from datetime import date as _date
-    from core.market_calendar import is_trading_day, trading_day_reason
-    check_day = _date.fromisoformat(args.asof) if args.asof else None
+    from core.market_calendar import (early_close_et, is_trading_day,
+                                      trading_day_reason, within_rth)
     enforce = (config.raw.get("market", {}) or {}).get("enforce_calendar", True)
-    if enforce and not getattr(args, "force", False) and not is_trading_day(check_day):
+    force = getattr(args, "force", False)
+    now_et = None
+    if args.asof is None:
+        try:
+            from zoneinfo import ZoneInfo
+            now_et = datetime.now(ZoneInfo("America/New_York"))
+        except Exception:
+            # tzdata is in requirements (load-bearing on Windows); if it is
+            # still missing, say loudly that the time-of-day guards are off
+            # rather than silently failing open.
+            print("  ⚠️  tz database unavailable — half-day and market-hours "
+                  "guards are DISABLED. Install tzdata.")
+    check_day = (_date.fromisoformat(args.asof) if args.asof
+                 else (now_et.date() if now_et is not None else None))
+    if enforce and not force and not is_trading_day(check_day):
         print(f"  Skipping cycle — {trading_day_reason(check_day)}. "
               f"Use --force to override.")
         return
-    # HALF DAYS (13:00 ET close): the 15:30 cron would otherwise run a full cycle
-    # hours after the close on stale quotes. Live runs only (an explicit --asof is
-    # a deterministic backfill and knows what it is doing).
-    if enforce and not getattr(args, "force", False) and args.asof is None:
-        from core.market_calendar import early_close_et
+    if enforce and not force and now_et is not None:
         ec = early_close_et(check_day)
-        if ec is not None:
-            try:
-                from zoneinfo import ZoneInfo
-                now_et = datetime.now(ZoneInfo("America/New_York"))
-            except Exception:
-                now_et = None      # tz database unavailable -> run normally
-            if now_et is not None and now_et.hour >= ec:
+        if not within_rth(now_et.hour, now_et.minute, close_hour=(ec or 16)):
+            half_day_pm = ec is not None and (now_et.hour, now_et.minute) >= (ec, 0)
+            if half_day_pm:
+                # Normal calendar behavior: the 15:30 cron on a 13:00-close day.
                 print(f"  Skipping cycle — market closed early today ({ec}:00 ET "
                       f"half day); quotes are stale. Use --force to override.")
                 return
+            # OFF-HOURS on a full trading day = schedule/timezone drift or a
+            # stale-quote manual run. This must NOT read as success: journal it
+            # and exit 3 so the cron heartbeat carries the alarm — a permanently
+            # mis-scheduled VM would otherwise ping green forever while never
+            # actually managing the book. Ubuntu's cron schedules by the SYSTEM
+            # timezone (the crontab TZ= line sets only the job environment).
+            print(f"  Skipping cycle — {now_et:%H:%M} ET is outside regular "
+                  "trading hours (system clock/timezone drift?). "
+                  "Use --force to override.")
+            try:
+                _s = Store()
+                _s.append(datetime.now(timezone.utc).isoformat(), "offhours_skip", {
+                    "et": f"{now_et:%H:%M}", "severity": "high",
+                    "note": "live cycle attempted outside RTH — schedule or "
+                            "timezone drift; investigate the VM clock/crontab"})
+                _s.close()
+            except Exception:
+                pass
+            sys.exit(3)
 
     store = Store()
     build_res = build_execution_adapter(config, asof=args.asof, store=store)
     adapter = build_res.adapter
     print(_banner(adapter))
     print(f"  {build_res.note}\n")
+
+    # DEGRADED-SIM GUARD: refuse to run a sim cycle that would pollute a real
+    # store (synthetic IV into the real IV series; fictional sim-filled positions
+    # in the real book). Two independent signals, either suffices:
+    #   - the FACTORY says it fell back (a real broker was requested and the
+    #     connect failed) — authoritative, catches even a fresh store;
+    #   - the STICKY ever_real_broker marker says this store has real history
+    #     (the rolling 'broker' kv is overwritten each cycle and could be blinded
+    #     by one pre-guard sim cycle; the sticky flag cannot).
+    # --force is the deliberate operator override, journaled as such.
+    from core.execution import degraded_sim
+    _degraded = getattr(build_res, "degraded", False) or degraded_sim(store, adapter)
+    if _degraded and getattr(args, "force", False):
+        store.append(datetime.now(timezone.utc).isoformat(), "degraded_sim_override", {
+            "note": "operator ran a sim cycle over a real-history store with --force"})
+    elif _degraded:
+        store.append(datetime.now(timezone.utc).isoformat(), "degraded_sim_cycle", {
+            "severity": "critical",
+            "note": "real broker unreachable (or real-history store + sim adapter); "
+                    "refusing the sim fallback. No cycle ran."})
+        print("  ✗ Real broker unreachable and this store has REAL broker history — "
+              "refusing the sim fallback (it would pollute the real book/IV bank). "
+              "Use --force to deliberately override.")
+        store.close()
+        sys.exit(1)
 
     summary = run_cycle(adapter, _strategies(config), store, config,
                         asof=args.asof, dry_run=dry_run)

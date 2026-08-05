@@ -155,6 +155,20 @@ def parse_account_values(rows: list[tuple[str, str, Any]]) -> dict:
             "converted": converted}
 
 
+def fail_closed_if_unconverted(a: dict) -> dict:
+    """Zero out account figures when a non-USD base could not be converted.
+
+    Every cap, the sizing budget, and the daily-loss threshold are USD-denominated.
+    Feeding them raw CAD numbers overstates equity ~42% — every limit silently
+    loosens by the FX rate. The gate already fails closed on equity<=0, so zeroing
+    is the correct closed behavior; the fx_note explains WHY nothing is trading."""
+    if a.get("base_currency") != "USD" and not a.get("converted"):
+        a = dict(a)
+        a["equity"] = a["cash"] = a["buying_power"] = 0.0
+        a["fx_failed_closed"] = True
+    return a
+
+
 def build_order_plan(order: OrderRequest) -> dict:
     """Translate an OrderRequest into a broker-neutral IB order PLAN (a dict).
 
@@ -352,9 +366,13 @@ class IBKRAdapter(BrokerAdapter):
             self.fx_note = (f"account base is {a['base_currency']}; equity/cash/BP "
                             f"converted to USD at {a['usd_rate']:.4f} {a['base_currency']}/USD.")
         elif a["base_currency"] != "USD":
-            self.fx_note = (f"account base is {a['base_currency']} but no USD FX rate was "
-                            "available — values shown in base currency; USD risk caps are "
-                            "APPROXIMATE until an FX rate is present.")
+            # FAIL CLOSED, not approximate: unconverted CAD figures would loosen
+            # every USD cap by the FX rate. Zeroed equity makes the gate reject
+            # everything until a rate is available.
+            a = fail_closed_if_unconverted(a)
+            self.fx_note = (f"account base is {a['base_currency']} but no USD FX rate is "
+                            "available — FAILING CLOSED (equity reported as 0 so the "
+                            "risk gate rejects all orders until FX returns).")
         else:
             self.fx_note = None
         return Account(

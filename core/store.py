@@ -32,6 +32,19 @@ class Store:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(str(self.db_path))
         self.conn.row_factory = sqlite3.Row
+        # Two processes CAN touch this store (a cron overrun meeting the next
+        # slot, or a manual run beside the cron — belt to the wrapper's flock
+        # braces): wait out short lock contention instead of raising, and use WAL
+        # on the production DB so a reader never blocks the writer. WAL only for
+        # the default path — tests use throwaway DBs where WAL's sidecar files
+        # complicate Windows tempdir cleanup.
+        self.conn.execute("PRAGMA busy_timeout=5000")
+        self._wal = db_path is None
+        if db_path is None:
+            try:
+                self.conn.execute("PRAGMA journal_mode=WAL")
+            except sqlite3.Error:
+                pass
         self._migrate()
 
     def _migrate(self) -> None:
@@ -367,4 +380,12 @@ class Store:
         self.set_kv("kill_switch", "1" if on else "0")
 
     def close(self) -> None:
+        # Fold the WAL back into the main file so a plain single-file copy of
+        # portfolio.db (the documented backup path) stays complete — without
+        # this, the newest trades live only in portfolio.db-wal.
+        if getattr(self, "_wal", False):
+            try:
+                self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            except sqlite3.Error:
+                pass
         self.conn.close()

@@ -27,3 +27,4 @@ pandas-market-calendars>=4.3
 
 # Testing
 pytest>=8.0
+tzdata            # IANA tz database for zoneinfo — load-bearing on Windows (half-day/market-hours guards)
