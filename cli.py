@@ -145,18 +145,34 @@ def cmd_status(args):
 _CYCLE_LOCK_HANDLE = None
 
 
-def _acquire_cycle_lock() -> bool:
+def _acquire_cycle_lock(path=None) -> bool:
     """Cross-entrypoint single-instance lock. The shell wrapper's flock only
     covers cron; the documented manual path (`python cli.py run-cycle`, the VM's
     `ais` alias) bypassed it, and two concurrent cycles fight over the one IB
     clientId, the one market-data session, and the SQLite store. Held for the
-    process lifetime; released by the OS on any exit, crash included."""
+    process lifetime; released by the OS on any exit, crash included.
+
+    TWO SEPARATE FAILURE MODES, two behaviors (review finding — the original
+    conflated them into one except-OSError, so a broken data/ dir read as
+    "another cycle is running" and became a PERMANENT silent skip with a green
+    heartbeat):
+      - environment failure (mkdir/open: permissions, disk, exotic FS) ->
+        fail OPEN with a loud note. The guard exists to serialize cycles, not to
+        gate trading; a genuinely broken data/ dir crashes Store() loudly two
+        lines later anyway, which alarms through the heartbeat.
+      - the LOCK CALL itself raising OSError -> genuinely held -> skip."""
     global _CYCLE_LOCK_HANDLE
     import os
+    from pathlib import Path
     try:
-        path = REPO_ROOT / "data" / ".cycle.pylock"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        f = open(path, "a+")
+        lock_path = Path(path) if path else (REPO_ROOT / "data" / ".cycle.pylock")
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        f = open(lock_path, "a+")
+    except Exception:
+        print("  ⚠️  cycle-lock unavailable (cannot create data/.cycle.pylock) — "
+              "proceeding WITHOUT single-instance protection.")
+        return True
+    try:
         f.seek(0)
         if os.name == "nt":
             import msvcrt
@@ -165,15 +181,35 @@ def _acquire_cycle_lock() -> bool:
             import fcntl
             fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
-        try:
-            f.close()
-        except Exception:
-            pass
-        return False
+        f.close()
+        return False                     # held by another cycle: the honest skip
     except Exception:
-        return True          # lock machinery unavailable -> do not block trading
+        return True                      # lock machinery absent -> don't block trading
     _CYCLE_LOCK_HANDLE = f
     return True
+
+
+def _degraded_action(factory_fallback: bool, sticky_real_history: bool,
+                     dry_run: bool, allow: bool) -> str:
+    """What to do about a sim adapter that wasn't explicitly chosen.
+
+    'run'      — nothing degraded, or a FRESH-store dry-run (the documented dev
+                 flow: poke at signals with no gateway; a fresh sim-only store
+                 taking synthetic IV is exactly what sim development is).
+    'override' — the operator passed the DEDICATED --allow-degraded-sim flag.
+                 Generic --force deliberately does NOT satisfy this (review
+                 finding: one consent token was silently authorizing two
+                 unrelated overrides — a --force passed for a calendar reason
+                 during a Gateway outage would have run a sim cycle that
+                 OVERWRITES that day's real IV snapshot).
+    'refuse'   — everything else: exit 1, loudly, through the heartbeat."""
+    if not (factory_fallback or sticky_real_history):
+        return "run"
+    if allow:
+        return "override"
+    if dry_run and not sticky_real_history:
+        return "run"
+    return "refuse"
 
 
 def cmd_run_cycle(args, dry_run=False):
@@ -250,11 +286,16 @@ def _run_cycle_body(args, dry_run=False):
             print(f"  Skipping cycle — {now_et:%H:%M} ET is outside regular "
                   "trading hours (system clock/timezone drift?). "
                   "Use --force to override.")
+            if dry_run:
+                # A deliberate evening dry-run is inspection, not drift: no
+                # severity-high journal row, no alarming exit code — the
+                # drift-alarm stream must stay meaningful for real cron runs.
+                return
             try:
                 _s = Store()
                 _s.append(datetime.now(timezone.utc).isoformat(), "offhours_skip", {
                     "et": f"{now_et:%H:%M}", "severity": "high",
-                    "note": "live cycle attempted outside RTH — schedule or "
+                    "note": "unattended cycle attempted outside RTH — schedule or "
                             "timezone drift; investigate the VM clock/crontab"})
                 _s.close()
             except Exception:
@@ -268,27 +309,40 @@ def _run_cycle_body(args, dry_run=False):
     print(f"  {build_res.note}\n")
 
     # DEGRADED-SIM GUARD: refuse to run a sim cycle that would pollute a real
-    # store (synthetic IV into the real IV series; fictional sim-filled positions
-    # in the real book). Two independent signals, either suffices:
+    # store (synthetic IV OVERWRITING that day's real snapshot — record_iv_snapshot
+    # is INSERT OR REPLACE — and fictional sim-filled positions in the real book).
+    # Two independent signals, either suffices:
     #   - the FACTORY says it fell back (a real broker was requested and the
     #     connect failed) — authoritative, catches even a fresh store;
-    #   - the STICKY ever_real_broker marker says this store has real history
-    #     (the rolling 'broker' kv is overwritten each cycle and could be blinded
-    #     by one pre-guard sim cycle; the sticky flag cannot).
-    # --force is the deliberate operator override, journaled as such.
+    #   - the STICKY ever_real_broker marker says this store has real history.
+    # The override is a DEDICATED flag; generic --force never satisfies it.
     from core.execution import degraded_sim
-    _degraded = getattr(build_res, "degraded", False) or degraded_sim(store, adapter)
-    if _degraded and getattr(args, "force", False):
+    _sticky = degraded_sim(store, adapter)
+    _fallback = getattr(build_res, "degraded", False)
+    _act = _degraded_action(_fallback, _sticky, dry_run,
+                            getattr(args, "allow_degraded_sim", False))
+    if _act == "override":
+        print("  ⚠️  --allow-degraded-sim: running a SIM cycle over this store.")
+        print("      Synthetic quotes will drive every decision, and today's REAL")
+        print("      IV snapshot (if banked) will be OVERWRITTEN by a synthetic one.")
         store.append(datetime.now(timezone.utc).isoformat(), "degraded_sim_override", {
-            "note": "operator ran a sim cycle over a real-history store with --force"})
-    elif _degraded:
-        store.append(datetime.now(timezone.utc).isoformat(), "degraded_sim_cycle", {
-            "severity": "critical",
-            "note": "real broker unreachable (or real-history store + sim adapter); "
-                    "refusing the sim fallback. No cycle ran."})
-        print("  ✗ Real broker unreachable and this store has REAL broker history — "
-              "refusing the sim fallback (it would pollute the real book/IV bank). "
-              "Use --force to deliberately override.")
+            "note": "operator explicitly allowed a degraded sim cycle "
+                    "(--allow-degraded-sim)", "dry_run": dry_run})
+    elif _act == "refuse":
+        if _sticky:
+            _note = ("sim adapter over a store with REAL broker history — a sim "
+                     "cycle would overwrite real IV snapshots and could book "
+                     "fictional fills. No cycle ran.")
+            _sev = "critical"
+        else:
+            _note = ("real broker requested but unreachable, and this looks like an "
+                     "unattended run — refusing to substitute SIM. (For deliberate "
+                     "sim runs set brokers.execution: sim.) No cycle ran.")
+            _sev = "high"
+        store.append(datetime.now(timezone.utc).isoformat(), "degraded_sim_cycle",
+                     {"severity": _sev, "note": _note, "dry_run": dry_run})
+        print(f"  ✗ {_note}")
+        print("      Override deliberately with --allow-degraded-sim.")
         store.close()
         sys.exit(1)
 
@@ -634,6 +688,10 @@ def main():
     p = argparse.ArgumentParser(prog="aistudios", description="AiStudios paper trading CLI")
     p.add_argument("--asof", help="Override the as-of date (YYYY-MM-DD) for deterministic runs")
     p.add_argument("--horizon", type=int, help="VRP horizon in trading days (default 21)")
+    p.add_argument("--allow-degraded-sim", action="store_true",
+                   help="explicitly permit a SIM cycle when a real broker was "
+                        "requested/used before (overwrites real IV with synthetic; "
+                        "deliberately NOT covered by --force)")
     p.add_argument("--force", action="store_true",
                    help="ignore the market-calendar guard (run even on a closed day)")
     sub = p.add_subparsers(dest="command", required=True)

@@ -68,7 +68,7 @@ def build_execution_adapter(config: Config, asof: Optional[str] = None,
             return _sim(
                 f"ibkr_paper requested but no IB Gateway answered at {host}:{port} "
                 "(or ib_async/ib_insync isn't installed) — falling back to SIM so the "
-                "cycle still runs. Start IB Gateway on a host and re-run. "
+                "cycle can dry-run on a fresh store; an unattended run-cycle will refuse. "
                 "See docs/08-ibkr-gateway-runbook.md.", degraded=True)
 
         if requested in ("alpaca", "alpaca_paper"):
@@ -80,8 +80,9 @@ def build_execution_adapter(config: Config, asof: Optional[str] = None,
                     "Using ALPACA PAPER (real paper account).")
             return _sim(
                 "alpaca_paper requested but ALPACA_PAPER_KEY/SECRET are missing — "
-                "falling back to SIM so the cycle still runs. Add keys to .env to use "
-                "the real paper account.", degraded=True)
+                "falling back to SIM (dry-run on a fresh store only; an unattended "
+                "run-cycle will refuse). Add keys to .env for the real paper account.",
+                degraded=True)
 
         return _sim(f"Unknown broker '{requested}'; defaulted to SIM.", degraded=True)
 

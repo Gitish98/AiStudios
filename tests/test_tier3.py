@@ -203,15 +203,52 @@ def test_factory_marks_fallback_as_degraded_but_not_explicit_sim():
 
 def test_cycle_lock_is_exclusive_per_process():
     """The shell flock covers only cron; the documented manual path bypassed it.
-    The Python lock covers every entrypoint; second acquisition must fail."""
+    The Python lock covers every entrypoint; second acquisition must fail.
+    Uses an ISOLATED path — a review found the original test locked the
+    PRODUCTION data/.cycle.pylock, so a test-suite run could suppress a real
+    concurrent cycle."""
     import cli
-    assert cli._acquire_cycle_lock() is True
-    try:
-        assert cli._acquire_cycle_lock() is False, "second acquire must be refused"
-    finally:
-        if cli._CYCLE_LOCK_HANDLE is not None:      # release for other tests
-            cli._CYCLE_LOCK_HANDLE.close()
-            cli._CYCLE_LOCK_HANDLE = None
+    with tempfile.TemporaryDirectory() as td:
+        lock = Path(td) / "test.pylock"
+        assert cli._acquire_cycle_lock(lock) is True
+        try:
+            assert cli._acquire_cycle_lock(lock) is False, "second acquire must fail"
+        finally:
+            if cli._CYCLE_LOCK_HANDLE is not None:      # release for other tests
+                cli._CYCLE_LOCK_HANDLE.close()
+                cli._CYCLE_LOCK_HANDLE = None
+
+
+def test_cycle_lock_environment_failure_is_not_contention():
+    """REVIEW FINDING (high, twice independently): mkdir/open failure and 'lock
+    held' shared one except-OSError, so a broken data/ dir read as 'another
+    cycle is running' — a PERMANENT silent skip with a green heartbeat. An
+    environment failure must fail OPEN (loudly), never masquerade as a skip."""
+    import cli
+    with tempfile.TemporaryDirectory() as td:
+        blocker = Path(td) / "not_a_dir"
+        blocker.write_text("file, not directory")
+        # Parent of the lock path is a FILE -> mkdir raises -> environment
+        # failure -> True (proceed without protection), NOT False (skip).
+        assert cli._acquire_cycle_lock(blocker / "lock") is True
+        assert cli._CYCLE_LOCK_HANDLE is None
+
+
+def test_degraded_action_truth_table():
+    """REVIEW FINDING (high): generic --force silently authorized the degraded-
+    sim override while overriding an unrelated calendar guard. The override now
+    requires its own flag, and a fresh-store dry-run (the documented dev flow)
+    runs without ceremony."""
+    from cli import _degraded_action as act
+
+    assert act(False, False, False, False) == "run"       # nothing degraded
+    assert act(True, False, True, False) == "run"         # fresh-store DRY-RUN: dev flow
+    assert act(True, False, False, False) == "refuse"     # unattended fresh fallback
+    assert act(False, True, False, False) == "refuse"     # real-history store + sim
+    assert act(False, True, True, False) == "refuse"      # dry-run still banks IV
+    assert act(True, True, False, True) == "override"     # the dedicated flag
+    assert act(False, True, False, True) == "override"
+    # The truth table has no input for --force: that is the point.
 
 
 def test_overlap_check_fails_closed_on_corrupt_row():
