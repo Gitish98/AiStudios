@@ -166,11 +166,21 @@ skips the 15:30 cron on 13:00-ET half days; every fill records `fill_mode`
 (paper|live) and both `cli.py performance` and the dashboard state the
 paper-optimism caveat until live fills exist.
 
-**Scenario-hunt remainder (Tier 3 — latent, watch deliberately):** crontab TZ= line may not schedule (system
-tz is ET so currently correct); fallback calendar fails OPEN past its hardcoded
-2027 holiday list; missing FX rate would feed raw CAD to the gate; duplicate
-clientId collisions; SQLite races on overlapping processes; caps arithmetic on a
-VIX-spike morning (cluster/overnight may be unreachable given per-trade sizing).
+**Tier 3 DONE (2026-08-05, commit 225744d) — eliminated structurally, then
+preflight-reviewed BEFORE deployment (12 findings confirmed against the
+uncommitted diff, incl. a CRITICAL in the new guard itself — the rolling
+'broker' kv could be blinded by one sim cycle; now a sticky write-once
+`ever_real_broker` marker + a factory `BrokerBuild.degraded` flag):** holidays
+are COMPUTED (Easter computus + NYSE rules, any year; old lists = test
+fixture); live cycles outside 09:30-16:00 ET skip with exit 3 + an
+`offhours_skip` journal (tz-drift alarm; half-days exit 0); a degraded-sim
+cycle over a real-history store refuses to run (exit 1, `--force` = journaled
+override); unconverted non-USD equity fails CLOSED to 0; flock (cron) + a
+cross-platform Python lock (every entrypoint) serialize cycles;
+WAL+busy_timeout on the prod DB with checkpoint-on-close so single-file backups
+stay valid; one tracked position per option contract, enforced at entry
+(overlap = refused, corrupt row = fail closed). VM verified: system tz
+America/New_York, sticky marker seeded, mcal installed (rules are fallback).
 
 **Next, in priority:** (1) **activate the heartbeat** — `scripts/run_cycle.sh`
 pings a monitor on start/success/failure but is DORMANT until a healthchecks.io URL
