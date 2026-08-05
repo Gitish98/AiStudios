@@ -90,6 +90,7 @@ def _open_view(open_positions: list[dict[str, Any]]) -> list[dict[str, Any]]:
         contracts = int(p.get("contracts") or 0)
         out.append({
             "underlying": p.get("underlying") or "",
+            "status": p.get("status") or "open",
             "structure": p.get("structure") or "",
             "is_credit": is_credit,
             "short_strike": p.get("short_strike"),
@@ -209,7 +210,11 @@ def _slippage(store: Store) -> dict[str, Any]:
 
 def _gather(store: Store) -> dict[str, Any]:
     closed = store.get_closed_positions()
-    open_positions = store.get_open_positions()
+    # ACTIVE = open + pending. A pending position (working/partially-filled
+    # order) is real exposure at the broker — five live spreads rendering as
+    # "no open positions" misrepresents the book exactly when the operator most
+    # wants to watch it fill.
+    open_positions = store.get_active_positions()
 
     # Account + last-cycle come from read-only store markers the cycle writes.
     equity = store.get_kv("equity")
@@ -464,8 +469,9 @@ ops.forEach(function(p){{
   var pcls = (u==null)?'muted':(u>=0?'pos':'neg');
   var pval = (u==null)?'—':((u>=0?'+':'-')+'$'+Math.abs(u).toLocaleString(undefined,{{maximumFractionDigits:0}}));
   h += '<div class="pos">';
+  var ptag = (p.status==='pending') ? ' <span class="tag" style="background:rgba(255,200,80,.16);color:#ffd280">FILLING</span>' : '';
   h += '<div class="hd"><span class="sym">'+esc(p.underlying||'—')+' '+esc(strikes)+
-       ' <span class="tag '+(p.is_credit?'ok':'deb')+'">'+lbl+'</span></span>'+
+       ' <span class="tag '+(p.is_credit?'ok':'deb')+'">'+lbl+'</span>'+ptag+'</span>'+
        '<span class="pnl '+pcls+'">'+pval+'</span></div>';
   h += '<div class="grid3">'+
        '<div><div class="k">Entry</div><div class="v">'+esc(p.credit_ps)+' /sh'+
