@@ -208,6 +208,73 @@ def _slippage(store: Store) -> dict[str, Any]:
     return out
 
 
+def _iv_series(store: Store) -> dict[str, list]:
+    """Full per-symbol ATM-IV history — the data the system has been collecting
+    daily since day 1. Small (sessions x 7 symbols) and the whole point of the
+    bootstrap, so it belongs ON the page, not only in SQLite."""
+    out: dict[str, list] = {}
+    try:
+        for r in store.conn.execute(
+                "SELECT symbol, asof, atm_iv FROM iv_snapshots ORDER BY asof"):
+            out.setdefault(r["symbol"], []).append([r["asof"], round(float(r["atm_iv"]), 4)])
+    except Exception:
+        pass
+    return out
+
+
+def _equity_series(store: Store) -> list[list]:
+    """Daily account equity, one point per day, from each cycle's opening
+    snapshot (journal cycle_start carries equity). This is the real
+    'progress to date' curve — the closed-trade curve alone has one point."""
+    out: dict[str, float] = {}
+    try:
+        for r in store.conn.execute(
+                "SELECT ts, payload FROM journal WHERE kind='cycle_start' ORDER BY id"):
+            try:
+                eq = json.loads(r["payload"]).get("equity")
+                if eq:
+                    out[str(r["ts"])[:10]] = round(float(eq), 2)  # last per day wins
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return [[d, v] for d, v in sorted(out.items())]
+
+
+def _cycle_history(store: Store, limit: int = 12) -> list[dict[str, Any]]:
+    rows = []
+    try:
+        for r in store.conn.execute(
+                "SELECT ts, payload FROM journal WHERE kind='cycle_end' "
+                "ORDER BY id DESC LIMIT ?", (limit,)):
+            try:
+                p = json.loads(r["payload"])
+                rows.append({"ts": r["ts"], "placed": p.get("placed", 0),
+                             "rejected": p.get("rejected", 0),
+                             "ok": bool(p.get("reconcile_ok")),
+                             "secs": p.get("duration_secs")})
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return rows
+
+
+def _trade_history(closed: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    out = []
+    for t in closed:
+        out.append({
+            "opened": (t.get("opened_asof") or "")[:10],
+            "closed": (t.get("closed_asof") or "")[:10],
+            "underlying": t.get("underlying"), "structure": t.get("structure"),
+            "contracts": t.get("contracts"),
+            "entry_ps": t.get("entry_credit_ps"), "exit_ps": t.get("exit_value_ps"),
+            "reason": t.get("exit_reason"), "pnl": t.get("realized_pnl"),
+            "entry_slip": t.get("entry_slip_ps"), "exit_slip": t.get("exit_slip_ps"),
+        })
+    return out
+
+
 def _gather(store: Store) -> dict[str, Any]:
     closed = store.get_closed_positions()
     # ACTIVE = open + pending. A pending position (working/partially-filled
@@ -252,6 +319,10 @@ def _gather(store: Store) -> dict[str, Any]:
         "open_positions": _open_view(open_positions),
         "closed_summary": _closed_summary(closed),
         "journal": store.recent(limit=40),
+        "iv_series": _iv_series(store),
+        "equity_series": _equity_series(store),
+        "cycles": _cycle_history(store),
+        "trades": _trade_history(closed),
     }
 
 
@@ -271,6 +342,18 @@ def build_pro(store_path: Optional[Path] = None,
     out_root.mkdir(parents=True, exist_ok=True)
     out = out_root / "dashboard_pro.html"
     out.write_text(_render(data), encoding="utf-8")
+    # Raw-data export: everything the system has collected, one downloadable
+    # file next to the page (linked from the History section).
+    try:
+        (out_root / "history.json").write_text(json.dumps({
+            "generated": data.get("generated"),
+            "equity_by_day": data.get("equity_series"),
+            "atm_iv_by_symbol": data.get("iv_series"),
+            "closed_trades": data.get("trades"),
+            "recent_cycles": data.get("cycles"),
+        }, indent=1, default=str), encoding="utf-8")
+    except Exception:
+        pass
     return out
 
 
@@ -322,7 +405,15 @@ def _sparkline_svg(curve: list[dict[str, Any]]) -> str:
 
 def _render(data: dict[str, Any]) -> str:
     payload = json.dumps(data, default=str).replace("</", "<\\/")
-    spark = _sparkline_svg(data["equity_curve"])
+    # Equity change since day 1 — the real progress curve (one point per session
+    # from cycle snapshots). Falls back to the closed-trade curve when empty.
+    eq = data.get("equity_series") or []
+    if len(eq) >= 2:
+        base = float(eq[0][1])
+        spark_curve = [{"ts": d, "cum": round(float(v) - base, 2)} for d, v in eq]
+    else:
+        spark_curve = data["equity_curve"]
+    spark = _sparkline_svg(spark_curve)
     wr = data["closed_summary"]["win_rate"]
     return f"""<!DOCTYPE html>
 <html lang="en"><head>
@@ -373,10 +464,22 @@ border-radius:12px;padding:12px 14px;margin-bottom:14px;font-size:13px;line-heig
 .barfill{{height:100%;background:#9fb9ff;border-radius:99px}}
 .gate{{display:flex;justify-content:space-between;font-size:13px;padding:4px 0;color:#b8b8d8}}
 .gate b{{color:#e8e8f4;font-weight:600}}
-.pos{{background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.09);
+.poscard{{background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.09);
 border-radius:12px;padding:13px 15px;margin-bottom:10px}}
-.pos .hd{{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:8px}}
-.pos .sym{{font-size:15px;font-weight:700;letter-spacing:.02em}}
+.poscard .hd{{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:8px}}
+.poscard .sym{{font-size:15px;font-weight:700;letter-spacing:.02em}}
+.hdr{{display:flex;justify-content:space-between;align-items:baseline;gap:10px}}
+.pill{{font-size:11px;font-weight:700;letter-spacing:.08em;padding:3px 10px;border-radius:20px}}
+.pill.paper{{background:rgba(80,200,120,.15);color:#60cc88;border:1px solid rgba(80,200,120,.3)}}
+.pill.live{{background:rgba(255,80,80,.15);color:#ff6b6b;border:1px solid rgba(255,80,80,.4)}}
+.status{{font-size:12.5px;color:#8888aa;margin:6px 0 16px;line-height:1.6}}
+.okdot{{color:#60cc88}}.baddot{{color:#ffb648}}
+.minis{{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}}
+.mini{{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:10px;padding:9px 11px}}
+.mini .t{{display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px}}
+.mini .t b{{font-weight:700}}
+.note{{font-size:11.5px;color:#7a7a98;margin:8px 0 2px;line-height:1.5}}
+a{{color:#9fb9ff}}
 .pnl{{font-size:19px;font-weight:700}}
 .grid3{{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:10px 0 6px}}
 .grid3 .k{{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#8888aa}}
@@ -402,17 +505,46 @@ function signed(v){{var n=Number(v||0);var s=(n>=0?'+':'-')+'$'+Math.abs(n).toLo
 var a = D.account||{{}};
 var cs = D.closed_summary||{{}};
 var curveHTML = document.getElementById('curve').outerHTML;
+
+// ── helpers ──────────────────────────────────────────────────────────────
+function et(ts){{ if(!ts) return '—';
+  try {{ return new Date(String(ts)).toLocaleString('en-US',
+      {{timeZone:'America/New_York',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}}) + ' ET'; }}
+  catch(e) {{ return String(ts).slice(0,16).replace('T',' '); }} }}
+function fmtv(v){{ if(v==null) return '—';
+  if (typeof v === 'object') return esc(JSON.stringify(v)).slice(0,110);
+  if (typeof v === 'number') return esc(Math.round(v*10000)/10000);
+  return esc(String(v)); }}
+function msvg(vals, color){{
+  if (!vals || vals.length < 2) return '<div class="muted" style="font-size:11px">collecting…</div>';
+  var W=140, H=34, P=2, lo=Math.min.apply(null,vals), hi=Math.max.apply(null,vals);
+  if (hi===lo) hi=lo+1e-6;
+  var pts = vals.map(function(v,i){{
+    return (P+(W-2*P)*i/(vals.length-1)).toFixed(1)+','+(P+(H-2*P)*(1-(v-lo)/(hi-lo))).toFixed(1);
+  }}).join(' ');
+  return '<svg viewBox="0 0 '+W+' '+H+'" width="100%" height="34" preserveAspectRatio="none">'+
+         '<polyline points="'+pts+'" fill="none" stroke="'+color+'" stroke-width="1.6" '+
+         'stroke-linejoin="round" stroke-linecap="round"/></svg>'; }}
+
 var h = '';
-h += '<div class="banner '+(D.mode==='PAPER'?'paper':'live')+'">'+esc(D.mode)+' MODE</div>';
-if (D.kill_switch) h += '<div class="kill">\\u26a0\\ufe0e KILL SWITCH ENGAGED — orders blocked until cleared</div>';
+
+// ── header + status strip ────────────────────────────────────────────────
+h += '<div class="hdr"><h1>AiStudios</h1><span class="pill '+(D.mode==='PAPER'?'paper':'live')+'">'+esc(D.mode)+'</span></div>';
+var lc = D.last_cycle || {{}};
+h += '<div class="status">'
+  + (D.kill_switch ? '<span class="baddot">●</span> trading HALTED (kill switch)'
+                   : '<span class="okdot">●</span> trading enabled')
+  + ' · book '+(lc.reconcile_ok ? '<span class="okdot">matches broker</span>'
+                                : '<span class="baddot">differs from broker</span>')
+  + '<br>'+esc(String(D.broker||'sim'))+' · last cycle '+et(lc.ts)+' — '
+  + (lc.signals||0)+' signal'+((lc.signals||0)==1?'':'s')+', '+(lc.placed||0)+' order'+((lc.placed||0)==1?'':'s')+' placed'
+  + '</div>';
+
+// ── alerts (only when they matter) ───────────────────────────────────────
+if (D.kill_switch) h += '<div class="kill">⚠︎ KILL SWITCH ENGAGED — all new orders are blocked until cleared</div>';
 var _fz = Object.keys(D.frozen||{{}});
-if (_fz.length) h += '<div class="kill">\\u2744\\ufe0e FROZEN (possible assignment): '+_fz.map(esc).join(', ')+' — no automated orders until cleared (cli.py unfreeze)</div>';
-else h += '<div class="killoff">Kill switch: clear — trading enabled</div>';
+if (_fz.length) h += '<div class="kill">❄︎ FROZEN (possible assignment): '+_fz.map(esc).join(', ')+' — no automated orders on these until cleared (cli.py unfreeze)</div>';
 var iv = D.iv||{{}};
-// Only the symbols WITHOUT an external benchmark rank are still bootstrapping.
-// SPY/QQQ/IWM/DIA use real 252-day Cboe history, so claiming the whole system is
-// waiting (and that no signals are possible) would be flatly untrue — it has
-// already traded.
 var boot = (D.decisions||[]).filter(function(d){{ return d.iv_rank==null; }})
                             .map(function(d){{ return d.symbol; }});
 if (boot.length && (iv.days||0) < (iv.target||60)) {{
@@ -420,55 +552,27 @@ if (boot.length && (iv.days||0) < (iv.target||60)) {{
        (iv.days||0)+' of '+(iv.target||60)+'. Those symbols stand aside; the rest use a '+
        'real 252-day benchmark rank and can trade today.</div>';
 }}
-h += '<h1>AiStudios</h1><div class="sub">'+esc(String(D.broker||'sim'))+' · generated '+esc((D.generated||'').slice(0,19).replace('T',' '))+' UTC</div>';
-var lc = D.last_cycle;
-if (lc) h += '<div class="sub" style="margin-top:-12px">last cycle '+esc(String(lc.ts||'').slice(0,16).replace('T',' '))+' · '+(lc.signals||0)+' signals · '+(lc.placed||0)+' placed · '+(lc.rejected||0)+' rejected · reconcile '+(lc.reconcile_ok?'in sync':'DRIFT')+'</div>';
 
+// ── account ──────────────────────────────────────────────────────────────
+var openRisk = 0; (D.open_positions||[]).forEach(function(p){{ openRisk += Number(p.max_loss||0); }});
 h += '<div class="cards">';
-h += '<div class="card"><div class="k">Equity</div><div class="v">'+money(a.equity)+'</div></div>';
-h += '<div class="card"><div class="k">Buying Power</div><div class="v">'+money(a.buying_power)+'</div></div>';
-h += '<div class="card"><div class="k">Cash</div><div class="v">'+money(a.cash)+'</div></div>';
-h += '<div class="card"><div class="k">Net realized P&L</div><div class="v">'+signed(cs.net_pnl)+'</div></div>';
+h += '<div class="card"><div class="k">Account equity</div><div class="v">'+money(a.equity)+'</div></div>';
+h += '<div class="card"><div class="k">Realized P&L (all time)</div><div class="v">'+signed(cs.net_pnl)+'</div></div>';
+h += '<div class="card"><div class="k">Money at risk now</div><div class="v">'+money(openRisk)+'</div><div class="note" style="margin:2px 0 0">worst case across open positions</div></div>';
+h += '<div class="card"><div class="k">Buying power</div><div class="v">'+money(a.buying_power)+'</div></div>';
 h += '</div>';
 
-h += '<div class="sec-title">IV-rank bootstrap</div>';
-var ivpct = Math.min(100, Math.round(100*(iv.days||0)/(iv.target||60)));
-h += '<div class="card"><div class="gate"><span>Sessions accrued</span><b>'+(iv.days||0)+' / '+(iv.target||60)+'</b></div><div class="bar"><div class="barfill" style="width:'+ivpct+'%"></div></div><div class="muted" style="font-size:11px">Signals begin once ~'+(iv.target||60)+' daily ATM-IV readings accrue.</div></div>';
-
-var g = D.graduation||{{}};
-h += '<div class="sec-title">Graduation gate</div><div class="card">';
-h += '<div class="gate"><span>Closed trades</span><b>'+(g.trades||0)+' / '+(g.min_trades||40)+'</b></div>';
-h += '<div class="gate"><span>Trading days</span><b>'+(g.days||0)+' / '+(g.min_days||60)+'</b></div>';
-h += '<div class="gate"><span>Net expectancy</span><b>'+(g.expectancy==null?'—':signed(g.expectancy)+' /trade')+'</b></div>';
-h += '<div style="margin-top:6px;font-size:12px;color:'+(g.eligible?'#60cc88':'#ff9a6b')+'">'+(g.eligible?'Clears the minimum bar — a hurdle, not a recommendation to go live.':'Not yet eligible to consider live.')+'</div></div>';
-
-h += '<div class="sec-title">Equity curve</div>'+curveHTML;
-
-h += '<div class="sec-title">Closed trades</div>';
-h += '<div class="cards">';
-h += '<div class="card"><div class="k">Trades</div><div class="v">'+esc(cs.count||0)+'</div></div>';
-h += '<div class="card"><div class="k">Win rate</div><div class="v">'+esc(cs.win_rate||0)+'%</div></div>';
-h += '<div class="card"><div class="k">Wins</div><div class="v pos">'+esc(cs.wins||0)+'</div></div>';
-h += '<div class="card"><div class="k">Losses</div><div class="v neg">'+esc(cs.losses||0)+'</div></div>';
-h += '</div>';
-var br = cs.by_reason||{{}};
-var rk = Object.keys(br);
-if (rk.length){{
-  h += '<div class="reasons">';
-  rk.forEach(function(k){{ h += '<span class="chip">'+esc(k)+' \\u00d7'+esc(br[k])+'</span>'; }});
-  h += '</div>';
-}}
-
-h += '<div class="sec-title">Open positions</div>';
+// ── positions ────────────────────────────────────────────────────────────
+h += '<div class="sec-title">Positions</div>';
 var ops = D.open_positions||[];
-if (!ops.length) h += '<div class="empty">No open positions.</div>';
+if (!ops.length) h += '<div class="empty">No open positions — the system is watching, not trading.</div>';
 ops.forEach(function(p){{
   var lbl = p.is_credit?'credit':'debit';
   var strikes = (p.short_strike!=null?p.short_strike:'—')+'/'+(p.long_strike!=null?p.long_strike:'—');
   var u = p.unrealized;
   var pcls = (u==null)?'muted':(u>=0?'pos':'neg');
   var pval = (u==null)?'—':((u>=0?'+':'-')+'$'+Math.abs(u).toLocaleString(undefined,{{maximumFractionDigits:0}}));
-  h += '<div class="pos">';
+  h += '<div class="poscard">';
   var ptag = (p.status==='pending') ? ' <span class="tag" style="background:rgba(255,200,80,.16);color:#ffd280">FILLING</span>' : '';
   h += '<div class="hd"><span class="sym">'+esc(p.underlying||'—')+' '+esc(strikes)+
        ' <span class="tag '+(p.is_credit?'ok':'deb')+'">'+lbl+'</span>'+ptag+'</span>'+
@@ -476,7 +580,7 @@ ops.forEach(function(p){{
   h += '<div class="grid3">'+
        '<div><div class="k">Entry</div><div class="v">'+esc(p.credit_ps)+' /sh'+
          (p.entry_fill_ps!=null?' <span class="muted">(fill '+esc(p.entry_fill_ps)+')</span>':'')+'</div></div>'+
-       '<div><div class="k">Mark</div><div class="v">'+(p.mark_ps==null?'<span class="muted">—</span>':esc(p.mark_ps)+' /sh')+'</div></div>'+
+       '<div><div class="k">Now worth</div><div class="v">'+(p.mark_ps==null?'<span class="muted">—</span>':esc(p.mark_ps)+' /sh')+'</div></div>'+
        '<div><div class="k">Max loss</div><div class="v">'+money(p.max_loss)+'</div></div>'+
        '</div>';
   var tp = p.target_pct;
@@ -485,17 +589,96 @@ ops.forEach(function(p){{
          '<div class="prog"><div class="progf" style="width:'+Math.round(tp*100)+'%;background:'+(tp>=1?'#60cc88':'#9fb9ff')+'"></div></div>'+
          '<div class="muted" style="font-size:11px">'+Math.round(tp*100)+'% there</div>';
   }}
-  var dteTxt = (p.dte==null?'—':p.dte+'d');
+  var dteTxt = (p.dte==null?'—':p.dte+' days to expiry');
   var dteCls = (p.dte!=null && p.dte<=21)?'neg':'muted';
   h += '<div class="muted" style="font-size:11.5px;margin-top:7px">'+
-       esc(p.contracts)+' contract'+(p.contracts==1?'':'s')+' · exp '+esc(p.expiration||'—')+
-       ' · <span class="'+dteCls+'">DTE '+dteTxt+'</span>'+
-       (p.entry_slip_ps!=null?' · slip '+(p.entry_slip_ps>=0?'+':'')+esc(p.entry_slip_ps)+'/sh':'')+
-       (p.mark_ts?' · marked '+esc(p.mark_ts)+'Z':'')+'</div>';
+       esc(p.contracts)+' contract'+(p.contracts==1?'':'s')+' · <span class="'+dteCls+'">'+dteTxt+'</span> ('+esc(p.expiration||'—')+')'+
+       (p.entry_slip_ps!=null?' · fill slippage '+(p.entry_slip_ps>=0?'+':'')+esc(p.entry_slip_ps)+'/sh':'')+
+       '</div>';
   h += '</div>';
 }});
 
-// ── Execution quality: the number that decides whether edge survives costs ──
+// ── road to live ─────────────────────────────────────────────────────────
+h += '<div class="sec-title">Road to live</div>';
+var g = D.graduation||{{}};
+var tpct = Math.min(100, Math.round(100*(g.trades||0)/(g.min_trades||40)));
+var dpct = Math.min(100, Math.round(100*(g.days||0)/(g.min_days||60)));
+h += '<div class="card" style="margin-bottom:10px"><div class="k" style="margin-bottom:6px">Graduation gate</div>';
+h += '<div class="gate"><span>Closed trades</span><b>'+(g.trades||0)+' / '+(g.min_trades||40)+'</b></div>';
+h += '<div class="bar"><div class="barfill" style="width:'+tpct+'%"></div></div>';
+h += '<div class="gate"><span>Trading days with a close</span><b>'+(g.days||0)+' / '+(g.min_days||60)+'</b></div>';
+h += '<div class="bar"><div class="barfill" style="width:'+dpct+'%"></div></div>';
+h += '<div class="gate"><span>Net expectancy (after costs)</span><b>'+(g.expectancy==null?'—':signed(g.expectancy)+' /trade')+'</b></div>';
+h += '<div style="margin-top:6px;font-size:12px;color:'+(g.eligible?'#60cc88':'#ff9a6b')+'">'+(g.eligible?'Clears the minimum bar — a hurdle, not a recommendation to go live.':'Not yet eligible to consider live — needs all three, and the final call is always human.')+'</div></div>';
+var ivpct = Math.min(100, Math.round(100*(iv.days||0)/(iv.target||60)));
+h += '<div class="card"><div class="k" style="margin-bottom:6px">IV-rank bootstrap (XLK/XLF/XLE)</div>';
+h += '<div class="gate"><span>Sessions of IV collected</span><b>'+(iv.days||0)+' / '+(iv.target||60)+'</b></div>';
+h += '<div class="bar"><div class="barfill" style="width:'+ivpct+'%"></div></div>';
+h += '<div class="note">SPY/QQQ/IWM/DIA already trade on real 252-day Cboe vol history; the three sector funds unlock when their own history reaches '+(iv.target||60)+' sessions.</div></div>';
+
+// ── today, per symbol ────────────────────────────────────────────────────
+var dec = D.decisions||[];
+if (dec.length){{
+  h += '<div class="sec-title">Last cycle — what each symbol did</div><div class="card" style="padding:8px 10px">';
+  h += '<table class="tbl"><tr><th>Symbol</th><th>IV rank</th><th>Basis</th><th>Decision</th></tr>';
+  dec.forEach(function(d){{
+    var r = d.iv_rank;
+    var col = (r==null)?'#7a7a98':(r>=0.40?'#60cc88':'#8888aa');
+    var rtxt = (r==null)?'—':Math.round(r*100)+'%';
+    h += '<tr><td><b>'+esc(d.symbol)+'</b></td>'+
+         '<td><span class="dot" style="background:'+col+'"></span>'+rtxt+'</td>'+
+         '<td class="muted">'+esc((d.iv_source||'').replace('cboe:',''))+'</td>'+
+         '<td class="muted">'+esc(d.note||'')+'</td></tr>';
+  }});
+  h += '</table><div class="note">IV rank ≥ 40% is what premium-selling needs; green dot = cleared. "Basis" is which volatility series the rank comes from.</div></div>';
+}}
+
+// ── history ──────────────────────────────────────────────────────────────
+h += '<div class="sec-title">History</div>';
+h += '<div class="card" style="margin-bottom:10px"><div class="k" style="margin-bottom:6px">Account equity — change since day 1</div>'+curveHTML.replace('id="curve"','')+'</div>';
+
+var ivs = D.iv_series||{{}};
+var syms = Object.keys(ivs).sort();
+if (syms.length){{
+  h += '<div class="card" style="margin-bottom:10px"><div class="k" style="margin-bottom:8px">Implied volatility collected daily ('+((ivs[syms[0]]||[]).length)+' sessions)</div><div class="minis">';
+  syms.forEach(function(sym){{
+    var series = (ivs[sym]||[]).map(function(x){{ return Number(x[1]); }});
+    var last = series.length ? series[series.length-1] : null;
+    h += '<div class="mini"><div class="t"><b>'+esc(sym)+'</b><span class="muted">'+(last==null?'—':(last*100).toFixed(1)+'%')+'</span></div>'+msvg(series, '#9fb9ff')+'</div>';
+  }});
+  h += '</div><div class="note">Each line is one symbol’s at-the-money implied volatility, one reading per session — the raw material for the IV rank above.</div></div>';
+}}
+
+var tr = D.trades||[];
+h += '<div class="card" style="margin-bottom:10px"><div class="k" style="margin-bottom:6px">Every closed trade</div>';
+if (!tr.length) h += '<div class="empty">None yet.</div>';
+else {{
+  h += '<table class="tbl"><tr><th>Closed</th><th>Trade</th><th>Why it exited</th><th>P&L</th></tr>';
+  tr.forEach(function(t){{
+    h += '<tr><td class="muted">'+esc(t.closed)+'</td>'+
+         '<td><b>'+esc(t.underlying)+'</b> '+esc(String(t.structure||'').replace(/_/g,' '))+' ×'+esc(t.contracts)+'</td>'+
+         '<td class="muted">'+esc(String(t.reason||'').replace(/_/g,' '))+'</td>'+
+         '<td>'+signed(t.pnl)+'</td></tr>';
+  }});
+  h += '</table>';
+}}
+h += '</div>';
+
+var cyc = D.cycles||[];
+if (cyc.length){{
+  h += '<div class="card" style="margin-bottom:10px"><div class="k" style="margin-bottom:6px">Recent cycles (the twice-daily runs)</div>';
+  h += '<table class="tbl"><tr><th>When</th><th>Orders</th><th>Book check</th><th>Took</th></tr>';
+  cyc.forEach(function(c){{
+    h += '<tr><td class="muted">'+et(c.ts)+'</td>'+
+         '<td>'+(c.placed||0)+' placed'+((c.rejected||0)?(', '+c.rejected+' rejected'):'')+'</td>'+
+         '<td>'+(c.ok?'<span class="okdot">✓ matches broker</span>':'<span class="baddot">differs</span>')+'</td>'+
+         '<td class="muted">'+(c.secs==null?'—':Math.round(c.secs)+'s')+'</td></tr>';
+  }});
+  h += '</table></div>';
+}}
+h += '<div class="note">Full raw history (every equity point, IV reading, trade and cycle): <a href="history.json" download>download history.json</a>. The complete record lives in the trading database on the server.</div>';
+
+// ── execution quality ────────────────────────────────────────────────────
 var sl = D.slippage||{{}};
 if (sl.legs_measured){{
   h += '<div class="sec-title">Execution quality</div><div class="card">';
@@ -505,44 +688,58 @@ if (sl.legs_measured){{
     h += '<div class="gate"><span>Mean exit slippage</span><b>'+(sl.mean_exit_slip_ps>=0?'+':'')+sl.mean_exit_slip_ps+' /sh</b></div>';
   h += '<div class="gate"><span>Worst</span><b>'+(sl.worst_slip_ps==null?'—':sl.worst_slip_ps+' /sh')+'</b></div>';
   h += '<div class="gate"><span>Coverage</span><b>'+Math.round((sl.coverage||0)*100)+'% of positions</b></div>';
-  h += '<div class="muted" style="font-size:11px;margin-top:6px">Positive = worse than intended. '+
-       'On a few-cents credit this is the difference between edge and none.</div>';
+  h += '<div class="note">Slippage = how much worse the real fill was than the intended price. Positive = worse. On a few-cents credit this is the difference between edge and none.</div>';
   if (sl.paper_fills && !sl.live_fills)
-    h += '<div class="muted" style="font-size:11px;margin-top:4px">All measured fills are PAPER. '+
-         'IBKR paper fills limit orders optimistically (near mid, no queue) — treat these '+
-         'slippage numbers as a LOWER bound until live fills exist.</div>';
+    h += '<div class="note">All measured fills are PAPER — IBKR paper fills optimistically, so treat these as a LOWER bound until live fills exist.</div>';
   h += '</div>';
 }}
 
-// ── Why it did / did not trade — the question worth answering daily ──
-var dec = D.decisions||[];
-if (dec.length){{
-  h += '<div class="sec-title">Last cycle — per symbol</div><div class="card" style="padding:8px 10px">';
-  h += '<table class="tbl"><tr><th>Sym</th><th>IV rank</th><th>Source</th><th>Chain</th><th>Outcome</th></tr>';
-  dec.forEach(function(d){{
-    var r = d.iv_rank;
-    var col = (r==null)?'#7a7a98':(r>=0.40?'#60cc88':'#8888aa');
-    var rtxt = (r==null)?'—':Math.round(r*100)+'%';
-    h += '<tr><td><b>'+esc(d.symbol)+'</b></td>'+
-         '<td><span class="dot" style="background:'+col+'"></span>'+rtxt+'</td>'+
-         '<td class="muted">'+esc((d.iv_source||'').replace('cboe:',''))+'</td>'+
-         '<td class="muted">'+esc(d.chain||0)+'</td>'+
-         '<td class="muted">'+esc(d.note||'')+'</td></tr>';
-  }});
-  h += '</table></div>';
-}}
+// ── closed-trade stats (kept compact) ────────────────────────────────────
+h += '<div class="sec-title">Closed trades</div>';
+h += '<div class="cards">';
+h += '<div class="card"><div class="k">Trades</div><div class="v">'+esc(cs.count||0)+'</div></div>';
+h += '<div class="card"><div class="k">Win rate</div><div class="v">'+esc(cs.win_rate||0)+'%</div></div>';
+h += '</div>';
 
-var wl = D.watchlist||[];
-if (wl.length){{ h += '<div class="sec-title">Watchlist</div><div class="reasons">'; wl.forEach(function(s){{ h += '<span class="chip">'+esc(s)+'</span>'; }}); h += '</div>'; }}
-
-h += '<div class="sec-title">Recent activity</div>';
-var jr = D.journal||[];
-if (!jr.length) h += '<div class="empty">No journal entries yet.</div>';
-jr.forEach(function(j){{
+// ── activity, in plain language ──────────────────────────────────────────
+var KINDS = {{
+  cycle_end:'Cycle finished', cycle_start:'Cycle started', order_placed:'Order sent to broker',
+  position_closed:'Position closed', risk_decision:'Risk gate decision',
+  reconcile_drift:'Book vs broker mismatch', close_escalated:'Exit re-priced (conceding to fill)',
+  close_pending:'Exit order working at broker', close_expired:'Exit order expired unfilled',
+  entry_filled:'Entry filled', entry_dropped:'Unfilled order cleaned up',
+  partial_fill_adopted:'Partial fill adopted (resized to reality)',
+  partial_fill_detected:'PARTIAL FILL — needs a look', kill_switch:'KILL SWITCH',
+  underlying_frozen:'Symbol FROZEN for review', underlying_unfrozen:'Symbol unfrozen',
+  close_ambiguous_assignment:'Possible assignment — held for review',
+  broker_book_empty:'Broker reported an EMPTY book', offhours_skip:'Run attempted outside market hours',
+  exdiv_risk_exit:'Closed early to dodge dividend assignment', degraded_sim_cycle:'Refused to run without the broker',
+  expiry_unverified:'Expiry not booked (broker unverified)', close_blocked_legs_diverged:'Exit BLOCKED — legs differ at broker',
+  cycle_fatal:'CYCLE FAILED', manage_error:'Error managing a position', close_failed:'Broker rejected an exit'
+}};
+function describe(j){{
   var p = j.payload||{{}};
-  var extra = Object.keys(p).slice(0,3).map(function(k){{return k+'='+p[k];}}).join(' · ');
-  h += '<div class="row"><div class="top"><b>'+esc(j.kind)+'</b><span class="ts">'+esc((j.ts||'').slice(0,19).replace('T',' '))+'</span></div>'+
-       '<div class="muted">'+esc(String(extra).slice(0,160))+'</div></div>';
+  var k = j.kind;
+  if (k==='cycle_end') return (p.placed||0)+' placed, '+(p.rejected||0)+' rejected · book '+(p.reconcile_ok?'matches broker':'DIFFERS')+(p.duration_secs?(' · '+Math.round(p.duration_secs)+'s'):'');
+  if (k==='reconcile_drift'){{
+    var ds = p.drift||[];
+    return ds.slice(0,3).map(function(d){{ return (d.kind||'')+': '+(d.leg||d.underlying||''); }}).join(' · ') + (ds.length>3?(' · +'+(ds.length-3)+' more'):'');
+  }}
+  if (k==='order_placed') return esc(String(p.rationale||'').slice(0,140)) || ('order '+fmtv(p.client_order_id));
+  if (k==='position_closed') return (p.reason?String(p.reason).replace(/_/g,' ')+' · ':'')+'P&L '+fmtv(p.realized_pnl);
+  if (k==='risk_decision') return (p.approved?'APPROVED':'REJECTED')+' — '+fmtv(p.underlying)+' '+String(p.strategy||'').replace(/_/g,' ');
+  if (k==='close_escalated') return 'attempt '+fmtv(p.attempt)+': limit '+fmtv(p.limit)+' (fair value '+fmtv(p.mark)+')';
+  var keys = Object.keys(p).slice(0,3);
+  return keys.map(function(kk){{ return kk.replace(/_/g,' ')+': '+fmtv(p[kk]); }}).join(' · ');
+}}
+h += '<div class="sec-title">Recent activity</div>';
+var jr = (D.journal||[]).filter(function(j){{
+  return j.kind!=='iv_rank_source' && j.kind!=='capability_warning' && j.kind!=='cycle_start';
+}}).slice(0,12);
+if (!jr.length) h += '<div class="empty">Nothing yet.</div>';
+jr.forEach(function(j){{
+  h += '<div class="row"><div class="top"><b>'+esc(KINDS[j.kind]||String(j.kind).replace(/_/g,' '))+'</b><span class="ts">'+et(j.ts)+'</span></div>'+
+       '<div class="muted">'+describe(j)+'</div></div>';
 }});
 
 document.getElementById('app').innerHTML = h;
