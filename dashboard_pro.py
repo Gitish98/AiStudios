@@ -644,7 +644,12 @@ if (dec.length){{
 h += '<div class="sec-title">History</div>';
 h += '<div class="card" style="margin-bottom:10px"><div class="k" style="margin-bottom:6px">Account equity</div>'
    + '<div class="rngs" id="eqrngs"></div><div class="eqread" id="eqread">—</div>'
-   + '<div id="eqchart"></div></div>';
+   + '<div id="eqchart"></div>'
+   + '<div class="note">Honest caveat: the account is CAD-based and this is the USD view, so the '
+   + 'curve includes currency movement and the paper account's simulated interest — most of the '
+   + 'rise to date is CAD strengthening, not trading. Pure trading results are the '
+   + '"Realized P&L" tile above; the graduation gate uses only per-trade P&L net of costs, '
+   + 'so FX can never make the system look tradeworthy.</div></div>';
 
 var ivs = D.iv_series||{{}};
 var syms = Object.keys(ivs).sort();
