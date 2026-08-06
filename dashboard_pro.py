@@ -480,6 +480,13 @@ border-radius:12px;padding:13px 15px;margin-bottom:10px}}
 .mini .t b{{font-weight:700}}
 .note{{font-size:11.5px;color:#7a7a98;margin:8px 0 2px;line-height:1.5}}
 a{{color:#9fb9ff}}
+.rngs{{display:flex;gap:6px;flex-wrap:wrap;margin:2px 0 8px}}
+.rng{{font-size:11px;font-weight:700;letter-spacing:.04em;color:#8888aa;background:rgba(255,255,255,.05);
+border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:4px 10px;cursor:pointer;user-select:none}}
+.rng.on{{color:#0f0f1a;background:#9fb9ff;border-color:#9fb9ff}}
+.eqread{{font-size:13px;color:#c8c8e0;margin-bottom:6px;min-height:18px}}
+.eqread b{{font-size:15px;color:#e8e8f4}}
+#eqchart svg{{display:block;touch-action:none}}
 .pnl{{font-size:19px;font-weight:700}}
 .grid3{{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:10px 0 6px}}
 .grid3 .k{{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#8888aa}}
@@ -635,7 +642,9 @@ if (dec.length){{
 
 // ── history ──────────────────────────────────────────────────────────────
 h += '<div class="sec-title">History</div>';
-h += '<div class="card" style="margin-bottom:10px"><div class="k" style="margin-bottom:6px">Account equity — change since day 1</div>'+curveHTML.replace('id="curve"','')+'</div>';
+h += '<div class="card" style="margin-bottom:10px"><div class="k" style="margin-bottom:6px">Account equity</div>'
+   + '<div class="rngs" id="eqrngs"></div><div class="eqread" id="eqread">—</div>'
+   + '<div id="eqchart"></div></div>';
 
 var ivs = D.iv_series||{{}};
 var syms = Object.keys(ivs).sort();
@@ -743,6 +752,116 @@ jr.forEach(function(j){{
 }});
 
 document.getElementById('app').innerHTML = h;
+
+// ── interactive equity chart: range buttons + hover/touch crosshair ──────
+(function(){{
+  var ALL = (D.equity_series||[]).map(function(r){{ return [String(r[0]), Number(r[1])]; }});
+  var box = document.getElementById('eqchart');
+  var rngs = document.getElementById('eqrngs');
+  var read = document.getElementById('eqread');
+  if (!box) return;
+  if (ALL.length < 2) {{
+    box.innerHTML = '<div class="muted" style="font-size:12px;padding:12px 0">Collecting — one equity point is banked per session; the curve appears from day 2.</div>';
+    if (rngs) rngs.style.display = 'none';
+    return;
+  }}
+  var RANGES = [['1D',1],['5D',7],['1M',31],['3M',92],['6M',183],['1Y',366],['All',null]];
+  var cur = 'All';
+  var G = null;   // geometry of the current draw, for the crosshair
+
+  function fmtD(iso){{
+    try {{ return new Date(iso+'T12:00:00Z').toLocaleDateString('en-US',
+        {{month:'short',day:'numeric',year:'numeric'}}); }} catch(e) {{ return iso; }}
+  }}
+  function fmt$(v){{ return '$'+Math.round(v).toLocaleString(); }}
+
+  function setRead(i){{
+    if (!G) return;
+    var d = G.pts[i], chg = d[1]-G.base, pc = G.base ? (100*chg/G.base) : 0;
+    read.innerHTML = esc(fmtD(d[0]))+' · <b>'+fmt$(d[1])+'</b> · '
+      + '<span class="'+(chg>=0?'pos':'neg')+'">'+(chg>=0?'+':'-')+fmt$(Math.abs(chg)).slice(1,99).replace(/^/,'$')
+      + ' ('+(chg>=0?'+':'')+pc.toFixed(2)+'%)</span>'
+      + ' <span class="muted">vs start of range</span>';
+  }}
+
+  function draw(){{
+    var days = null;
+    RANGES.forEach(function(r){{ if (r[0]===cur) days = r[1]; }});
+    var pts = ALL;
+    if (days != null) {{
+      var last = new Date(ALL[ALL.length-1][0]+'T12:00:00Z');
+      var cut = new Date(last.getTime() - days*86400000);
+      pts = ALL.filter(function(p){{ return new Date(p[0]+'T12:00:00Z') >= cut; }});
+      if (pts.length < 2) pts = ALL.slice(-2);
+    }}
+    var W=640, H=210, PT=14, PB=22, PL=8, PR=8;
+    var vals = pts.map(function(p){{ return p[1]; }});
+    var base = vals[0];
+    var lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
+    if (hi === lo) {{ hi += 1; lo -= 1; }}
+    var pad = (hi-lo)*0.08; lo -= pad; hi += pad;
+    function X(i){{ return PL + (W-PL-PR) * i / (pts.length-1); }}
+    function Y(v){{ return PT + (H-PT-PB) * (1 - (v-lo)/(hi-lo)); }}
+    var line = pts.map(function(p,i){{ return X(i).toFixed(1)+','+Y(p[1]).toFixed(1); }}).join(' ');
+    var area = PL.toFixed(1)+','+(H-PB)+' '+line+' '+(W-PR).toFixed(1)+','+(H-PB);
+    var up = vals[vals.length-1] >= base;
+    var col = up ? '#60cc88' : '#ff6b6b';
+    var baseY = Y(base);
+    var svg = '<svg viewBox="0 0 '+W+' '+H+'" width="100%" preserveAspectRatio="none" id="eqsvg">'
+      + '<polygon points="'+area+'" fill="'+col+'" fill-opacity="0.10"/>'
+      + '<line x1="'+PL+'" y1="'+baseY.toFixed(1)+'" x2="'+(W-PR)+'" y2="'+baseY.toFixed(1)+'" stroke="rgba(255,255,255,.16)" stroke-width="1" stroke-dasharray="3,4"/>'
+      + '<polyline points="'+line+'" fill="none" stroke="'+col+'" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>'
+      + '<line id="eqx" x1="0" y1="'+PT+'" x2="0" y2="'+(H-PB)+'" stroke="rgba(255,255,255,.35)" stroke-width="1" visibility="hidden"/>'
+      + '<circle id="eqdot" r="4" fill="'+col+'" stroke="#0f0f1a" stroke-width="2" visibility="hidden"/>'
+      + '<text x="'+PL+'" y="'+(H-6)+'" fill="#6a6a88" font-size="10">'+esc(fmtD(pts[0][0]))+'</text>'
+      + '<text x="'+(W-PR)+'" y="'+(H-6)+'" fill="#6a6a88" font-size="10" text-anchor="end">'+esc(fmtD(pts[pts.length-1][0]))+'</text>'
+      + '</svg>';
+    box.innerHTML = svg;
+    G = {{pts:pts, X:X, Y:Y, W:W, base:base}};
+    setRead(pts.length-1);
+    var el = document.getElementById('eqsvg');
+    function locate(clientX){{
+      var r = el.getBoundingClientRect();
+      var fx = (clientX - r.left) / r.width * G.W;
+      var i = 0, best = 1e9;
+      for (var k=0; k<G.pts.length; k++) {{
+        var d = Math.abs(G.X(k)-fx);
+        if (d < best) {{ best = d; i = k; }}
+      }}
+      return i;
+    }}
+    function show(i){{
+      var x = G.X(i), y = G.Y(G.pts[i][1]);
+      var xl = document.getElementById('eqx'), dt = document.getElementById('eqdot');
+      xl.setAttribute('x1',x); xl.setAttribute('x2',x); xl.setAttribute('visibility','visible');
+      dt.setAttribute('cx',x); dt.setAttribute('cy',y); dt.setAttribute('visibility','visible');
+      setRead(i);
+    }}
+    function hide(){{
+      document.getElementById('eqx').setAttribute('visibility','hidden');
+      document.getElementById('eqdot').setAttribute('visibility','hidden');
+      setRead(G.pts.length-1);
+    }}
+    el.addEventListener('mousemove', function(e){{ show(locate(e.clientX)); }});
+    el.addEventListener('mouseleave', hide);
+    el.addEventListener('touchstart', function(e){{ show(locate(e.touches[0].clientX)); e.preventDefault(); }}, {{passive:false}});
+    el.addEventListener('touchmove',  function(e){{ show(locate(e.touches[0].clientX)); e.preventDefault(); }}, {{passive:false}});
+    el.addEventListener('touchend', hide);
+  }}
+
+  RANGES.forEach(function(r){{
+    var b = document.createElement('span');
+    b.className = 'rng' + (r[0]===cur ? ' on' : '');
+    b.textContent = r[0];
+    b.onclick = function(){{
+      cur = r[0];
+      Array.prototype.forEach.call(rngs.children, function(c){{ c.className = 'rng' + (c.textContent===cur?' on':''); }});
+      draw();
+    }};
+    rngs.appendChild(b);
+  }});
+  draw();
+}})();
 </script></body></html>"""
 
 
