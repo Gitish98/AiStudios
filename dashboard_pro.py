@@ -796,7 +796,7 @@ document.getElementById('app').innerHTML = h;
     if (!G) return;
     var d = G.pts[i], chg = d[1]-G.base, pc = G.base ? (100*chg/G.base) : 0;
     read.innerHTML = esc(fmtD(d[0]))+' · <b>'+fmt$(d[1])+'</b> · '
-      + '<span class="'+(chg>=0?'pos':'neg')+'">'+(chg>=0?'+':'-')+fmt$(Math.abs(chg)).slice(1,99).replace(/^/,'$')
+      + '<span class="'+(chg>=0?'pos':'neg')+'">'+(chg>=0?'+':'-')+fmt$(Math.abs(chg))
       + ' ('+(chg>=0?'+':'')+pc.toFixed(2)+'%)</span>'
       + ' <span class="muted">vs start of range</span>';
   }}
