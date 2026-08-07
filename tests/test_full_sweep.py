@@ -726,3 +726,60 @@ def test_vanished_close_order_releases_the_position():
             "SELECT COUNT(*) FROM journal WHERE kind='close_ambiguous_assignment'"
         ).fetchone()[0] == 1
         st.close()
+
+
+def test_vanished_order_with_complete_units_is_adopted_not_flagged():
+    """REGRESSION from trade #2 (live, 2026-08-06/07): 5 of 10 contracts filled,
+    then the DAY order VANISHED from IB's session-scoped feed overnight — so the
+    dead-status branch (the only one that knew how to adopt) never fired, and the
+    o-is-None branch saw 'some legs held' and flagged partial_fill_detected for
+    two days while 5 real, complete, unmanaged spreads sat at the broker.
+
+    Complete units behind a vanished order must be ADOPTED (resized, promoted,
+    fill reconstructed); only LOPSIDED legs are the human-review signature."""
+    import tempfile
+    from pathlib import Path
+    from core.brokers.base import Position
+    from core.execution import _finalize_pending_entries
+    from core.store import Store
+
+    def _row(store):
+        return store.open_position({
+            "client_order_id": "AIS-q", "strategy": "premium_harvest",
+            "structure": "put_credit_spread", "family": "put", "is_credit": 1,
+            "underlying": "QQQ", "status": "pending", "opened_asof": "2026-08-05",
+            "opened_ts": "t", "expiration": "2026-09-04", "contracts": 10,
+            "short_strike": 695.0, "long_strike": 694.0, "width": 1.0,
+            "legs_json": "[]", "entry_credit_ps": 0.21, "max_loss": 790.0})
+
+    def _leg(strike, qty, avg):
+        return Position(symbol="QQQ", qty=qty, avg_price=avg, market_value=0.0,
+                        asset_class="option", underlying="QQQ",
+                        option_expiration="2026-09-04", option_strike=strike,
+                        option_right="P")
+
+    class _A:
+        name = "ibkr_paper"
+        def __init__(self, held): self._held = held
+        def list_orders(self): return []          # the feed forgot the order
+        def get_positions(self): return self._held
+
+    # The REAL live numbers: 5 complete spreads, short 695 @ 800.4969/contract,
+    # long 694 @ 780.8833 -> net credit ~0.1961/sh.
+    held = [_leg(695.0, -5.0, 800.4969), _leg(694.0, 5.0, 780.8833)]
+    with tempfile.TemporaryDirectory() as td:
+        st = Store(Path(td) / "p.db")
+        pid = _row(st)
+        _finalize_pending_entries(_A(held), st)
+        opens = st.get_open_positions()
+        assert len(opens) == 1, "5 complete units must be ADOPTED, not flagged"
+        assert opens[0]["contracts"] == 5
+        assert opens[0]["max_loss"] == 395.0        # rescaled 790 * 5/10
+        assert abs(opens[0]["entry_fill_ps"] - 0.1961) < 0.001, "fill reconstructed"
+        n = st.conn.execute("SELECT COUNT(*) FROM journal "
+                            "WHERE kind='partial_fill_adopted'").fetchone()[0]
+        assert n == 1
+        flagged = st.conn.execute("SELECT COUNT(*) FROM journal "
+                                  "WHERE kind='partial_fill_detected'").fetchone()[0]
+        assert flagged == 0, "complete units are not an assignment signature"
+        st.close()

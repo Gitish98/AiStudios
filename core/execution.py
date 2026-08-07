@@ -670,6 +670,35 @@ def _position_is_held(pos_row: dict, held: dict) -> tuple[bool, bool]:
     return all_held, any_held
 
 
+def _adopt_partial(p: dict, units: int, store: Store, adapter) -> None:
+    """Adopt a partially-filled entry at the broker's ACTUAL size: resize the row
+    (contracts + rescaled max_loss), promote to open, and reconstruct the fill
+    price from the positions feed's per-leg average costs (the order feed reports
+    avgFillPrice=0.0 for a partially-filled order that died). One helper, used by
+    BOTH resolution branches — the dead-status one and the vanished-order one —
+    because they drifted once already: trade #2's 5/10 fill sat flagged for two
+    days when the session-scoped feed forgot its order, so only the dead-status
+    branch (which never fired) knew how to adopt."""
+    ordered = int(p.get("contracts") or 0)
+    store.adopt_partial_fill(p["id"], units)
+    try:
+        fill_ps = net_debit_from_positions(
+            _legs_for_position(p, adapter.get_positions()), units)
+        intended = p.get("entry_credit_ps")
+        if fill_ps is not None and intended is not None:
+            signed_intent = (float(intended) if p.get("is_credit")
+                             else -float(intended))
+            store.record_entry_fill(p["id"], fill_ps,
+                                    round(signed_intent - fill_ps, 4))
+    except Exception:
+        pass
+    store.append(_now_iso(), "partial_fill_adopted", {
+        "position_id": p["id"], "underlying": p["underlying"],
+        "ordered": ordered, "filled": units, "severity": "high",
+        "note": "partial fill adopted at the broker's actual size; "
+                "position is now open and managed"})
+
+
 def _finalize_pending_entries(adapter: BrokerAdapter, store: Store) -> None:
     """Flip 'pending' entry positions to 'open' once the broker confirms the fill,
     or drop them if the order died. Mirrors the pending-close finalizer."""
@@ -714,15 +743,24 @@ def _finalize_pending_entries(adapter: BrokerAdapter, store: Store) -> None:
                     "via": "broker_positions", "entry_slip_ps": None,
                     "note": "order feed no longer had it; legs confirmed held"})
             elif any_held:
-                # PARTIAL: the broker holds some legs but not the full structure.
-                # Never delete — that would leave real, unhedged exposure with
-                # nothing tracking it. Keep it pending and say so loudly; this
-                # needs a human, because a half-filled vertical is not defined-risk.
-                store.append(_now_iso(), "partial_fill_detected", {
-                    "position_id": p["id"], "underlying": p["underlying"],
-                    "severity": "high",
-                    "note": "broker holds SOME legs of this spread but not all — "
-                            "the structure may be unhedged. Investigate before trading."})
+                # Some legs held. FIRST ask whether they form COMPLETE units of
+                # the structure: a partially filled combo (5 of 10) leaves whole
+                # defined-risk spreads behind, and those must be ADOPTED and
+                # managed — observed live when trade #2's 5/10 fill sat flagged
+                # for two days because its order vanished from the session-scoped
+                # feed and only the (never-firing) dead-status branch knew how to
+                # adopt. Only a LOPSIDED remainder — legs that do not form whole
+                # units — is the assignment signature that needs a human.
+                units = _held_units(p, held)
+                if units > 0:
+                    _adopt_partial(p, units, store, adapter)
+                else:
+                    store.append(_now_iso(), "partial_fill_detected", {
+                        "position_id": p["id"], "underlying": p["underlying"],
+                        "severity": "high",
+                        "note": "broker holds SOME legs of this spread but they do "
+                                "not form complete units — possibly assigned/"
+                                "unhedged. Investigate before trading."})
             elif str(p.get("opened_asof") or "") < _today_iso():
                 # Not held, and it is no longer today: the DAY order died unfilled.
                 store.set_order_status(p["client_order_id"], "canceled")
@@ -756,29 +794,7 @@ def _finalize_pending_entries(adapter: BrokerAdapter, store: Store) -> None:
             # filled_qty=0.0.) Adopt broker truth instead.
             units = _held_units(p, held) if held is not None else 0
             if units > 0:
-                ordered = int(p.get("contracts") or 0)
-                store.adopt_partial_fill(p["id"], units)
-                # The ORDER feed gave no fill price (IB reports avgFillPrice=0.0 on
-                # a partially-filled order that then died), but the POSITIONS feed
-                # still carries each leg's average cost. Reconstruct the realized
-                # net price from it — otherwise the slippage for this trade, the
-                # one number that decides whether edge survives costs, is lost.
-                try:
-                    fill_ps = net_debit_from_positions(
-                        _legs_for_position(p, adapter.get_positions()), units)
-                    intended = p.get("entry_credit_ps")
-                    if fill_ps is not None and intended is not None:
-                        signed_intent = (float(intended) if p.get("is_credit")
-                                         else -float(intended))
-                        store.record_entry_fill(
-                            p["id"], fill_ps, round(signed_intent - fill_ps, 4))
-                except Exception:
-                    pass
-                store.append(_now_iso(), "partial_fill_adopted", {
-                    "position_id": p["id"], "underlying": p["underlying"],
-                    "ordered": ordered, "filled": units, "severity": "high",
-                    "note": "order died after a PARTIAL fill; adopted the broker's "
-                            "actual size so the position is managed and exited"})
+                _adopt_partial(p, units, store, adapter)
                 continue
             store.delete_position(p["id"])
             store.append(_now_iso(), "entry_dropped", {"position_id": p["id"],
