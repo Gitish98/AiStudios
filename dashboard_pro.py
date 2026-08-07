@@ -323,6 +323,7 @@ def _gather(store: Store) -> dict[str, Any]:
         "equity_series": _equity_series(store),
         "cycles": _cycle_history(store),
         "trades": _trade_history(closed),
+        "fx_rates": store.get_fx_rates(),
     }
 
 
@@ -351,6 +352,7 @@ def build_pro(store_path: Optional[Path] = None,
             "atm_iv_by_symbol": data.get("iv_series"),
             "closed_trades": data.get("trades"),
             "recent_cycles": data.get("cycles"),
+            "usdcad_by_day": data.get("fx_rates"),
         }, indent=1, default=str), encoding="utf-8")
     except Exception:
         pass
@@ -643,13 +645,16 @@ if (dec.length){{
 // ── history ──────────────────────────────────────────────────────────────
 h += '<div class="sec-title">History</div>';
 h += '<div class="card" style="margin-bottom:10px"><div class="k" style="margin-bottom:6px">Account equity</div>'
-   + '<div class="rngs" id="eqrngs"></div><div class="eqread" id="eqread">—</div>'
+   + '<div class="rngs" id="eqrngs"></div>'
+   + '<div class="rngs" id="eqccy" style="margin-top:-2px"></div>'
+   + '<div class="eqread" id="eqread">—</div>'
    + '<div id="eqchart"></div>'
-   + '<div class="note">Honest caveat: the account is CAD-based and this is the USD view, so the '
-   + 'curve includes currency movement and the paper account's simulated interest — most of the '
-   + 'rise to date is CAD strengthening, not trading. Pure trading results are the '
-   + '"Realized P&L" tile above; the graduation gate uses only per-trade P&L net of costs, '
-   + 'so FX can never make the system look tradeworthy.</div></div>';
+   + '<div class="note">Honest caveat: the USD view includes currency movement plus simulated '
+   + 'paper interest — most of the USD rise to date is CAD strengthening, not trading. '
+   + 'Switch to CAD (native) to see the account in its own currency, where FX noise '
+   + 'disappears. Pure trading results are the "Realized P&L" tile above; the graduation '
+   + 'gate uses only per-trade P&L net of costs, so FX can never make the system look '
+   + 'tradeworthy.</div></div>';
 
 var ivs = D.iv_series||{{}};
 var syms = Object.keys(ivs).sort();
@@ -760,7 +765,14 @@ document.getElementById('app').innerHTML = h;
 
 // ── interactive equity chart: range buttons + hover/touch crosshair ──────
 (function(){{
-  var ALL = (D.equity_series||[]).map(function(r){{ return [String(r[0]), Number(r[1])]; }});
+  var USD = (D.equity_series||[]).map(function(r){{ return [String(r[0]), Number(r[1])]; }});
+  var FX = D.fx_rates||{{}};
+  // CAD view = USD equity x that day's REAL recorded rate. Days with no recorded
+  // rate are OMITTED, never interpolated — an honest gap beats a smooth fiction.
+  var CAD = USD.filter(function(r){{ return FX[r[0]] > 0; }})
+               .map(function(r){{ return [r[0], r[1]*FX[r[0]]]; }});
+  var CCY = 'USD';
+  var ALL = USD;
   var box = document.getElementById('eqchart');
   var rngs = document.getElementById('eqrngs');
   var read = document.getElementById('eqread');
@@ -778,7 +790,7 @@ document.getElementById('app').innerHTML = h;
     try {{ return new Date(iso+'T12:00:00Z').toLocaleDateString('en-US',
         {{month:'short',day:'numeric',year:'numeric'}}); }} catch(e) {{ return iso; }}
   }}
-  function fmt$(v){{ return '$'+Math.round(v).toLocaleString(); }}
+  function fmt$(v){{ return (CCY==='CAD'?'C$':'$')+Math.round(v).toLocaleString(); }}
 
   function setRead(i){{
     if (!G) return;
@@ -790,6 +802,12 @@ document.getElementById('app').innerHTML = h;
   }}
 
   function draw(){{
+    ALL = (CCY==='CAD') ? CAD : USD;
+    if (ALL.length < 2) {{
+      box.innerHTML = '<div class="muted" style="font-size:12px;padding:12px 0">Not enough '+CCY+' history yet.</div>';
+      read.textContent = '—';
+      return;
+    }}
     var days = null;
     RANGES.forEach(function(r){{ if (r[0]===cur) days = r[1]; }});
     var pts = ALL;
@@ -854,6 +872,24 @@ document.getElementById('app').innerHTML = h;
     el.addEventListener('touchend', hide);
   }}
 
+  var ccyBox = document.getElementById('eqccy');
+  ['USD','CAD'].forEach(function(c){{
+    var b = document.createElement('span');
+    b.className = 'rng' + (c===CCY ? ' on' : '');
+    b.textContent = (c==='CAD') ? 'CAD (native)' : 'USD';
+    b.onclick = function(){{
+      if (c==='CAD' && CAD.length < 2) {{
+        read.textContent = 'CAD view needs the daily FX rate — recorded from now on; history backfills from IBKR.';
+        return;
+      }}
+      CCY = c;
+      Array.prototype.forEach.call(ccyBox.children, function(x){{
+        x.className = 'rng' + ((x.textContent.indexOf(c)===0) === (x.textContent.indexOf(CCY)===0) && x.textContent.indexOf(CCY)===0 ? ' on' : '');
+      }});
+      draw();
+    }};
+    ccyBox.appendChild(b);
+  }});
   RANGES.forEach(function(r){{
     var b = document.createElement('span');
     b.className = 'rng' + (r[0]===cur ? ' on' : '');

@@ -174,3 +174,24 @@ if __name__ == "__main__":
     test_build_pro_self_contained_with_curve_and_winrate()
     test_summary_math()
     print("ok")
+
+
+def test_rendered_page_javascript_actually_parses():
+    """REGRESSION: a one-line caveat edit shipped an unescaped apostrophe inside
+    a single-quoted JS string — a syntax error that silently killed the ENTIRE
+    page script (the dashboard fell back to its static skeleton) while every
+    Python test stayed green, because Python tests never parse the JS. Node does.
+    Skips silently where node is unavailable (the VM does not need it)."""
+    import shutil, subprocess, tempfile
+    node = shutil.which("node")
+    if not node:
+        return                                      # environment without node
+    with tempfile.TemporaryDirectory() as td:
+        db = Path(td) / "p.db"
+        _seed(db)
+        html = dashboard_pro.build_pro(store_path=db, out_dir=Path(td)).read_text(encoding="utf-8")
+        js = html.split("<script>")[1].split("</script>")[0]
+        jsf = Path(td) / "page.js"
+        jsf.write_text(js, encoding="utf-8")
+        r = subprocess.run([node, "--check", str(jsf)], capture_output=True, text=True)
+        assert r.returncode == 0, f"rendered page JS does not parse:\n{r.stderr[:800]}"

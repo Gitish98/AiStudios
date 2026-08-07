@@ -151,6 +151,9 @@ def run_cycle(
         store.set_kv("buying_power", str(account.buying_power))
         store.set_kv("broker", adapter.name)
         store.set_kv("mode", "paper" if adapter.is_paper else "live")
+        rate = float(getattr(adapter, "usd_rate", 0.0) or 0.0)
+        if rate > 0:
+            store.record_fx_rate(asof, rate)   # feeds the dashboard's CAD view
         if adapter.name != "sim":
             # WRITE-ONCE, never cleared: "this store has traded against a real
             # broker". The rolling 'broker' kv is overwritten every cycle, so a

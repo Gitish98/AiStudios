@@ -362,6 +362,7 @@ class IBKRAdapter(BrokerAdapter):
         a = parse_account_values(rows)
         # Remember the currency situation so the CLI can surface it transparently.
         self.base_currency = a["base_currency"]
+        self.usd_rate = float(a.get("usd_rate") or 0.0)   # CAD per USD (0 if n/a)
         if a["converted"]:
             self.fx_note = (f"account base is {a['base_currency']}; equity/cash/BP "
                             f"converted to USD at {a['usd_rate']:.4f} {a['base_currency']}/USD.")
@@ -580,6 +581,25 @@ class IBKRAdapter(BrokerAdapter):
             return None
         except Exception:
             return None                      # no mark -> the caller HOLDS, never guesses
+
+    def get_fx_history(self, days: int = 120) -> list:
+        """Daily USD/CAD midpoint closes from IB's forex feed, oldest->newest, as
+        [(YYYY-MM-DD, rate)]. Used ONCE to backfill the store's fx_rates table so
+        the dashboard's CAD equity view covers history honestly — reconstructed
+        from real market rates, never interpolated."""
+        ib = _load_ib()
+        live = self._require()
+        try:
+            fx = ib.Forex("USDCAD")
+            live.qualifyContracts(fx)
+            bars = live.reqHistoricalData(
+                fx, endDateTime="", durationStr=f"{max(days, 30)} D",
+                barSizeSetting="1 day", whatToShow="MIDPOINT", useRTH=True,
+                formatDate=1)
+            return [(str(b.date)[:10], float(b.close)) for b in bars
+                    if b.close and float(b.close) > 0]
+        except Exception:
+            return []
 
     def get_history(self, symbol: str, days: int = 120,
                     asof: Optional[str] = None) -> list[dict]:

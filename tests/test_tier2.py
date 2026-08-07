@@ -205,3 +205,21 @@ def test_cycle_end_reports_duration():
                               "ORDER BY id DESC LIMIT 1").fetchone()
         assert "duration_secs" in json.loads(row["payload"])
         st.close()
+
+
+def test_fx_rates_roundtrip_and_dashboard_payload():
+    """The CAD equity view needs the day's real USD/CAD rate. One rate per day,
+    idempotent; the dashboard payload carries the series; bad rates refused."""
+    import dashboard_pro
+    with tempfile.TemporaryDirectory() as td:
+        st = Store(Path(td) / "p.db")
+        st.record_fx_rate("2026-08-05", 1.4011)
+        st.record_fx_rate("2026-08-05", 1.4015)      # same day: replace
+        st.record_fx_rate("2026-08-06", 1.3990)
+        st.record_fx_rate("2026-08-07", 0.0)         # refused
+        st.record_fx_rate("2026-08-07", -1.0)        # refused
+        fx = st.get_fx_rates()
+        assert fx == {"2026-08-05": 1.4015, "2026-08-06": 1.399}
+        data = dashboard_pro._gather(st)
+        assert data["fx_rates"] == fx
+        st.close()

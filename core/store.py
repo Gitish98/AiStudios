@@ -81,6 +81,11 @@ class Store:
                 PRIMARY KEY (symbol, asof)
             )""")
         c.execute("""
+            CREATE TABLE IF NOT EXISTS fx_rates (
+                asof TEXT PRIMARY KEY,      -- YYYY-MM-DD
+                usdcad REAL NOT NULL        -- CAD per 1 USD (IB's ExchangeRate)
+            )""")
+        c.execute("""
             CREATE TABLE IF NOT EXISTS positions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 client_order_id TEXT,
@@ -193,6 +198,25 @@ class Store:
             "SELECT * FROM orders ORDER BY ts DESC LIMIT ?", (limit,)
         ).fetchall()
         return [dict(r) for r in rows]
+
+    # ── FX history (for the dashboard's CAD/USD equity views) ───────────────
+    def record_fx_rate(self, asof: str, usdcad: float) -> None:
+        """One USD/CAD rate per day. The account is CAD-base but equity was only
+        ever journaled in USD; without the day's rate the CAD view of history
+        cannot be shown honestly (interpolating one would fabricate data)."""
+        if not usdcad or usdcad <= 0:
+            return
+        self.conn.execute(
+            "INSERT OR REPLACE INTO fx_rates (asof, usdcad) VALUES (?, ?)",
+            (str(asof)[:10], round(float(usdcad), 6)))
+        self.conn.commit()
+
+    def get_fx_rates(self) -> dict:
+        try:
+            return {r["asof"]: r["usdcad"] for r in
+                    self.conn.execute("SELECT asof, usdcad FROM fx_rates")}
+        except Exception:
+            return {}
 
     # ── IV-rank history bootstrap ────────────────────────────────────────────
     def record_iv_snapshot(self, symbol: str, asof: str, atm_iv: float) -> None:
