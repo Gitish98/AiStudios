@@ -21,7 +21,8 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from .brokers.base import BrokerAdapter, OrderRequest, Position
-from .fills import entry_slippage_ps, net_debit_from_positions, signed_credit_ps
+from .fills import (entry_slippage_ps, net_debit_from_positions,
+                    signed_credit_ps, signed_intent_ps)
 from .options_math import MIN_IV_OBSERVATIONS
 from .manage import _is_filled, manage_open_positions
 from .positions import order_to_position
@@ -457,7 +458,8 @@ def run_cycle(
                             store.record_entry_fill(
                                 pid, signed_credit_ps(result.filled_avg_price),
                                 entry_slippage_ps(pos_row.get("entry_credit_ps"),
-                                                  result.filled_avg_price))
+                                                  result.filled_avg_price,
+                                                  bool(pos_row.get("is_credit", 1))))
                     except ValueError:
                         pass  # non-spread orders aren't tracked as managed positions yet
                     summary["placed"].append({
@@ -684,12 +686,10 @@ def _adopt_partial(p: dict, units: int, store: Store, adapter) -> None:
     try:
         fill_ps = net_debit_from_positions(
             _legs_for_position(p, adapter.get_positions()), units)
-        intended = p.get("entry_credit_ps")
+        intended = signed_intent_ps(p.get("entry_credit_ps"),
+                                    bool(p.get("is_credit", 1)), closing=False)
         if fill_ps is not None and intended is not None:
-            signed_intent = (float(intended) if p.get("is_credit")
-                             else -float(intended))
-            store.record_entry_fill(p["id"], fill_ps,
-                                    round(signed_intent - fill_ps, 4))
+            store.record_entry_fill(p["id"], fill_ps, round(intended - fill_ps, 4))
     except Exception:
         pass
     store.append(_now_iso(), "partial_fill_adopted", {
@@ -774,7 +774,8 @@ def _finalize_pending_entries(adapter: BrokerAdapter, store: Store) -> None:
             store.set_position_status(p["id"], "open")
             # Capture realized ENTRY economics now — IB's fill feed is session-
             # scoped, so this price is unrecoverable after today.
-            slip = entry_slippage_ps(p.get("entry_credit_ps"), o.filled_avg_price)
+            slip = entry_slippage_ps(p.get("entry_credit_ps"), o.filled_avg_price,
+                                     bool(p.get("is_credit", 1)))
             store.record_entry_fill(p["id"], signed_credit_ps(o.filled_avg_price), slip)
             store.append(_now_iso(), "entry_filled", {"position_id": p["id"],
                                                        "underlying": p["underlying"],

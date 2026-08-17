@@ -22,9 +22,17 @@ def compute_metrics(closed: list[dict], days: list[str],
                     costs: Optional[CostModel] = None) -> dict[str, Any]:
     costs = costs or CostModel()
     gross = [float(p.get("realized_pnl") or 0.0) for p in closed]
+    # Slippage is MEASURED per position where the broker reported a fill, modeled
+    # otherwise. This is what makes realized_pnl (computed from INTENDED prices)
+    # honest: gross_from_intent - measured_slippage == gross_from_actual_fills.
     trade_costs = [costs.position_cost(p.get("structure", "put_credit_spread"),
                                        int(p.get("contracts") or 1),
-                                       p.get("exit_reason", "")) for p in closed]
+                                       p.get("exit_reason", ""),
+                                       p.get("entry_slip_ps"),
+                                       p.get("exit_slip_ps"),
+                                       p.get("width")) for p in closed]
+    _cov = [costs.measured_dollars(p, p.get("exit_reason", "")) for p in closed]
+    _m, _a = sum(x for x, _ in _cov), sum(y for _, y in _cov)
     pnls = [g - c for g, c in zip(gross, trade_costs)]
     total_costs = round(sum(trade_costs), 2)
     n = len(pnls)
@@ -54,11 +62,16 @@ def compute_metrics(closed: list[dict], days: list[str],
         "avg_loss": round(-gross_loss / len(losses), 2) if losses else 0.0,
         "expectancy_net": round(net / n, 2) if n else 0.0,
         "cost_per_trade": round(total_costs / n, 2) if n else 0.0,
+        # How much of the cost figure is EVIDENCE vs model. A low number means
+        # the expectancy below still rests largely on assumptions.
+        "cost_measured_pct": round(_m / _a, 3) if _a else 0.0,
         "cost_drag_pct": round(total_costs / abs(gross_net), 4) if gross_net else None,
         "profit_factor": round(gross_profit / gross_loss, 2) if gross_loss > 0 else None,
         "max_drawdown": round(max_dd, 2),
         "exits_by_reason": by_reason,
-        "note": "Net of modeled commissions+slippage. Option prices are MODELED (BS), "
+        "note": "Net of commissions + slippage (MEASURED per fill where the broker "
+                "reported one, modeled otherwise — see cost_measured_pct). "
+                "Option prices are MODELED (BS), "
                 "not real fills. Necessary, not sufficient — paper-trade before live.",
     }
 
@@ -84,8 +97,13 @@ def trade_rows(closed: list[dict], costs: Optional[CostModel] = None) -> list[di
     for p in closed:
         contracts = int(p.get("contracts") or 1)
         gross = float(p.get("realized_pnl") or 0.0)
+        # Same measured-slippage treatment as compute_metrics — the tax/trade-log
+        # CSV and the performance summary must never disagree about cost.
         cost = costs.position_cost(p.get("structure", "put_credit_spread"),
-                                   contracts, p.get("exit_reason", ""))
+                                   contracts, p.get("exit_reason", ""),
+                                   p.get("entry_slip_ps"), p.get("exit_slip_ps"),
+                                   p.get("width"))
+        _md, _td = costs.measured_dollars(p, p.get("exit_reason", ""))
         rows.append({
             "opened": p.get("opened_asof", ""), "closed": p.get("closed_asof", ""),
             "underlying": p.get("underlying", ""), "structure": p.get("structure", ""),
@@ -96,5 +114,7 @@ def trade_rows(closed: list[dict], costs: Optional[CostModel] = None) -> list[di
             "exit_reason": p.get("exit_reason", ""),
             "gross_pnl": round(gross, 2), "cost": round(cost, 2),
             "net_pnl": round(gross - cost, 2),
+            "entry_slip_ps": p.get("entry_slip_ps"), "exit_slip_ps": p.get("exit_slip_ps"),
+            "cost_measured_pct": round(_md / _td, 3) if _td else 0.0,
         })
     return rows

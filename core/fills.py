@@ -50,31 +50,78 @@ def signed_credit_ps(fill_price: Any) -> Optional[float]:
     return None if v is None else round(-v, 4)
 
 
-def entry_slippage_ps(intended_credit_ps: Any, fill_price: Any) -> Optional[float]:
-    """Adverse entry slippage per share. POSITIVE = worse than intended.
+def signed_intent_ps(magnitude: Any, is_credit: bool, closing: bool) -> Optional[float]:
+    """A stored per-share MAGNITUDE -> our signed convention (credit POSITIVE).
 
-    For a credit spread we intend to RECEIVE `intended_credit_ps`; receiving less
-    is adverse. Works for debit structures too, because both sides are expressed
-    in the same signed-credit convention (a debit is a negative credit)."""
+    The store keeps `entry_credit_ps` and `exit_value_ps` as unsigned magnitudes
+    (core/positions.py rounds abs(est_credit)); the sign lives in `is_credit` and
+    in whether we are opening or closing. Getting this wrong is not a rounding
+    error — it flips an adverse fill into a favourable one:
+
+      OPEN  a credit spread  -> we RECEIVE  -> +magnitude
+      OPEN  a debit spread   -> we PAY      -> -magnitude
+      CLOSE a credit spread  -> we PAY      -> -magnitude   (closing reverses)
+      CLOSE a debit spread   -> we RECEIVE  -> +magnitude
+
+    A preflight review found three of the four fill call sites passing the raw
+    magnitude, which made a debit spread's exit slippage read as a large
+    FAVOURABLE number — and the cost model would have believed it."""
+    m = _usable(magnitude)
+    if m is None:
+        return None
+    receiving = (is_credit != bool(closing))   # XOR: closing flips the direction
+    return round(abs(m) if receiving else -abs(m), 4)
+
+
+def _adverse(signed_intent: Optional[float], fill_price: Any) -> Optional[float]:
+    """Adverse slippage per share: POSITIVE = worse than intended, for every
+    structure and both directions. One formula, because both sides are expressed
+    in the same signed-credit convention."""
     realized = signed_credit_ps(fill_price)
-    intended = _usable(intended_credit_ps)
-    if realized is None or intended is None:
+    if realized is None or signed_intent is None:
         return None
-    return round(intended - realized, 4)
+    return round(signed_intent - realized, 4)
 
 
-def exit_slippage_ps(intended_exit_ps: Any, fill_price: Any) -> Optional[float]:
-    """Adverse exit slippage per share. POSITIVE = worse than intended.
+def entry_slippage_ps(intended_credit_ps: Any, fill_price: Any,
+                      is_credit: bool = True) -> Optional[float]:
+    """Adverse ENTRY slippage per share. POSITIVE = worse than intended.
 
-    Closing a credit spread costs money: `intended_exit_ps` is what we expected to
-    pay, and the realized cost is the broker price with our sign convention undone.
-    Paying more than intended is adverse."""
-    realized_credit = signed_credit_ps(fill_price)
-    intended = _usable(intended_exit_ps)
-    if realized_credit is None or intended is None:
-        return None
-    realized_cost = -realized_credit          # back to "what we paid"
-    return round(realized_cost - intended, 4)
+    `intended_credit_ps` is the stored MAGNITUDE; `is_credit` supplies its sign
+    (see signed_intent_ps). A credit spread receiving less, or a debit spread
+    paying more, are both positive."""
+    return _adverse(signed_intent_ps(intended_credit_ps, is_credit, closing=False),
+                    fill_price)
+
+
+def exit_slippage_ps(intended_exit_ps: Any, fill_price: Any,
+                     is_credit: bool = True) -> Optional[float]:
+    """Adverse EXIT slippage per share. POSITIVE = worse than intended.
+
+    Closing REVERSES the direction: buying back a credit spread is money out,
+    selling a debit spread is money in. Both cases route through the same signed
+    comparison, so paying more (or receiving less) than the mark is positive."""
+    return _adverse(signed_intent_ps(intended_exit_ps, is_credit, closing=True),
+                    fill_price)
+
+
+def plausible_slip_ps(slip_ps: Any, width: Any) -> bool:
+    """Is a measured slippage physically believable for this structure?
+
+    A vertical's whole round trip cannot slip by more than the spread's width —
+    that is an arbitrage bound, not a preference. A value beyond it means a bad
+    price, a convention mismatch, or a corrupt row, and such a number must NEVER
+    become "evidence" in the cost model: the honest response is to fall back to
+    the model and say so, not to clamp a garbage figure into a plausible-looking
+    one. (The project's standing rule: absence and ambiguity must be
+    unrepresentable as a confident number.)"""
+    v = _usable(slip_ps)
+    if v is None:
+        return False
+    w = _usable(width)
+    if w is None or w <= 0:
+        return abs(v) <= 1.0        # no width known: one dollar/share is generous
+    return abs(v) <= abs(w)
 
 
 def summarize_slippage(rows: list[dict]) -> dict:

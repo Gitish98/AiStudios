@@ -175,7 +175,14 @@ class SimAdapter(BrokerAdapter):
     def place_order(self, order: OrderRequest) -> OrderResult:
         self._order_seq += 1
         bid = f"SIM-{self._order_seq:06d}"
-        fill = order.limit_price if order.limit_price else 0.0
+        # Report the fill in the BROKER (IB combo) convention — negative price for
+        # a net CREDIT, positive for a net DEBIT — exactly as build_order_plan
+        # submits it. Reporting our own positive-credit convention here made
+        # core.fills.signed_credit_ps negate an already-correct number, so every
+        # simulated/backtested fill produced ~2x the premium as fictitious
+        # "measured" slippage. The broker boundary must speak one language.
+        _lp = order.limit_price if order.limit_price else 0.0
+        fill = -abs(_lp) if (getattr(order, "est_credit", 0) or 0) > 0 else abs(_lp)
         res = OrderResult(
             accepted=True, client_order_id=order.client_order_id, broker_order_id=bid,
             status="filled", filled_qty=sum(l.qty for l in order.legs),

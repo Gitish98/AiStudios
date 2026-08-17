@@ -389,13 +389,17 @@ def _finalize_pending_closes(adapter: BrokerAdapter, store: Store, asof: str) ->
             store.close_position(int(pid), asof, _now_iso(), info["reason"],
                                  info["exit_value_ps"], info["realized_pnl"])
             # Capture realized exit economics NOW — this feed is session-scoped.
+            _ic = bool((store.conn.execute(
+                "SELECT is_credit FROM positions WHERE id = ?", (int(pid),)
+            ).fetchone() or {"is_credit": 1})["is_credit"])
             store.record_exit_fill(
                 int(pid), signed_credit_ps(o.filled_avg_price),
-                exit_slippage_ps(info["exit_value_ps"], o.filled_avg_price))
+                exit_slippage_ps(info["exit_value_ps"], o.filled_avg_price, _ic))
             store.append(_now_iso(), "position_closed", {
                 "position_id": int(pid), "reason": info["reason"],
                 "realized_pnl": info["realized_pnl"], "via": "pending_fill",
-                "exit_slip_ps": exit_slippage_ps(info["exit_value_ps"], o.filled_avg_price)})
+                "exit_slip_ps": exit_slippage_ps(info["exit_value_ps"],
+                                                 o.filled_avg_price, _ic)})
             del pend[pid]; changed = True
         elif st in DEAD_ORDER_STATUSES:
             store.set_order_status(info["coid"], "canceled")  # canonicalize the close order
@@ -587,7 +591,8 @@ def manage_open_positions(adapter: BrokerAdapter, store: Store, config,
         if decision.action == "close":
             store.record_exit_fill(
                 pos["id"], signed_credit_ps(result.filled_avg_price),
-                exit_slippage_ps(decision.exit_value_ps, result.filled_avg_price))
+                exit_slippage_ps(decision.exit_value_ps, result.filled_avg_price,
+                                 bool(pos.get("is_credit", 1))))
         store.append(_now_iso(), "position_closed", {
             "underlying": pos["underlying"], "reason": decision.reason,
             "exit_value_ps": decision.exit_value_ps, "realized_pnl": decision.realized_pnl})

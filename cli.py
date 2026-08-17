@@ -467,7 +467,9 @@ def cmd_performance(args):
     print(f"  Trading days   : {m['days']}")
     print(f"  Closed trades  : {m['trades']}   (win rate {m['win_rate']*100:.1f}%)")
     print(f"  Gross P&L      : ${m['gross_pnl']:+,.2f}")
-    print(f"  Costs          : -${m['total_costs']:,.2f}  (${m['cost_per_trade']:.2f}/trade)")
+    _cov = m.get("cost_measured_pct", 0.0)
+    print(f"  Costs          : -${m['total_costs']:,.2f}  (${m['cost_per_trade']:.2f}/trade)"
+          f"  [{_cov:.0%} from MEASURED fills, rest modeled]")
     print(f"  NET P&L        : ${m['net_pnl']:+,.2f}")
     print(f"  Net expectancy : ${m['expectancy_net']:+.2f} / trade")
     print(f"  Profit factor  : {m['profit_factor']}")
