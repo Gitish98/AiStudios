@@ -151,6 +151,28 @@ def test_iv_and_graduation_helpers():
     # real gate said no.
     assert g["gross"] == -110.0 and g["costs"] > 0
     assert g["expectancy"] < -55.0
+    # The gate's EVIDENCE quality has to travel with its verdict. Without these
+    # the dashboard shows a cost figure with no way to tell measured fills from
+    # a model's guess -- and the modeled part is the optimistic part.
+    assert "cost_measured_pct" in g and "cost_per_trade" in g
+    assert g["cost_per_trade"] > 0
+
+
+def test_graduation_card_shows_cost_evidence_and_session_meaning():
+    """The three hurdles must each be legible on the PAGE, not just in the CLI.
+
+    'Paper record' counts trading sessions since the first trade; a reader who
+    thinks it counts closing days will read 2/60 and conclude the system has
+    barely run. And a cost number with no provenance invites trusting a model."""
+    with tempfile.TemporaryDirectory() as td:
+        db = Path(td) / "portfolio.db"
+        _seed(db)
+        html = dashboard_pro.build_pro(
+            store_path=db, out_dir=Path(td)).read_text(encoding="utf-8")
+    assert "MEASURED fills" in html
+    assert "cost_measured_pct" in html and "cost_per_trade" in html
+    assert "Trading sessions since the FIRST trade" in html
+    assert "All THREE must pass independently" in html
 
 
 def test_summary_math():

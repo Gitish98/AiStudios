@@ -182,6 +182,8 @@ def _graduation(closed: list[dict[str, Any]], min_days: int = 60,
         "closing_days": m.get("closing_days", 0),
         "net": m["net_pnl"], "gross": m["gross_pnl"], "costs": m["total_costs"],
         "expectancy": m["expectancy_net"] if m["trades"] else None,
+        "cost_measured_pct": m.get("cost_measured_pct", 0.0),
+        "cost_per_trade": m.get("cost_per_trade", 0.0),
         "eligible": grad["graduated"], "reasons": grad["reasons"],
     }
 
@@ -618,10 +620,29 @@ var dpct = Math.min(100, Math.round(100*(g.days||0)/(g.min_days||60)));
 h += '<div class="card" style="margin-bottom:10px"><div class="k" style="margin-bottom:6px">Graduation gate</div>';
 h += '<div class="gate"><span>Closed trades</span><b>'+(g.trades||0)+' / '+(g.min_trades||40)+'</b></div>';
 h += '<div class="bar"><div class="barfill" style="width:'+tpct+'%"></div></div>';
-h += '<div class="gate"><span>Paper record (trading sessions)</span><b>'+(g.days||0)+' / '+(g.min_days||60)+'</b></div>';
+h += '<div class="gate"><span>Paper record</span><b>'+(g.days||0)+' / '+(g.min_days||60)+' sessions</b></div>';
 h += '<div class="bar"><div class="barfill" style="width:'+dpct+'%"></div></div>';
+h += '<div class="note" style="margin:-2px 0 8px">Trading sessions since the FIRST trade — the length of the track record. '
+   + (g.closing_days!=null ? (g.closing_days+' of them had a close.') : '')
+   + ' (Days the system merely ran before it started trading do not count.)</div>';
 h += '<div class="gate"><span>Net expectancy (after costs)</span><b>'+(g.expectancy==null?'—':signed(g.expectancy)+' /trade')+'</b></div>';
-h += '<div style="margin-top:6px;font-size:12px;color:'+(g.eligible?'#60cc88':'#ff9a6b')+'">'+(g.eligible?'Clears the minimum bar — a hurdle, not a recommendation to go live.':'Not yet eligible to consider live — needs all three, and the final call is always human.')+'</div></div>';
+function cents(v){{var n=Number(v||0);return (n<0?'-':'')+'$'+Math.abs(n).toFixed(2);}}
+if (g.cost_per_trade)
+  h += '<div class="note" style="margin:-2px 0 8px">Gross '+cents(g.gross)+' minus '+cents(g.costs)
+     + ' of costs = <b style="color:'+((g.net||0)>=0?'#60cc88':'#ff6b6b')+'">'+cents(g.net)+' net</b>. '
+     + 'That is '+cents(g.cost_per_trade)+' of cost per trade, '
+     + Math.round((g.cost_measured_pct||0)*100)+'% of it from MEASURED fills (the rest is modeled '
+     + '— the modeled part is the optimistic part).</div>';
+h += '<div style="margin-top:6px;font-size:12px;color:'+(g.eligible?'#60cc88':'#ff9a6b')+'">'
+   + (g.eligible?'Clears the minimum bar — a hurdle, not a recommendation to go live.'
+               :'Not yet eligible. All THREE must pass independently, and the final call is always human.')+'</div>';
+var _rs = g.reasons||[];
+if (_rs.length) {{
+  h += '<div class="reasons" style="margin-top:8px">';
+  _rs.forEach(function(r){{ h += '<span class="chip" style="color:#ff9a6b">'+esc(r)+'</span>'; }});
+  h += '</div>';
+}}
+h += '</div>';
 var ivpct = Math.min(100, Math.round(100*(iv.days||0)/(iv.target||60)));
 h += '<div class="card"><div class="k" style="margin-bottom:6px">IV-rank bootstrap (XLK/XLF/XLE)</div>';
 h += '<div class="gate"><span>Sessions of IV collected</span><b>'+(iv.days||0)+' / '+(iv.target||60)+'</b></div>';
