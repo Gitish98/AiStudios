@@ -783,3 +783,77 @@ def test_vanished_order_with_complete_units_is_adopted_not_flagged():
                                   "WHERE kind='partial_fill_detected'").fetchone()[0]
         assert flagged == 0, "complete units are not an assignment signature"
         st.close()
+
+
+def test_partial_close_is_adopted_not_booked_as_complete():
+    """REGRESSION found from LIVE data (2026-08-18): reconcile logged the QQQ
+    position as broker_qty 3 vs expected 5 — a partly-filled close. The
+    classifier only asked 'is the FULL quantity present per leg', so 3-of-5
+    scored zero on both legs and returned 'none_held', which books a COMPLETE
+    close and orphans three real contracts at the broker. It filled the rest
+    before the vulnerable path ran, so the orphan never happened.
+
+    A partly-filled close must resize to the units still held and keep managing
+    them (the entry side already adopts partial fills this way); only LOPSIDED
+    legs are the assignment signature that needs a human."""
+    import json as _json
+    import tempfile
+    from pathlib import Path
+    from core.brokers.base import Position
+    from core.manage import _close_leg_state, _finalize_pending_closes
+    from core.reconcile import _leg_key
+    from core.store import Store
+
+    def _seed(store):
+        pid = store.open_position({
+            "client_order_id": "AIS-q", "strategy": "premium_harvest",
+            "structure": "put_credit_spread", "family": "put", "is_credit": 1,
+            "underlying": "QQQ", "status": "open", "opened_asof": "2026-08-05",
+            "opened_ts": "t", "expiration": "2026-09-04", "contracts": 5,
+            "short_strike": 695.0, "long_strike": 694.0, "width": 1.0,
+            "legs_json": "[]", "entry_credit_ps": 0.21, "max_loss": 395.0})
+        store.set_kv("pending_closes", _json.dumps({str(pid): {
+            "coid": "CLOSE-AIS-q", "reason": "dte_manage",
+            "exit_value_ps": 0.155, "realized_pnl": 27.5}}))
+        return pid
+
+    def _leg(strike, qty):
+        return Position(symbol="QQQ", qty=qty, avg_price=100.0, market_value=0.0,
+                        asset_class="option", underlying="QQQ",
+                        option_expiration="2026-09-04", option_strike=strike,
+                        option_right="P")
+
+    class _A:
+        name = "ibkr_paper"
+        def __init__(self, held): self._held = held
+        def list_orders(self): return []          # the close vanished from the feed
+        def get_positions(self): return self._held
+
+    S = _leg_key("QQQ", "2026-09-04", 695.0, "P")
+    L = _leg_key("QQQ", "2026-09-04", 694.0, "P")
+
+    # The classifier must now separate the three cases.
+    with tempfile.TemporaryDirectory() as td:
+        st = Store(Path(td) / "p.db")
+        pid = _seed(st)
+        assert _close_leg_state(st, pid, {S: -5.0, L: 5.0}) == "all_held"
+        assert _close_leg_state(st, pid, {S: -3.0, L: 3.0}) == "partial_units"
+        assert _close_leg_state(st, pid, {("SPY", "2026-09-18", 600.0, "P"): -1.0}) == "none_held"
+        assert _close_leg_state(st, pid, {L: 5.0}) == "partial"      # lopsided: assignment
+        st.close()
+
+    # THE LIVE CASE: 3 of 5 still held -> resize and keep managing, never book
+    # a full close.
+    with tempfile.TemporaryDirectory() as td:
+        st = Store(Path(td) / "p.db")
+        pid = _seed(st)
+        pend = _finalize_pending_closes(_A([_leg(695.0, -3.0), _leg(694.0, 3.0)]),
+                                        st, "2026-08-19")
+        assert st.get_closed_positions() == [], "must NOT book a complete close"
+        openp = st.get_open_positions()
+        assert len(openp) == 1 and openp[0]["contracts"] == 3, "resize to what is held"
+        assert openp[0]["max_loss"] == 237.0                      # 395 * 3/5
+        assert str(pid) not in pend, "released so the remainder is re-priced"
+        assert st.conn.execute("SELECT COUNT(*) FROM journal "
+                               "WHERE kind='partial_close_adopted'").fetchone()[0] == 1
+        st.close()

@@ -241,16 +241,68 @@ def _close_leg_state(store: Store, pid: int, held: dict) -> str:
                 (_leg_key(u, exp, p["long_strike"], r), +n)]
     if not want or n <= 0:
         return "unknown"
-    present = 0
+
+    # Count COMPLETE structures held, plus whether any leg survives at all. The
+    # difference is what distinguishes a partially-filled CLOSE from an
+    # ASSIGNMENT, and the predecessor collapsed both into the wrong answer: it
+    # only asked "is the FULL quantity present per leg", so 3-of-5 contracts
+    # still held scored zero on both legs and returned 'none_held' — booking a
+    # complete close and ORPHANING three real contracts at the broker.
+    # Observed live 2026-08-18 (reconcile logged broker_qty 3 vs expected 5); it
+    # filled the rest before the vulnerable path ran, so the orphan never
+    # happened. Same species as the entry-side partial-fill orphan.
+    units = None
+    any_leg = False
     for key, qty in want:
         have = float((held or {}).get(key, 0.0))
-        if (qty < 0 and have <= qty + 1e-9) or (qty > 0 and have >= qty - 1e-9):
-            present += 1
-    if present == len(want):
+        if abs(have) > 1e-9 and (have > 0) == (qty > 0):
+            any_leg = True                       # a leg in the RIGHT direction
+        per_unit = qty / n                       # +1 or -1 per structure
+        u_leg = int(max(0.0, -have if per_unit < 0 else have))
+        units = u_leg if units is None else min(units, u_leg)
+    units = int(units or 0)
+
+    if units >= n:
         return "all_held"
-    if present == 0:
+    if units > 0:
+        return "partial_units"                   # a partly-filled close: N-units gone
+    if not any_leg:
         return "none_held"
-    return "partial"
+    return "partial"                             # lopsided legs: assignment signature
+
+
+def _held_close_units(store: Store, pid: int, held: dict) -> int:
+    """How many COMPLETE units of this position the broker still holds — the
+    size a partly-filled close leaves behind."""
+    import json as _json
+    from .reconcile import _leg_key
+    row = store.conn.execute("SELECT * FROM positions WHERE id = ?", (int(pid),)).fetchone()
+    if row is None:
+        return 0
+    p = dict(row)
+    n = int(p.get("contracts") or 0)
+    if n <= 0:
+        return 0
+    u, exp = p.get("underlying"), p.get("expiration")
+    if p.get("structure") == "iron_condor":
+        raw = p.get("legs_json")
+        if not raw:
+            return 0
+        j = _json.loads(raw)
+        want = [(_leg_key(u, exp, j["sp"], "P"), -n), (_leg_key(u, exp, j["lp"], "P"), +n),
+                (_leg_key(u, exp, j["sc"], "C"), -n), (_leg_key(u, exp, j["lc"], "C"), +n)]
+    else:
+        fam = p.get("family") or ("call" if "call" in (p.get("structure") or "") else "put")
+        r = "C" if fam == "call" else "P"
+        want = [(_leg_key(u, exp, p["short_strike"], r), -n),
+                (_leg_key(u, exp, p["long_strike"], r), +n)]
+    units = None
+    for key, qty in want:
+        have = float((held or {}).get(key, 0.0))
+        per_unit = qty / n
+        u_leg = int(max(0.0, -have if per_unit < 0 else have))
+        units = u_leg if units is None else min(units, u_leg)
+    return int(units or 0)
 
 
 def _close_attempts(store: Store, pos_id: int) -> int:
@@ -355,6 +407,28 @@ def _finalize_pending_closes(adapter: BrokerAdapter, store: Store, asof: str) ->
                     "position_id": int(pid), "coid": info["coid"],
                     "note": "close order gone from broker but legs still held — "
                             "releasing so the position is re-evaluated"})
+            elif state == "partial_units":
+                # The close filled PART of the position and then vanished from
+                # the feed. The remainder is a real, complete, defined-risk
+                # structure — resize to it and keep managing, exactly as the
+                # entry side adopts a partial fill. Booking a full close here
+                # would orphan the remainder; booking the filled part needs a
+                # fill price we do not have, so it is journaled rather than
+                # invented.
+                units = _held_close_units(store, int(pid), held)
+                was = int((store.conn.execute(
+                    "SELECT contracts FROM positions WHERE id = ?", (int(pid),)
+                ).fetchone() or {"contracts": 0})["contracts"] or 0)
+                store.adopt_partial_fill(int(pid), units)
+                del pend[pid]; changed = True
+                store.set_order_status(info["coid"], "canceled")
+                store.append(_now_iso(), "partial_close_adopted", {
+                    "position_id": int(pid), "was": was, "remaining": units,
+                    "severity": "high",
+                    "note": "close filled partially then vanished from the feed; "
+                            "resized to the units still held so the remainder stays "
+                            "managed. The closed portion has no recoverable fill "
+                            "price and is NOT booked as realized P&L."})
             elif state == "none_held":
                 # THIS position's legs are gone (others may remain) => the close
                 # filled and the feed forgot. Price is the INTENDED one, unverified.
