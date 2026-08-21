@@ -225,3 +225,53 @@ def test_trade_rows_and_metrics_agree_on_cost():
     assert round(sum(r["net_pnl"] for r in rows), 2) == m["net_pnl"]
     assert rows[0]["entry_slip_ps"] == 0.0139        # the CSV states its evidence
     assert rows[0]["cost_measured_pct"] == 1.0
+
+
+def test_graduation_days_measure_elapsed_sessions_not_closing_dates():
+    """REGRESSION (operator caught it): the gate received 'distinct dates a trade
+    CLOSED', so 2 closes read as 2/60 'trading days' while the system had been
+    running 36 sessions. Worse, that count is bounded above by trade count, so
+    requiring 60 of them implied 60+ closes — making the separate '40 closed
+    trades' hurdle DEAD CODE that could never bind. The two conditions are meant
+    to be independent: enough elapsed time AND enough sample."""
+    import tempfile
+    from pathlib import Path
+    from core.performance import compute_metrics, graduation_status, paper_record_sessions
+    from core.store import Store
+
+    with tempfile.TemporaryDirectory() as td:
+        st = Store(Path(td) / "p.db")
+        # 36 sessions of IV, 5 of them BEFORE the strategy ever traded.
+        for i in range(41):
+            st.record_iv_snapshot("SPY", f"2026-07-{i+1:02d}" if i < 31
+                                  else f"2026-08-{i-30:02d}", 0.15)
+        st.open_position({
+            "client_order_id": "c", "strategy": "s", "structure": "put_credit_spread",
+            "family": "put", "is_credit": 1, "underlying": "SPY", "status": "closed",
+            "opened_asof": "2026-07-06", "opened_ts": "t", "expiration": "2026-09-04",
+            "contracts": 1, "short_strike": 500.0, "long_strike": 499.0, "width": 1.0,
+            "legs_json": "[]", "entry_credit_ps": 0.2, "max_loss": 80.0})
+        # The record starts at the FIRST TRADE, not at VM provisioning.
+        n = paper_record_sessions(st)
+        assert n == 36, f"expected 36 elapsed sessions since the first trade, got {n}"
+        st.close()
+
+    # Two closes on two dates, but a 36-session record: days reflects ELAPSED
+    # time and the TRADES hurdle now binds independently.
+    closed = [{"realized_pnl": 10.0, "closed_asof": "2026-08-05",
+               "structure": "put_credit_spread", "contracts": 1, "width": 1.0,
+               "exit_reason": "profit_target"},
+              {"realized_pnl": -5.0, "closed_asof": "2026-08-18",
+               "structure": "put_credit_spread", "contracts": 1, "width": 1.0,
+               "exit_reason": "stop_loss"}]
+    m = compute_metrics(closed, ["2026-08-05", "2026-08-18"], CostModel(), sessions=36)
+    assert m["days"] == 36 and m["closing_days"] == 2
+    reasons = graduation_status(m)["reasons"]
+    assert any("36/60" in r for r in reasons), "days must report elapsed sessions"
+    assert any("2/40 closed trades" in r for r in reasons), "the trade hurdle must BIND"
+
+    # And the hurdles are genuinely independent now: a long record with too few
+    # trades is refused on trades alone.
+    m2 = compute_metrics(closed, ["2026-08-05", "2026-08-18"], CostModel(), sessions=99)
+    assert not any("trading sessions" in r for r in graduation_status(m2)["reasons"])
+    assert any("closed trades" in r for r in graduation_status(m2)["reasons"])

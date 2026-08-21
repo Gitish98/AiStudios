@@ -458,13 +458,16 @@ def cmd_performance(args):
     store = Store()
     closed = store.get_closed_positions()
     days = sorted({p.get("closed_asof") for p in closed if p.get("closed_asof")})
-    m = compute_metrics(closed, days, CostModel.from_config(config))
+    from core.performance import paper_record_sessions
+    m = compute_metrics(closed, days, CostModel.from_config(config),
+                        sessions=paper_record_sessions(store))
     grad = graduation_status(m)
 
     print("─" * 56)
     print("  PAPER PERFORMANCE  (net of modeled commissions + slippage)")
     print("─" * 56)
-    print(f"  Trading days   : {m['days']}")
+    print(f"  Paper record   : {m['days']} trading sessions "
+          f"({m['closing_days']} with a close)")
     print(f"  Closed trades  : {m['trades']}   (win rate {m['win_rate']*100:.1f}%)")
     print(f"  Gross P&L      : ${m['gross_pnl']:+,.2f}")
     _cov = m.get("cost_measured_pct", 0.0)

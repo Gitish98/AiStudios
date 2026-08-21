@@ -154,7 +154,7 @@ def _iv_progress(store: Store, target: int = MIN_IV_OBSERVATIONS) -> dict[str, A
 
 
 def _graduation(closed: list[dict[str, Any]], min_days: int = 60,
-                min_trades: int = 40) -> dict[str, Any]:
+                min_trades: int = 40, store=None) -> dict[str, Any]:
     """The graduation hurdle — delegated to the ONE real implementation.
 
     This used to compute expectancy from gross realized P&L with NO cost model,
@@ -172,11 +172,14 @@ def _graduation(closed: list[dict[str, Any]], min_days: int = 60,
         costs = CostModel()
 
     days_list = sorted({p.get("closed_asof") for p in closed if p.get("closed_asof")})
-    m = compute_metrics(closed, days_list, costs)
+    from core.performance import paper_record_sessions
+    m = compute_metrics(closed, days_list, costs,
+                        sessions=(paper_record_sessions(store) if store else None))
     grad = graduation_status(m, min_days=min_days, min_trades=min_trades)
     return {
         "trades": m["trades"], "min_trades": min_trades,
         "days": m["days"], "min_days": min_days,
+        "closing_days": m.get("closing_days", 0),
         "net": m["net_pnl"], "gross": m["gross_pnl"], "costs": m["total_costs"],
         "expectancy": m["expectancy_net"] if m["trades"] else None,
         "eligible": grad["graduated"], "reasons": grad["reasons"],
@@ -313,7 +316,7 @@ def _gather(store: Store) -> dict[str, Any]:
         "decisions": _decisions(store),
         "slippage": _slippage(store),
         "iv": _iv_progress(store),
-        "graduation": _graduation(closed),
+        "graduation": _graduation(closed, store=store),
         "watchlist": watchlist,
         "equity_curve": _equity_curve(closed),
         "open_positions": _open_view(open_positions),
@@ -615,7 +618,7 @@ var dpct = Math.min(100, Math.round(100*(g.days||0)/(g.min_days||60)));
 h += '<div class="card" style="margin-bottom:10px"><div class="k" style="margin-bottom:6px">Graduation gate</div>';
 h += '<div class="gate"><span>Closed trades</span><b>'+(g.trades||0)+' / '+(g.min_trades||40)+'</b></div>';
 h += '<div class="bar"><div class="barfill" style="width:'+tpct+'%"></div></div>';
-h += '<div class="gate"><span>Trading days with a close</span><b>'+(g.days||0)+' / '+(g.min_days||60)+'</b></div>';
+h += '<div class="gate"><span>Paper record (trading sessions)</span><b>'+(g.days||0)+' / '+(g.min_days||60)+'</b></div>';
 h += '<div class="bar"><div class="barfill" style="width:'+dpct+'%"></div></div>';
 h += '<div class="gate"><span>Net expectancy (after costs)</span><b>'+(g.expectancy==null?'—':signed(g.expectancy)+' /trade')+'</b></div>';
 h += '<div style="margin-top:6px;font-size:12px;color:'+(g.eligible?'#60cc88':'#ff9a6b')+'">'+(g.eligible?'Clears the minimum bar — a hurdle, not a recommendation to go live.':'Not yet eligible to consider live — needs all three, and the final call is always human.')+'</div></div>';

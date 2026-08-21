@@ -18,8 +18,34 @@ GRAD_MIN_DAYS = 60
 GRAD_MIN_TRADES = 40
 
 
+def paper_record_sessions(store) -> int:
+    """TRADING SESSIONS elapsed since the strategy started trading — the paper
+    record's length.
+
+    Why this is not "distinct dates on which a trade closed", which is what the
+    gate used to receive: that count is bounded above by the number of trades, so
+    requiring 60 of them implied 60+ closes and made the separate "40 closed
+    trades" condition DEAD — it could never bind. The two hurdles are meant to be
+    independent: enough ELAPSED TIME (market regimes) and enough SAMPLE (trades).
+
+    Sessions come from the IV-snapshot record, which is exactly the set of days a
+    cycle actually ran, counted from the first position ever opened (the record
+    begins when the strategy starts trading, not when the VM was provisioned)."""
+    try:
+        first = store.conn.execute(
+            "SELECT MIN(opened_asof) FROM positions").fetchone()[0]
+        if not first:
+            return 0
+        return int(store.conn.execute(
+            "SELECT COUNT(DISTINCT asof) FROM iv_snapshots WHERE asof >= ?",
+            (first,)).fetchone()[0] or 0)
+    except Exception:
+        return 0
+
+
 def compute_metrics(closed: list[dict], days: list[str],
-                    costs: Optional[CostModel] = None) -> dict[str, Any]:
+                    costs: Optional[CostModel] = None,
+                    sessions: Optional[int] = None) -> dict[str, Any]:
     costs = costs or CostModel()
     gross = [float(p.get("realized_pnl") or 0.0) for p in closed]
     # Slippage is MEASURED per position where the broker reported a fill, modeled
@@ -55,7 +81,11 @@ def compute_metrics(closed: list[dict], days: list[str],
 
     gross_net = round(sum(gross), 2)
     return {
-        "days": len(days), "trades": n, "wins": len(wins), "losses": len(losses),
+        # `days` is the paper record's LENGTH in trading sessions when the caller
+        # supplies it; the legacy closing-date count is kept as a fallback for
+        # callers (and the backtest) that have no session record.
+        "days": int(sessions) if sessions is not None else len(days),
+        "closing_days": len(days), "trades": n, "wins": len(wins), "losses": len(losses),
         "win_rate": round(len(wins) / n, 4) if n else 0.0,
         "gross_pnl": gross_net, "total_costs": total_costs, "net_pnl": net,
         "avg_win": round(gross_profit / len(wins), 2) if wins else 0.0,
@@ -82,7 +112,8 @@ def graduation_status(metrics: dict, min_days: int = GRAD_MIN_DAYS,
     recommendation to go live — just a minimum hurdle."""
     reasons = []
     if metrics["days"] < min_days:
-        reasons.append(f"only {metrics['days']}/{min_days} trading days")
+        reasons.append(f"only {metrics['days']}/{min_days} trading sessions "
+                       "of paper record")
     if metrics["trades"] < min_trades:
         reasons.append(f"only {metrics['trades']}/{min_trades} closed trades")
     if metrics["expectancy_net"] <= 0:
