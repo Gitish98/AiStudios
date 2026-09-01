@@ -182,6 +182,42 @@ stay valid; one tracked position per option contract, enforced at entry
 (overlap = refused, corrupt row = fail closed). VM verified: system tz
 America/New_York, sticky marker seeded, mcal installed (rules are fallback).
 
+**Session 2026-09-01 — the silent measurement (commit `9990d41`):** trade #3
+(SPY 763/762 x10, filled 2026-08-31) was promoted to `open` with
+`entry_slip_ps: null` while the broker held the average costs the whole time.
+IB's fill feed is session-scoped, so a per-cycle cron never sees its own
+execution; `_finalize_pending_entries` resolves against the POSITIONS feed, and
+its `any_held` (partial) branch reconstructed the price while its `all_held`
+(FULL fill — the common case) branch discarded it. Fixed with one shared
+`_capture_entry_fill_from_book` plus `_backfill_missing_entry_fills`, which
+retries every cycle while we hold the legs, so a miss is no longer permanent.
+
+**The preflight review then found a WORSE bug in that fix** (20 raised, 11
+confirmed, 9 refuted): `_legs_for_position` matched on strike alone — no option
+RIGHT, no structure awareness — so an iron condor (whose call wing lives only in
+`legs_json`) was priced off 2 legs of 4. Reproduced: a condor with ZERO slippage
+produced a fabricated 0.60/sh adverse fill that PASSED `plausible_slip_ps` and
+would have entered the go-live gate as MEASURED evidence. The leg spec is now
+derived once (`_expected_legs`) and the capture is all-or-nothing. Also fixed:
+`_position_is_held` returned a bare `False` from a tuple signature (caller's
+unpack raised TypeError and aborted the whole cycle).
+
+**NEW — `core/selfaudit.py` + `cli.py audit`.** Standing lesson #2 (absence must
+be UNREPRESENTABLE as a confident number) worked perfectly here: `_usable`
+refused IB's 0.0, nothing was corrupted. But a NULL is honest AND SILENT — this
+sat eight days until a human read the journal. So the rule gains a second half:
+
+> **absence must also be UNIGNORABLE.** Eight invariants, journaled every cycle
+> INCLUDING when clean (an alarm that only writes on failure is indistinguishable
+> from one switched off), shown on the dashboard, appended to the heartbeat body,
+> and exiting non-zero so a monitor can act. Crying wolf is a bug in an alarm:
+> the weekend/holiday false CRITICAL, routine one-cycle reconcile drift, and
+> expired-worthless spreads counted as unmeasured exits were all fixed because an
+> audit that is never clean is an audit nobody reads.
+
+Trade #3's price was recovered live: filled -0.369 vs 0.36 intended = **0.009/sh
+adverse (2.5%)**, vs trade #1's 5.2%. 344 tests.
+
 **Next, in priority:** (1) **activate the heartbeat** — `scripts/run_cycle.sh`
 pings a monitor on start/success/failure but is DORMANT until a healthchecks.io URL
 is written to the gitignored `.healthcheck_url` on the VM (operator action, 2 min);
