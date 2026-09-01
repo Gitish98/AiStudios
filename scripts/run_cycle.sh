@@ -52,6 +52,18 @@ echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] run-cycle done (exit $RC)"
 if [ "$RC" -eq 124 ]; then
     echo "  ✗ TIMED OUT after ${CYCLE_TIMEOUT}s — a fetch likely hung."
 fi
+# The book's own invariants, appended to what the monitor receives. A cycle can
+# succeed while the RECORDS it produced are incoherent -- a fill whose price was
+# never measured is the case that motivated this -- and that question must leave
+# the VM, not just land in the journal. It deliberately does NOT change $RC: an
+# open question about the book is not a failed cycle, and conflating them would
+# make every real cycle failure harder to see.
+{
+    echo ""
+    echo "── self-audit ──"
+    "$PY" cli.py audit 2>&1 || true
+} >> "$LOG"
+
 # Report the exit code to the monitor. /<n> marks failure on healthchecks.io.
 ping "$RC" "$LOG"
 rm -f "$LOG"

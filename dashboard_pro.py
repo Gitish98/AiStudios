@@ -329,7 +329,24 @@ def _gather(store: Store) -> dict[str, Any]:
         "cycles": _cycle_history(store),
         "trades": _trade_history(closed),
         "fx_rates": store.get_fx_rates(),
+        "audit": _self_audit(store),
     }
+
+
+def _self_audit(store) -> dict[str, Any]:
+    """The invariant auditor's current verdict, for the page.
+
+    Read live rather than from the last journaled run: the dashboard is often
+    rebuilt between cycles, and a finding the operator can see is the entire
+    point of the auditor. A missing measurement that only ever appears in a
+    journal row is barely louder than the NULL it replaced."""
+    try:
+        from core.selfaudit import run_self_audit
+        return {"findings": [f.as_dict() for f in run_self_audit(store)]}
+    except Exception:
+        # The auditor failing must never blank the dashboard. Say so instead of
+        # rendering a reassuring empty list.
+        return {"findings": None}
 
 
 def build_pro(store_path: Optional[Path] = None,
@@ -558,6 +575,20 @@ h += '<div class="status">'
 if (D.kill_switch) h += '<div class="kill">⚠︎ KILL SWITCH ENGAGED — all new orders are blocked until cleared</div>';
 var _fz = Object.keys(D.frozen||{{}});
 if (_fz.length) h += '<div class="kill">❄︎ FROZEN (possible assignment): '+_fz.map(esc).join(', ')+' — no automated orders on these until cleared (cli.py unfreeze)</div>';
+var _au = (D.audit||{{}}).findings;
+if (_au === null) {{
+  h += '<div class="kill">⚠︎ The self-audit could not run — treat a clean-looking page as UNVERIFIED.</div>';
+}} else if (_au && _au.length) {{
+  var _crit = _au.filter(function(f){{ return f.severity==='critical'||f.severity==='high'; }});
+  h += '<div class="'+(_crit.length?'kill':'info')+'">'
+     + (_crit.length?'⚠︎ ':'ⓘ ') + _au.length + ' open question'+(_au.length>1?'s':'')
+     + ' from the self-audit'+(_crit.length?' ('+_crit.length+' urgent)':'')+':<div style="font-weight:400;margin-top:6px">';
+  _au.slice(0,4).forEach(function(f){{
+    h += '<div style="margin:4px 0">· <b>'+esc(f.severity.toUpperCase())+'</b> '+esc(f.summary)+'</div>';
+  }});
+  if (_au.length>4) h += '<div style="margin:4px 0" class="muted">…and '+(_au.length-4)+' more — run <code>ais audit</code>.</div>';
+  h += '</div></div>';
+}}
 var iv = D.iv||{{}};
 var boot = (D.decisions||[]).filter(function(d){{ return d.iv_rank==null; }})
                             .map(function(d){{ return d.symbol; }});

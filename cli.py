@@ -498,6 +498,45 @@ def cmd_performance(args):
     store.close()
 
 
+def cmd_audit(args):
+    """Assert what we believe about our own book, and say what fails.
+
+    Separate from `reconcile` on purpose: reconcile asks whether the BROKER
+    agrees with us about what we hold. This asks whether OUR OWN records are
+    internally coherent — chiefly, whether the measurements we depend on
+    actually got taken. A NULL is an honest way to store a missing number and a
+    terrible way to notice one."""
+    from core.selfaudit import run_self_audit, SEV_ORDER
+    store = Store()
+    findings = run_self_audit(store)
+    print("─" * 56)
+    print("  SELF-AUDIT  (our records vs what we believe about them)")
+    print("─" * 56)
+    if not findings:
+        print("  ✓ No open questions. Every invariant checked is satisfied.")
+        print()
+        print("  Note: a clean audit means the checks we WROTE all pass. It is")
+        print("  not proof the book is correct — only that nothing we know how")
+        print("  to ask about is currently wrong.")
+        store.close()
+        return 0
+    mark = {"critical": "⛔", "high": "⚠️ ", "medium": "•", "low": "·"}
+    for f in findings:
+        print(f"  {mark.get(f.severity, '•')} [{f.severity.upper()}] {f.code}")
+        print(f"      {f.summary}")
+        if f.evidence:
+            ev = ", ".join(f"{k}={v}" for k, v in list(f.evidence.items())[:4])
+            print(f"      evidence: {ev}")
+        if f.remedy:
+            print(f"      -> {f.remedy}")
+        print()
+    worst = findings[0].severity
+    print(f"  {len(findings)} finding(s); worst severity: {worst.upper()}")
+    store.close()
+    # Exit non-zero on anything urgent so a cron/monitor can act on it.
+    return 2 if SEV_ORDER.get(worst, 9) <= SEV_ORDER["high"] else 0
+
+
 def cmd_export_trades(args):
     import csv
     from core.costs import CostModel
@@ -710,6 +749,7 @@ def main():
     sub.add_parser("vrp", help="measure the volatility risk premium (the strategy premise)").set_defaults(func=cmd_vrp)
     sub.add_parser("performance", help="Net-of-cost paper performance + graduation status").set_defaults(func=cmd_performance)
     sub.add_parser("export-trades", help="Export closed trades to a CSV (tax/records)").set_defaults(func=cmd_export_trades)
+    sub.add_parser("audit", help="Assert our own records are coherent (missing measurements, stale cycles, unresolved drift)").set_defaults(func=cmd_audit)
     pu = sub.add_parser("unfreeze", help="clear an assignment-review freeze on an underlying")
     pu.add_argument("symbol", help="underlying to unfreeze, e.g. SPY")
     pu.set_defaults(func=cmd_unfreeze)
@@ -719,7 +759,12 @@ def main():
     sub.add_parser("go-paper", help="stand LIVE back down instantly (back to paper)").set_defaults(func=cmd_go_paper)
 
     args = p.parse_args()
-    args.func(args)
+    # Propagate a command's exit code. `audit` is the first command to return
+    # one: a monitor needs a non-zero status to act on, and a check that can only
+    # print is a check nothing can be wired to.
+    rc = args.func(args)
+    if isinstance(rc, int) and rc:
+        sys.exit(rc)
 
 
 if __name__ == "__main__":

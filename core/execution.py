@@ -171,6 +171,13 @@ def run_cycle(
     # the broker by reconcile and NOT managed. ──
     _finalize_pending_entries(adapter, store)
 
+    # ── 0b. Recover any entry price that was never captured. The capture is
+    # one-shot at fill time, so a single miss used to be permanent — and a missing
+    # measurement is honestly stored as NULL, which is indistinguishable at a
+    # glance from a cell nothing has written yet. While the position is open the
+    # broker's positions feed still holds the answer, so ask again. ──
+    _backfill_missing_entry_fills(adapter, store)
+
     # ── 1. MANAGEMENT PASS — value & exit open positions before any new entry. ──
     manage_summary = manage_open_positions(adapter, store, config, asof)
 
@@ -495,6 +502,19 @@ def run_cycle(
         "placed": len(summary["placed"]), "rejected": len(summary["rejected"]),
         "reconcile_ok": rec["ok"], "duration_secs": summary["duration_secs"]})
 
+    # ── SELF-AUDIT. Assert what we believe about our own book and journal the
+    # answer — including when it is clean, because an alarm that only writes on
+    # failure is indistinguishable from an alarm that is switched off. Runs AFTER
+    # cycle_end so a check can see this cycle, and never raises: it is a smoke
+    # detector, not load-bearing wiring. ──
+    try:
+        from .selfaudit import journal_self_audit
+        _audit = journal_self_audit(store)
+        if _audit:
+            summary["audit"] = [f.code for f in _audit]
+    except Exception:
+        pass
+
     # Read-only last-cycle marker for the dashboard. Best-effort.
     try:
         for _d in decisions:
@@ -579,19 +599,99 @@ def _today_iso() -> str:
     return datetime.now(timezone.utc).date().isoformat()
 
 
-def _legs_for_position(pos_row: dict, broker_positions: list) -> list:
-    """The broker Position objects belonging to this tracked structure."""
+def _legs_for_position(pos_row: dict, broker_positions: list,
+                       units: int = 1) -> Optional[list]:
+    """The broker Position objects forming this structure — or None.
+
+    STRICT by design. This feeds a price reconstruction, and a price is a number
+    the cost model and the go-live gate will believe, so it must be all-or-
+    nothing: either the broker holds the WHOLE structure at the size we are
+    asking about, or we have no measurement. Three ways the loose version lied:
+
+      * it ignored the option RIGHT, so a 745P/750P spread and a 745C/750C spread
+        on the same expiry matched each other's legs;
+      * it read strikes out of short_strike/long_strike, which for an iron condor
+        hold only the PUT wing — so it netted 2 legs of 4 and called it the fill;
+      * it required no completeness at all, so one surviving leg after an
+        assignment reconstructed a $921/share "fill" on a $1-wide spread.
+
+    Every one of those produces a plausible-looking number that passes
+    plausible_slip_ps and is then promoted from assumption to MEASURED evidence.
+    Standing lesson #2 in its sharpest form: we would rather have no measurement
+    than a confident wrong one."""
+    spec = _expected_legs(pos_row)
+    if not spec or units <= 0:
+        return None
     u = str(pos_row.get("underlying") or "").upper()
     exp = str(pos_row.get("expiration") or "")
-    strikes = {float(pos_row.get("short_strike") or 0), float(pos_row.get("long_strike") or 0)}
-    out = []
+    by_leg: dict[tuple, Any] = {}
     for bp in broker_positions or []:
-        if (str(bp.underlying or bp.symbol).upper() == u
-                and str(bp.option_expiration or "") == exp
-                and bp.option_strike is not None
-                and float(bp.option_strike) in strikes):
-            out.append(bp)
+        if str(bp.underlying or bp.symbol).upper() != u:
+            continue
+        if str(bp.option_expiration or "") != exp:
+            continue
+        if bp.option_strike is None or bp.option_right is None:
+            continue
+        by_leg[(round(float(bp.option_strike), 4),
+                str(bp.option_right).upper()[:1])] = bp
+    out = []
+    for _key, per_unit, strike, right in spec:
+        bp = by_leg.get((round(float(strike), 4), str(right).upper()[:1]))
+        if bp is None:
+            return None                       # structure incomplete at the broker
+        qty = float(getattr(bp, "qty", 0.0) or 0.0)
+        # Direction AND size must both hold: a short leg must be short, and the
+        # broker must hold at least the number of units we are pricing.
+        if per_unit < 0 and qty > -units + 1e-9:
+            return None
+        if per_unit > 0 and qty < units - 1e-9:
+            return None
+        out.append(bp)
     return out
+
+
+def _expected_legs(pos_row: dict) -> Optional[list[tuple]]:
+    """The legs this structure IS: [(leg_key, per_unit_qty, strike, right), ...],
+    or None when the row cannot describe itself.
+
+    Extracted because three callers each re-derived it and one of them got it
+    WRONG in a way that mattered. _legs_for_position matched broker legs on
+    underlying + expiration + `strike in {short_strike, long_strike}` — no option
+    right, no structure awareness. For an iron condor only the PUT wing lives in
+    those two columns (the calls are in legs_json), so it matched 2 legs of 4 and
+    happily reconstructed "the fill" from half the position. A preflight review
+    reproduced it: a condor with zero real slippage produced a fabricated 0.60/sh
+    adverse fill that PASSED plausible_slip_ps and would have been promoted from
+    assumption to MEASURED evidence in the go-live gate.
+
+    Returning None — rather than a best guess — is the whole point: a structure we
+    cannot describe must produce no number at all."""
+    import json as _json
+    from .reconcile import _leg_key
+    n = int(pos_row.get("contracts") or 0)
+    if n <= 0:
+        return None
+    u, exp = pos_row.get("underlying"), pos_row.get("expiration")
+    if pos_row.get("structure") == "iron_condor":
+        raw = pos_row.get("legs_json")
+        if not raw:
+            return None
+        try:
+            j = _json.loads(raw)
+            return [(_leg_key(u, exp, j["sp"], "P"), -1, float(j["sp"]), "P"),
+                    (_leg_key(u, exp, j["lp"], "P"), +1, float(j["lp"]), "P"),
+                    (_leg_key(u, exp, j["sc"], "C"), -1, float(j["sc"]), "C"),
+                    (_leg_key(u, exp, j["lc"], "C"), +1, float(j["lc"]), "C")]
+        except (ValueError, KeyError, TypeError):
+            return None
+    fam = pos_row.get("family") or ("call" if "call" in (pos_row.get("structure") or "") else "put")
+    r = "C" if fam == "call" else "P"
+    try:
+        short_k, long_k = float(pos_row["short_strike"]), float(pos_row["long_strike"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return [(_leg_key(u, exp, short_k, r), -1, short_k, r),
+            (_leg_key(u, exp, long_k, r), +1, long_k, r)]
 
 
 def _held_units(pos_row: dict, held: dict) -> int:
@@ -602,28 +702,11 @@ def _held_units(pos_row: dict, held: dict) -> int:
     a real 1-contract spread while our row says 10 and the order says Cancelled.
     Returns the number of whole structures supported by the held legs (0 if the
     structure is incomplete in either direction)."""
-    import json as _json
-    from .reconcile import _leg_key
-    n = int(pos_row.get("contracts") or 0)
-    if n <= 0:
+    spec = _expected_legs(pos_row)
+    if not spec:
         return 0
-    u, exp = pos_row.get("underlying"), pos_row.get("expiration")
-    want: list[tuple] = []
-    if pos_row.get("structure") == "iron_condor":
-        raw = pos_row.get("legs_json")
-        if not raw:
-            return 0
-        j = _json.loads(raw)
-        want = [(_leg_key(u, exp, j["sp"], "P"), -n), (_leg_key(u, exp, j["lp"], "P"), +n),
-                (_leg_key(u, exp, j["sc"], "C"), -n), (_leg_key(u, exp, j["lc"], "C"), +n)]
-    else:
-        fam = pos_row.get("family") or ("call" if "call" in (pos_row.get("structure") or "") else "put")
-        r = "C" if fam == "call" else "P"
-        want = [(_leg_key(u, exp, pos_row["short_strike"], r), -n),
-                (_leg_key(u, exp, pos_row["long_strike"], r), +n)]
     units = None
-    for key, qty in want:
-        per_unit = qty / n                      # +1 or -1 per structure
+    for key, per_unit, _strike, _right in spec:
         have = float(held.get(key, 0.0))
         if per_unit < 0:
             u_leg = int(max(0.0, -have))        # need short
@@ -641,27 +724,18 @@ def _position_is_held(pos_row: dict, held: dict) -> tuple[bool, bool]:
     NOT delete — a partial fill (or a single leg that filled) is a genuine position
     needing attention, and dropping the row would leave it untracked and unmanaged
     with nothing in the system aware of it."""
-    import json as _json
-    from .reconcile import _leg_key
+    # A row that cannot describe its own legs is NOT evidence that nothing is
+    # held. Both early exits used to `return False` from a function whose
+    # signature promises a tuple, so the caller's `all_held, any_held = ...`
+    # raised TypeError and took the whole cycle down with it — every open
+    # position left unmarked and unmanaged for that run.
     n = int(pos_row.get("contracts") or 0)
-    if n <= 0:
-        return False
-    u, exp = pos_row.get("underlying"), pos_row.get("expiration")
-    want: list[tuple] = []
-    if pos_row.get("structure") == "iron_condor":
-        raw = pos_row.get("legs_json")
-        if not raw:
-            return False
-        j = _json.loads(raw)
-        want = [(_leg_key(u, exp, j["sp"], "P"), -n), (_leg_key(u, exp, j["lp"], "P"), +n),
-                (_leg_key(u, exp, j["sc"], "C"), -n), (_leg_key(u, exp, j["lc"], "C"), +n)]
-    else:
-        fam = pos_row.get("family") or ("call" if "call" in (pos_row.get("structure") or "") else "put")
-        r = "C" if fam == "call" else "P"
-        want = [(_leg_key(u, exp, pos_row["short_strike"], r), -n),
-                (_leg_key(u, exp, pos_row["long_strike"], r), +n)]
+    spec = _expected_legs(pos_row)
+    if not spec:
+        return False, False
     all_held, any_held = True, False
-    for key, qty in want:
+    for key, per_unit, _strike, _right in spec:
+        qty = per_unit * n
         have = float(held.get(key, 0.0))
         if abs(have) > 1e-9:
             any_held = True
@@ -670,6 +744,75 @@ def _position_is_held(pos_row: dict, held: dict) -> tuple[bool, bool]:
         if qty > 0 and have < qty - 1e-9:      # need at least this long
             all_held = False
     return all_held, any_held
+
+
+def _capture_entry_fill_from_book(p: dict, units: int, store: Store,
+                                  adapter) -> Optional[float]:
+    """Reconstruct and persist the realized ENTRY price from the broker's POSITIONS
+    feed. Returns the adverse slippage per share, or None if unrecoverable.
+
+    IB's fill feed is session-scoped, so a cron that runs one process per cycle
+    almost never sees the execution that filled its own order — the order is
+    simply gone from the feed by the next run. The POSITIONS feed is the durable
+    record: it carries each leg's average cost and is repopulated on every
+    connect. That makes it the ONLY surviving evidence of what we actually paid.
+
+    This lives in one function because it was previously inlined in exactly one
+    of the two resolution branches: a PARTIALLY filled entry got its price
+    reconstructed, while a FULLY filled one — the common case — was promoted to
+    open with the price silently dropped. Observed live on trade #3 (SPY 763/762
+    x10, 2026-08-31): the fill was real, the broker had the numbers the whole
+    time, and we recorded `entry_slip_ps: null`. Nothing was corrupted (the
+    _usable() guard refuses IB's 0.0), but the measurement was lost, and the
+    go-live gate's cost_measured_pct is built out of exactly these."""
+    try:
+        legs = _legs_for_position(p, adapter.get_positions(), units)
+    except Exception:
+        return None
+    if legs is None:
+        return None            # incomplete/ambiguous at the broker -> no number
+    fill_ps = net_debit_from_positions(legs, units)
+    intended = signed_intent_ps(p.get("entry_credit_ps"),
+                                bool(p.get("is_credit", 1)), closing=False)
+    if fill_ps is None or intended is None:
+        return None
+    slip = round(intended - fill_ps, 4)
+    store.record_entry_fill(p["id"], fill_ps, slip)
+    return slip
+
+
+def _backfill_missing_entry_fills(adapter: BrokerAdapter, store: Store) -> None:
+    """Self-heal: any OPEN position whose entry price was never captured, while
+    the broker still holds its legs.
+
+    The capture is one-shot at fill time by design, which means a single missed
+    capture used to be permanent — and the miss is invisible, because the honest
+    representation of a missing measurement is NULL, which looks like every other
+    empty cell. This pass turns 'lost forever' into 'recovered on the next cycle'
+    for as long as the position is open. It only ever writes where the value is
+    absent (record_entry_fill is not called when reconstruction fails), so it
+    cannot overwrite a real fill-time measurement with a later reconstruction."""
+    if getattr(adapter, "name", "") == "sim":
+        return                                # sim's book cannot testify
+    try:
+        rows = [dict(r) for r in store.conn.execute(
+            "SELECT * FROM positions WHERE status = 'open' "
+            "AND entry_fill_ps IS NULL ORDER BY id")]
+    except Exception:
+        return
+    if not rows:
+        return
+    for p in rows:
+        units = int(p.get("contracts") or 0)
+        if units <= 0:
+            continue
+        slip = _capture_entry_fill_from_book(p, units, store, adapter)
+        if slip is not None:
+            store.append(_now_iso(), "entry_fill_backfilled", {
+                "position_id": p["id"], "underlying": p["underlying"],
+                "entry_slip_ps": slip,
+                "note": "entry price recovered from the broker positions feed; "
+                        "it was not captured when the fill was first observed"})
 
 
 def _adopt_partial(p: dict, units: int, store: Store, adapter) -> None:
@@ -683,15 +826,7 @@ def _adopt_partial(p: dict, units: int, store: Store, adapter) -> None:
     branch (which never fired) knew how to adopt."""
     ordered = int(p.get("contracts") or 0)
     store.adopt_partial_fill(p["id"], units)
-    try:
-        fill_ps = net_debit_from_positions(
-            _legs_for_position(p, adapter.get_positions()), units)
-        intended = signed_intent_ps(p.get("entry_credit_ps"),
-                                    bool(p.get("is_credit", 1)), closing=False)
-        if fill_ps is not None and intended is not None:
-            store.record_entry_fill(p["id"], fill_ps, round(intended - fill_ps, 4))
-    except Exception:
-        pass
+    _capture_entry_fill_from_book(p, units, store, adapter)
     store.append(_now_iso(), "partial_fill_adopted", {
         "position_id": p["id"], "underlying": p["underlying"],
         "ordered": ordered, "filled": units, "severity": "high",
@@ -738,9 +873,15 @@ def _finalize_pending_entries(adapter: BrokerAdapter, store: Store) -> None:
             all_held, any_held = _position_is_held(p, held)
             if all_held:
                 store.set_position_status(p["id"], "open")
+                # The order feed is gone, but the POSITIONS feed still carries
+                # what we paid. Reconstruct it HERE: this branch is the common
+                # case for a cron, and it used to journal entry_slip_ps: null
+                # while the numbers sat available at the broker.
+                slip = _capture_entry_fill_from_book(
+                    p, int(p.get("contracts") or 0), store, adapter)
                 store.append(_now_iso(), "entry_filled", {
                     "position_id": p["id"], "underlying": p["underlying"],
-                    "via": "broker_positions", "entry_slip_ps": None,
+                    "via": "broker_positions", "entry_slip_ps": slip,
                     "note": "order feed no longer had it; legs confirmed held"})
             elif any_held:
                 # Some legs held. FIRST ask whether they form COMPLETE units of
