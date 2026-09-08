@@ -509,6 +509,21 @@ def cmd_audit(args):
     from core.selfaudit import run_self_audit, SEV_ORDER
     store = Store()
     findings = run_self_audit(store)
+
+    if getattr(args, "brief", False):
+        # For the heartbeat body. Codes and severities ONLY — deliberately no
+        # dollar figures: this leaves the VM for a third-party monitor, and an
+        # alert that says "go look" is as actionable as one that publishes the
+        # book. See scripts/run_cycle.sh.
+        if not findings:
+            print("audit: clean")
+        else:
+            print(f"audit: {len(findings)} finding(s) worst={findings[0].severity} :: "
+                  + " ".join(f"{f.code}({f.severity})" for f in findings))
+        store.close()
+        return 2 if (findings and
+                     SEV_ORDER.get(findings[0].severity, 9) <= SEV_ORDER["high"]) else 0
+
     print("─" * 56)
     print("  SELF-AUDIT  (our records vs what we believe about them)")
     print("─" * 56)
@@ -749,7 +764,11 @@ def main():
     sub.add_parser("vrp", help="measure the volatility risk premium (the strategy premise)").set_defaults(func=cmd_vrp)
     sub.add_parser("performance", help="Net-of-cost paper performance + graduation status").set_defaults(func=cmd_performance)
     sub.add_parser("export-trades", help="Export closed trades to a CSV (tax/records)").set_defaults(func=cmd_export_trades)
-    sub.add_parser("audit", help="Assert our own records are coherent (missing measurements, stale cycles, unresolved drift)").set_defaults(func=cmd_audit)
+    pa = sub.add_parser("audit", help="Assert our own records are coherent (missing measurements, stale cycles, unresolved drift)")
+    pa.add_argument("--brief", action="store_true",
+                    help="one compact line (codes + severities, no dollar figures) "
+                         "for the heartbeat body")
+    pa.set_defaults(func=cmd_audit)
     pu = sub.add_parser("unfreeze", help="clear an assignment-review freeze on an underlying")
     pu.add_argument("symbol", help="underlying to unfreeze, e.g. SPY")
     pu.set_defaults(func=cmd_unfreeze)

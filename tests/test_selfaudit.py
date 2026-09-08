@@ -531,3 +531,36 @@ def test_audit_stays_cheap_on_a_badly_stale_store():
         assert "stale_cycles" in [f.code for f in found]
         assert elapsed < 2.0, f"self-audit took {elapsed:.1f}s"
         store.close()
+
+
+def test_audit_brief_is_compact_and_carries_no_dollar_figures():
+    """The heartbeat body leaves the VM for a third-party monitor. It must say
+    'go look', not publish the book — and it must fit: the raw cycle log is
+    ~1.1MB, and healthchecks.io keeps only the first ~100KB, which on this
+    system is 2,330 copies of one IB warning."""
+    import io as _io, contextlib, argparse
+    import cli
+    with tempfile.TemporaryDirectory() as td:
+        store = Store(Path(td) / "p.db")
+        _open_position(store, opened_ts="2026-08-31T14:01:49+00:00")
+        _fresh_cycles(store, n=4)
+        store.close()
+        import core.store as _cs
+        orig = _cs.Store.__init__
+
+        def _patched(self, path=None, *a, **k):
+            return orig(self, Path(td) / "p.db", *a, **k)
+        _cs.Store.__init__ = _patched
+        cli.Store = _cs.Store
+        try:
+            buf = _io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = cli.cmd_audit(argparse.Namespace(brief=True))
+            out = buf.getvalue().strip()
+        finally:
+            _cs.Store.__init__ = orig
+
+    assert len(out.splitlines()) == 1, "brief must be ONE line"
+    assert "$" not in out, f"brief must carry no dollar figures: {out}"
+    assert "unmeasured_entry_fill(high)" in out
+    assert rc == 2, "a high finding must exit non-zero so a monitor can act"

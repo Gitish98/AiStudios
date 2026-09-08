@@ -52,19 +52,37 @@ echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] run-cycle done (exit $RC)"
 if [ "$RC" -eq 124 ]; then
     echo "  ✗ TIMED OUT after ${CYCLE_TIMEOUT}s — a fetch likely hung."
 fi
-# The book's own invariants, appended to what the monitor receives. A cycle can
-# succeed while the RECORDS it produced are incoherent -- a fill whose price was
-# never measured is the case that motivated this -- and that question must leave
-# the VM, not just land in the journal. It deliberately does NOT change $RC: an
-# open question about the book is not a failed cycle, and conflating them would
-# make every real cycle failure harder to see.
+# ── Build the monitor's body: a SUMMARY, never the raw log. ──
+# Measured on a real cycle, $LOG is ~1.1 MB and 3,237 lines, of which 2,330 are a
+# single repeated IB market-data warning. healthchecks.io caps a ping body at
+# ~100 KB and keeps the HEAD, so posting $LOG would have shipped a megabyte of
+# noise per cycle and truncated away the only part that matters -- the result and
+# the audit, which are at the TAIL. An alert nobody can read is the same failure
+# as no alert at all.
+#
+# It is also deliberately money-free. This body leaves the VM for a third party;
+# "go look" is as actionable as publishing equity and P&L, and safer.
+SUMMARY="$(mktemp)"
 {
-    echo ""
-    echo "── self-audit ──"
-    "$PY" cli.py audit 2>&1 || true
-} >> "$LOG"
+    echo "cycle $(date -u +%Y-%m-%dT%H:%M:%SZ) exit=$RC"
+    [ "$RC" -eq 124 ] && echo "TIMED OUT after ${CYCLE_TIMEOUT}s"
+    # The cycle's own verdict lines, not the chain chatter.
+    grep -E "^  (Signals generated|Placed|Rejected|Management|Daily P&L)" "$LOG" | tail -6
+    grep -E "Skipping cycle|CYCLE FAILED|reconcile|drift" "$LOG" | tail -4
+    # The book's own invariants. A cycle can SUCCEED while the records it
+    # produced are incoherent -- an unmeasured fill is exactly that -- and that
+    # question has to leave the VM, not just land in the journal. It does NOT
+    # change $RC: an open question about the book is not a failed cycle, and
+    # conflating them makes a real cycle failure harder to see.
+    "$PY" cli.py audit --brief 2>&1 || true
+    # An IB error census. 2,330 occurrences of one code is a fact about the
+    # day worth seeing; 2,330 copies of the line is not.
+    ERRS="$(grep -oE "Error [0-9]+" "$LOG" | sort | uniq -c | sort -rn | head -4 | tr "\n" " ")"
+    [ -n "$ERRS" ] && echo "ib_errors: $ERRS"
+} > "$SUMMARY" 2>&1
 
 # Report the exit code to the monitor. /<n> marks failure on healthchecks.io.
-ping "$RC" "$LOG"
+ping "$RC" "$SUMMARY"
+rm -f "$SUMMARY"
 rm -f "$LOG"
 exit "$RC"
