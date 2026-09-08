@@ -3,7 +3,7 @@ THE GO-LIVE GATE — the deterministic, fail-closed path from paper to live.
 
 Cardinal rule (docs/14, docs/05 §1.2): **an LLM must be able to satisfy NONE of
 these conditions.** Each is an out-of-band HUMAN action. Code (or the advisor
-LLM) can *propose*; only the operator, through these five independent gates, can
+LLM) can *propose*; only the operator, through these six independent gates, can
 *enable live*. Paper stays the default; the deterministic risk gate still binds
 in live, and the live size is clamped to the smallest ramp tier.
 
@@ -92,7 +92,7 @@ class GoLiveDecision:
 
 
 class GoLiveGate:
-    """Evaluates all five conditions. Fail-closed; any missing one → not live."""
+    """Evaluates all six conditions. Fail-closed; any missing one → not live."""
 
     def __init__(self, config: Any, *, live_enabled_path: Optional[Any] = None,
                  today: Optional[date] = None):
@@ -106,6 +106,7 @@ class GoLiveGate:
         conds = [
             self._check_mode(),
             self._check_live_endpoint(),
+            self._check_market_data(),
             self._check_live_enabled_file(),
             self._check_confirmation(confirmation),
             self._check_ramp_tier(),
@@ -158,6 +159,40 @@ class GoLiveGate:
             "live_endpoint", True,
             f"separate live IB endpoint configured on port {live_port} "
             f"(paper is {paper_port})")
+
+    # ── 2b. real-time market data for the LIVE adapter ────────────────────────
+    def _check_market_data(self) -> GoLiveCondition:
+        """Live must run on REAL-TIME quotes, declared under its OWN key.
+
+        Found 2026-09-08 while investigating IB Error 10091: the live factory
+        path read the SAME `ibkr_market_data_type` key paper uses, whose
+        documented "live default = 1" was dead code — every real config sets it
+        to 3 (the example does), so arming live would have run live LIMIT ORDERS
+        priced off 15-minute-delayed option mids: quotes against a market that
+        had already moved, with the gate reporting all clear. Nothing else in
+        the five gates looked at data at all.
+
+        Two rules, both fail-closed: the key must be the live-specific one (so
+        paper's delayed setting can never leak across), and it must be EXPLICIT.
+        A default is exactly the kind of assumption that reads as a number."""
+        brokers = getattr(self.config, "brokers", {}) or {}
+        raw = brokers.get("ibkr_live_market_data_type")
+        if raw is None:
+            return GoLiveCondition(
+                "market_data", False,
+                "brokers.ibkr_live_market_data_type is unset — live must state its "
+                "market-data type explicitly (1 = real-time); it is NOT inherited "
+                "from paper's ibkr_market_data_type")
+        md = _safe_int(raw)
+        if md != 1:
+            names = {1: "live", 2: "frozen", 3: "delayed", 4: "delayed-frozen"}
+            return GoLiveCondition(
+                "market_data", False,
+                f"brokers.ibkr_live_market_data_type={raw} "
+                f"({names.get(md, 'unknown')}) — live orders would be priced off "
+                "stale quotes; set it to 1 (real-time) and hold the entitlements")
+        return GoLiveCondition("market_data", True,
+                               "live adapter declared real-time market data (type 1)")
 
     # ── 3. dated LIVE_ENABLED file written out-of-band ────────────────────────
     def _check_live_enabled_file(self) -> GoLiveCondition:

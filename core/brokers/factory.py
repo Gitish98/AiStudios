@@ -114,7 +114,13 @@ def build_execution_adapter(config: Config, asof: Optional[str] = None,
     live_port = int(config.brokers.get("ibkr_live_port", 4001))
     cid = int(config.brokers.get("ibkr_client_id", 7))
     region = str(config.account.get("region", "CA"))
-    live_md = int(config.brokers.get("ibkr_market_data_type", 1))  # 1=live (live default)
+    # LIVE reads its OWN key. This used to read the shared ibkr_market_data_type,
+    # whose "live default = 1" was dead code: every real config sets that key to
+    # 3 (the example does), so a live build would have run on 15-minute-delayed
+    # option mids. The go-live gate now requires THIS key to be explicitly 1; the
+    # default here only matters if someone bypasses the gate, and 1 is the safe
+    # direction (real-time, or IB refuses the request — never silently stale).
+    live_md = int(config.brokers.get("ibkr_live_market_data_type", 1))
     live = IBKRAdapter(host=host, port=live_port, client_id=cid,
                        paper=False, region=region, market_data_type=live_md)
     if live.try_connect():

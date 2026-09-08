@@ -378,6 +378,9 @@ def _run_cycle_body(args, dry_run=False):
         print(f"  Vetoed by advisor : {len(summary['vetoed'])}")
         for v in summary["vetoed"]:
             print(f"    ⊘ {v['underlying']} {v['strategy']}: {v['thesis'][:80]}")
+    if summary.get("ib_notices") is not None:
+        from core.ib_noise import summary_line
+        print(f"  IB notices: {summary_line(summary['ib_notices'], summary.get('ib_market_data_type'))}")
     if summary["skipped_duplicates"]:
         print(f"  Skipped (already placed today): {len(summary['skipped_duplicates'])}")
     if summary.get("kill_switch"):

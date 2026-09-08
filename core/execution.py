@@ -165,6 +165,15 @@ def run_cycle(
     except Exception:
         pass
 
+    # ── IB entitlement-notice census. Under delayed data every option request
+    # emits Error 10091 (and each ARCA-listed stock 10089) — ~2,300 lines a cycle
+    # that all say the same true thing: "delayed market data is available."
+    # Count them, print the first of each so the fact is never silent, drop the
+    # rest, and journal the counts with cycle_end. See core/ib_noise.py. ──
+    from .ib_noise import install_notice_filter
+    _notices = install_notice_filter()
+    _notices.reset()
+
     # ── 0. Finalize working ENTRY orders: an accepted-but-unfilled entry tracked
     # last cycle becomes 'open' once the broker fills it (or is dropped if it
     # died). Until then it stays 'pending' — counted for risk, but NOT expected at
@@ -498,9 +507,12 @@ def run_cycle(
                             "pending operator review (cli.py unfreeze)"})
 
     summary["duration_secs"] = round(time.monotonic() - _t0, 1)
+    summary["ib_notices"] = _notices.census()
+    summary["ib_market_data_type"] = getattr(adapter, "market_data_type", None)
     store.append(_now_iso(), "cycle_end", {
         "placed": len(summary["placed"]), "rejected": len(summary["rejected"]),
-        "reconcile_ok": rec["ok"], "duration_secs": summary["duration_secs"]})
+        "reconcile_ok": rec["ok"], "duration_secs": summary["duration_secs"],
+        "ib_notices": summary["ib_notices"]})
 
     # ── SELF-AUDIT. Assert what we believe about our own book and journal the
     # answer — including when it is clean, because an alarm that only writes on

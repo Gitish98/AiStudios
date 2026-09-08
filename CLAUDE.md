@@ -218,9 +218,37 @@ sat eight days until a human read the journal. So the rule gains a second half:
 Trade #3's price was recovered live: filled -0.369 vs 0.36 intended = **0.009/sh
 adverse (2.5%)**, vs trade #1's 5.2%. 344 tests.
 
-**Next, in priority:** (1) **activate the heartbeat** — `scripts/run_cycle.sh`
-pings a monitor on start/success/failure but is DORMANT until a healthchecks.io URL
-is written to the gitignored `.healthcheck_url` on the VM (operator action, 2 min);
+**Session 2026-09-08 — Error 10091, and what chasing it found (commit below):**
+~2,330 `Error 10091` lines per cycle turned out to be LOG NOISE, proven by a
+read-only probe: under `reqMarketDataType(3)` both legs of the open SPY spread
+delivered bid/ask/last/close/sizes AND model greeks; the full text ends "Delayed
+market data is available"; it names the one unsubscribed component (the ETF's
+home-exchange real-time top-of-book — ARCA for SPY/DIA/IWM/XLF/XLE, NASDAQ.NMS
+for QQQ/XLK), which is deliberate (docs: paper-trade the delay you'd trade live
+on). Cost was the disk: 1.1 MB/cycle, cron.log at 83 MB, no rotation (fixed:
+logrotate weekly x8 with `su trader trader`; `core/ib_noise.py` now counts the
+notices — first of each code still prints every cycle, unclassified codes stay
+loud, census journaled with cycle_end and printed as one CLI line).
+
+**The real finding:** the LIVE factory read paper's `ibkr_market_data_type` key
+(3 in every real config); the documented "live default = 1" was dead code, and
+none of the five go-live gates looked at data. Arming live would have priced
+live LIMIT orders off 15-minute-stale option mids with the gate all green —
+lesson #4 exactly. Now: a SIXTH gate `market_data` requires an explicit,
+separate `ibkr_live_market_data_type: 1` (fail-closed); the factory reads only
+that key; `selfaudit` re-asks it every cycle (`live_on_delayed_data`, CRITICAL,
+gated on ARMED-NOW — config mode + arming kv — because the store's `mode` kv is
+the LAST COMPLETED cycle's adapter and went stale after `go-paper`).
+
+Preflight review (9 agents): 3 confirmed, all low, all fixed; 3 refuted on
+reachability but acted on anyway — the census label now states the data type,
+because under type 1 the same codes mean "NOT delivered", the opposite of
+"expected". Heartbeat: healthchecks.io LIVE (cron `0 10 * * 1-5`
+America/Toronto, grace 2h), email path tested end-to-end incl. a deliberate
+failure; `.healthcheck_url` was documented as gitignored but never was — fixed.
+362 tests.
+
+**Next, in priority:** (1) ~~activate the heartbeat~~ DONE 2026-09-08;
 (2) SPY/QQQ/IWM/DIA now have real 252-day IV ranks, so the paper ORDER path can fire
 as soon as a credit-ratio-worthy spread appears — watch for the first fill and verify
 the fill/slippage capture end-to-end; (3) operator live-validation of the ramp at

@@ -248,6 +248,50 @@ def _check_max_loss_vs_fill(store) -> list[Finding]:
     return out
 
 
+def _check_live_on_delayed_data(store) -> list[Finding]:
+    """LIVE mode must be on real-time quotes. The go-live gate enforces this at
+    arming time; this repeats the question every cycle, because a config edit
+    after arming would otherwise go unnoticed until a fill came back wrong."""
+    # "Live" here must mean ARMED NOW. The kv "mode" is written by run_cycle
+    # from whichever adapter the last COMPLETED cycle was handed, so after an
+    # operator stands down (`ais go-paper`, mode: paper) it stays "live" until
+    # a cycle completes — and an off-hours skip or a degraded-sim refusal exits
+    # before that line. The heartbeat runs `audit --brief` after every one of
+    # those, so the stale kv alone would print a CRITICAL "live orders are being
+    # priced off stale quotes" with no live adapter in existence. An audit that
+    # cries wolf is an audit nobody reads. Armed = config says live AND the
+    # dated arming phrase is set (what go-paper clears).
+    try:
+        from .config import load_config
+        from .golive import ARMED_KV_KEY
+        cfg = load_config()
+        mode_cfg = str(getattr(cfg, "mode", "paper") or "paper").lower()
+        armed = bool(store.get_kv(ARMED_KV_KEY))
+    except Exception:
+        return []
+    if mode_cfg != "live" or not armed:
+        return []
+    mode = mode_cfg
+    try:
+        raw = cfg.brokers.get("ibkr_live_market_data_type")
+    except Exception:
+        raw = None
+    try:
+        ok = raw is not None and int(raw) == 1
+    except (TypeError, ValueError):
+        ok = False
+    if ok:
+        return []
+    return [Finding(
+        code="live_on_delayed_data",
+        severity="critical",
+        summary=("LIVE mode is armed but brokers.ibkr_live_market_data_type is "
+                 f"{raw!r}, not 1 — live orders are being priced off stale quotes."),
+        evidence={"mode": mode, "ibkr_live_market_data_type": raw},
+        remedy="Run `ais go-paper` now; set ibkr_live_market_data_type: 1 and hold "
+               "real-time entitlements before re-arming.")]
+
+
 def _check_cycle_freshness(store) -> list[Finding]:
     """The newest cycle should be recent. Everything downstream reads as current
     whether or not the data behind it still is."""
@@ -437,6 +481,7 @@ def _cycles_since(store):
 
 
 CHECKS = (
+    _check_live_on_delayed_data,
     _check_cycle_freshness,
     _check_persistent_drift,
     _check_unmeasured_entry_fills,

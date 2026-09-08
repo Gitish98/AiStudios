@@ -32,7 +32,9 @@ DEFAULT_RAMP = [
 def _config(mode="live", exec_broker="ibkr_live", paper_port=4002, live_port=4001,
             ramp_tier=1, ramp=None, live_enabled_file=None) -> Config:
     brokers = {"execution": exec_broker, "ibkr_port": paper_port,
-               "ibkr_live_port": live_port, "ibkr_host": "127.0.0.1", "ibkr_client_id": 7}
+               "ibkr_live_port": live_port, "ibkr_host": "127.0.0.1", "ibkr_client_id": 7,
+               # The sixth gate: live must DECLARE real-time data under its own key.
+               "ibkr_live_market_data_type": 1}
     go_live = {"ramp_tier": ramp_tier, "ramp": ramp if ramp is not None else DEFAULT_RAMP}
     if live_enabled_file is not None:
         go_live["live_enabled_file"] = str(live_enabled_file)
@@ -48,16 +50,19 @@ def _enabled_file(tmp: str, when: date = TODAY) -> Path:
     return p
 
 
-# ── the five gates, all satisfied ─────────────────────────────────────────────
+# ── the six gates, all satisfied ──────────────────────────────────────────────
+# (five until 2026-09-08; the sixth — market_data — was added after the live
+# factory was found reading paper's DELAYED data-type key with no gate looking)
 
-def test_all_five_gates_pass():
+def test_all_six_gates_pass():
     with tempfile.TemporaryDirectory() as tmp:
         f = _enabled_file(tmp, TODAY)
         gate = GoLiveGate(_config(live_enabled_file=f), today=TODAY)
         d = gate.evaluate(confirmation=confirmation_phrase(TODAY))
         assert d.allowed, d.reasons
-        assert set(d.satisfied) == {"mode:live", "live_endpoint", "live_enabled_file",
-                                    "session_confirmation", "ramp_tier"}
+        assert set(d.satisfied) == {"mode:live", "live_endpoint", "market_data",
+                                    "live_enabled_file", "session_confirmation",
+                                    "ramp_tier"}
 
 
 # ── each single missing condition keeps it PAPER (fail-closed) ─────────────────

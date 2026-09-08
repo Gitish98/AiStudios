@@ -75,10 +75,24 @@ SUMMARY="$(mktemp)"
     # change $RC: an open question about the book is not a failed cycle, and
     # conflating them makes a real cycle failure harder to see.
     "$PY" cli.py audit --brief 2>&1 || true
-    # An IB error census. 2,330 occurrences of one code is a fact about the
-    # day worth seeing; 2,330 copies of the line is not.
-    ERRS="$(grep -oE "Error [0-9]+" "$LOG" | sort | uniq -c | sort -rn | head -4 | tr "\n" " ")"
-    [ -n "$ERRS" ] && echo "ib_errors: $ERRS"
+    # Delayed-data entitlement notices are counted by the cycle itself and
+    # printed as one line (core/ib_noise.py). Anything ELSE that still prints
+    # as an IB Error is unfiltered by design -- an unclassified code must stay
+    # loud -- so census those separately.
+    NOTICE_LINE="$(grep -E "^  IB notices:" "$LOG" | tail -1)"
+    echo "${NOTICE_LINE:-  IB notices: (line absent -- cycle exited before the census)}"
+    # Defense in depth for the census itself. The Python filter is bound to the
+    # library's logger NAME; an upstream rename would leave it counting nothing
+    # while the raw flood resumed -- and if this grep dropped those codes by
+    # name regardless, the body would read "none" over 2,300 lines of them. An
+    # alarm switched off must not look like an alarm that is clean, so compare
+    # the raw log against the census and say so when they disagree.
+    RAW_NOTICES="$(grep -cE "^Error (10089|10090|10091)," "$LOG" || true)"
+    if [ "${RAW_NOTICES:-0}" -gt 0 ] && ! echo "$NOTICE_LINE" | grep -qE "1008[9]|1009[01]"; then
+        echo "IB notices DISAGREE: raw log has ${RAW_NOTICES} delayed-data lines but the cycle censused none -- the notice filter is not seeing the library logger (renamed on upgrade?)"
+    fi
+    ERRS="$(grep -oE "^Error [0-9]+" "$LOG" | grep -vE "^Error (10089|10090|10091)$" | sort | uniq -c | sort -rn | head -4 | tr "\n" " ")"
+    [ -n "$ERRS" ] && echo "ib_errors(unclassified): $ERRS"
 } > "$SUMMARY" 2>&1
 
 # Report the exit code to the monitor. /<n> marks failure on healthchecks.io.

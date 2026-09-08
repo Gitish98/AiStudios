@@ -46,8 +46,14 @@ brokers:
   # Market-data type: 1=live, 2=frozen, 3=delayed, 4=delayed-frozen. Default 3
   # (delayed) — free, no real-time subscription, and avoids IBKR Error 10197 ("no
   # market data during competing live session"). Set 1 only with real-time
-  # entitlements. Live builds default to 1 when this is unset.
+  # entitlements. This key is PAPER-ONLY; live never reads it (see below).
   ibkr_market_data_type: 3
+  # LIVE market-data type — a SEPARATE key so paper's delayed setting can never
+  # leak into live. The go-live gate requires this to be explicitly 1: live limit
+  # orders priced off 15-minute-stale option mids are quotes against a market
+  # that has already moved. Requires real-time entitlements on the live login
+  # (US equities top-of-book for the ETF's home exchange, and OPRA for options).
+  ibkr_live_market_data_type: 1
 
 # ── Reasoning layer (Claude advisor — VETO-ONLY) ─────────────────────────────
 # When enabled AND an ANTHROPIC_API_KEY is set, Claude reviews each gate-APPROVED
