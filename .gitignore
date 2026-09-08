@@ -11,6 +11,11 @@ secrets/
 # are NOT allowed on .gitignore pattern lines, so keep these bare.
 config/config.yaml
 config/watchlist.yaml
+# The heartbeat ping URL is a bearer secret: anyone holding it can post a fake
+# "I'm alive" and mask a real outage. docs + CLAUDE.md described this file as
+# gitignored since the wrapper was written; it never actually was, so `git add
+# -A` on the VM would have committed it the moment it existed.
+.healthcheck_url
 # Keep the *.example.yaml templates tracked; ignore the live copies above.
 
 # ── State / data ────────────────────────────────────────────────────────────
