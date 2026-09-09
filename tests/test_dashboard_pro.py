@@ -217,3 +217,39 @@ def test_rendered_page_javascript_actually_parses():
         jsf.write_text(js, encoding="utf-8")
         r = subprocess.run([node, "--check", str(jsf)], capture_output=True, text=True)
         assert r.returncode == 0, f"rendered page JS does not parse:\n{r.stderr[:800]}"
+
+
+
+def test_advanced_cards_render_from_journal_data():
+    """Road to November (projected dates + checklist), the cycle-health calendar,
+    and the IV-rank-vs-threshold chart are built only from data already in the
+    store, and the page must carry them."""
+    from datetime import datetime, timedelta, timezone
+    with tempfile.TemporaryDirectory() as td:
+        db = Path(td) / "portfolio.db"
+        _seed(db)
+        store = Store(db)
+        now = datetime.now(timezone.utc)
+        for i in range(3):
+            ts = (now - timedelta(days=i)).replace(hour=14, minute=0)
+            store.append(ts.isoformat(), "cycle_start", {"asof": ts.date().isoformat(), "broker": "ibkr_paper"})
+            store.append((ts + timedelta(minutes=1)).isoformat(), "iv_rank_source",
+                         {"symbol": "SPY", "source": "cboe:VIX", "rank": 0.1 + 0.1 * i, "observations": 252})
+            store.append((ts + timedelta(minutes=6)).isoformat(), "cycle_end",
+                         {"placed": 0, "rejected": 0, "reconcile_ok": True, "duration_secs": 300,
+                          "ib_notices": {"10091": 2330}})
+        store.close()
+        out = dashboard_pro.build_pro(store_path=db, out_dir=Path(td))
+        html = out.read_text(encoding="utf-8")
+    import json as _json, re as _re
+    payload = _json.loads(_re.search(r"^var D = (\{.*\});\s*$", html, _re.M).group(1).replace("<\\/", "</"))
+    road = payload["road"]
+    assert road["window_start"] == "2026-11-02" and road["sessions_to_window"] >= 0
+    assert road["iv_need"] == 60 and len(road["manual_steps"]) == 4
+    cal = payload["cycle_calendar"]
+    assert cal["days"] and any(d["ends"] == 1 for d in cal["days"])
+    assert payload["ivr_series"]["SPY"] and payload["ivr_threshold"] == 0.4
+    # The IVR title is assembled at runtime from the threshold, so match its
+    # literal prefix; the other two are literal strings in the page script.
+    for title in ("Road to November", "Cycle health", "IV rank against the "):
+        assert title in html, title

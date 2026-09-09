@@ -331,6 +331,10 @@ def _gather(store: Store) -> dict[str, Any]:
         "fx_rates": store.get_fx_rates(),
         "audit": _self_audit(store),
         "ramp": _ramp(store),
+        "road": _road_to_november(store),
+        "cycle_calendar": _cycle_calendar(store),
+        "ivr_series": _ivr_series(store),
+        "ivr_threshold": 0.40,
     }
 
 
@@ -367,6 +371,203 @@ def _ramp(store) -> dict[str, Any]:
                 "tiers": [dict(r) for r in _ramp_rows(_golive_cfg(cfg))]}
     except Exception as e:
         return {"gates": None, "status": None, "tiers": [], "error": str(e)}
+
+
+def _et_day(ts: Any) -> Optional[str]:
+    """Eastern trading date of an ISO timestamp (naive => UTC)."""
+    d = _to_dt(ts)
+    if d is None:
+        return None
+    try:
+        from zoneinfo import ZoneInfo
+        if d.tzinfo is None:
+            d = d.replace(tzinfo=timezone.utc)
+        return d.astimezone(ZoneInfo("America/New_York")).date().isoformat()
+    except Exception:
+        return str(ts)[:10]
+
+
+def _holidays_around(today) -> set:
+    """Computed NYSE holidays (Easter computus + rules) — fast, no pandas calendar
+    per call. is_trading_day() costs ~135ms each; a page build cannot afford it."""
+    try:
+        from core.market_calendar import us_market_holidays
+        return us_market_holidays(today.year - 1) | us_market_holidays(today.year) \
+            | us_market_holidays(today.year + 1)
+    except Exception:
+        return set()
+
+
+def _road_to_november(store: Store) -> dict[str, Any]:
+    """The two mechanical hurdles with PROJECTED clearing dates, and the operator
+    checklist for the tier-1 live validation (docs/10 §10). Projections walk the
+    computed holiday calendar so a weekend or Thanksgiving does not read as
+    progress. Manual steps are the operator's; the page only remembers a tick
+    in the viewer's own browser."""
+    from datetime import date, timedelta
+    try:
+        from core.performance import paper_record_sessions
+        sessions = int(paper_record_sessions(store))
+    except Exception:
+        sessions = 0
+    try:
+        iv_days = int(store.conn.execute(
+            "SELECT COUNT(DISTINCT asof) FROM iv_snapshots").fetchone()[0] or 0)
+    except Exception:
+        iv_days = 0
+    today = date.today()
+    hol = _holidays_around(today)
+
+    def is_td(d):
+        return d.weekday() < 5 and d not in hol
+
+    def project(have: int, need: int) -> Optional[str]:
+        if have >= need:
+            return None
+        d, n = today, 0
+        while n < need - have and (d - today).days < 400:
+            d += timedelta(days=1)
+            if is_td(d):
+                n += 1
+        return d.isoformat()
+
+    def sessions_until(target) -> int:
+        d, n = today, 0
+        while d < target:
+            d += timedelta(days=1)
+            if is_td(d):
+                n += 1
+        return n
+
+    win_start, win_end = date(2026, 11, 2), date(2026, 11, 30)
+    return {
+        "today": today.isoformat(),
+        "sessions": sessions, "sessions_need": 60, "sessions_eta": project(sessions, 60),
+        "iv_days": iv_days, "iv_need": MIN_IV_OBSERVATIONS,
+        "iv_eta": project(iv_days, MIN_IV_OBSERVATIONS),
+        "window_start": win_start.isoformat(), "window_end": win_end.isoformat(),
+        "sessions_to_window": sessions_until(win_start),
+        "manual_steps": [
+            {"id": "fund", "label": "Fund the live account (the tier-1 cap is money you are content to lose)"},
+            {"id": "entitlements", "label": "Buy real-time entitlements on the LIVE login (US equities top-of-book bundle + OPRA)"},
+            {"id": "gateway", "label": "Decide live/paper Gateway coexistence (docs/10 §10.2 — swap recommended)"},
+            {"id": "ssh", "label": "Passphrase the SSH key; confirm the API bind is localhost-only"},
+        ],
+    }
+
+
+def _cycle_calendar(store: Store, weeks: int = 8) -> dict[str, Any]:
+    """Every trading day in the window, judged from the journal: did both cycles
+    run AND finish, did reconcile agree, what did the self-audit say. Holidays
+    from the computed calendar. A day with a cycle_start and no cycle_end is a
+    crash or a timeout — red, never assumed fine."""
+    from datetime import date, datetime as _dt, timedelta
+    today = date.today()
+    start = today - timedelta(days=7 * weeks)
+    hol = _holidays_around(today)
+    by: dict[str, dict[str, Any]] = {}
+    try:
+        rows = store.conn.execute(
+            "SELECT ts, kind, payload FROM journal WHERE kind IN "
+            "('cycle_start','cycle_end','cycle_fatal','self_audit','offhours_skip') "
+            "AND ts >= ? ORDER BY id", (start.isoformat(),)).fetchall()
+    except Exception:
+        rows = []
+    sev_rank = {"critical": 4, "high": 3, "medium": 2, "low": 1}
+    for r in rows:
+        d = _et_day(r["ts"])
+        if not d:
+            continue
+        try:
+            p = json.loads(r["payload"] or "{}")
+        except Exception:
+            p = {}
+        e = by.setdefault(d, {"starts": 0, "ends": 0, "fatal": 0, "skips": 0, "secs": [],
+                              "ok": True, "audit": None, "notices": 0})
+        k = r["kind"]
+        if k == "cycle_start":
+            e["starts"] += 1
+        elif k == "cycle_end":
+            e["ends"] += 1
+            if p.get("duration_secs") is not None:
+                e["secs"].append(float(p["duration_secs"]))
+            if p.get("reconcile_ok") is False:
+                e["ok"] = False
+            try:
+                e["notices"] += sum(int(v) for v in (p.get("ib_notices") or {}).values())
+            except Exception:
+                pass
+        elif k == "cycle_fatal":
+            e["fatal"] += 1
+        elif k == "offhours_skip":
+            e["skips"] += 1
+        elif k == "self_audit":
+            w = p.get("worst")
+            if w and sev_rank.get(w, 0) > sev_rank.get(e["audit"] or "", 0):
+                e["audit"] = w
+    try:
+        from zoneinfo import ZoneInfo
+        now_et = _dt.now(ZoneInfo("America/New_York"))
+    except Exception:
+        now_et = _dt.now()
+    days = []
+    d = start
+    while d <= today:
+        if d.weekday() < 5:
+            iso = d.isoformat()
+            e = by.get(iso, {})
+            expected = d not in hol
+            if not expected:
+                status = "holiday"
+            elif e.get("fatal"):
+                status = "red"
+            elif e.get("starts", 0) > e.get("ends", 0):
+                status = "red"                       # started, never finished
+            elif e.get("ends", 0) >= 2:
+                status = "amber" if (e.get("ok") is False or e.get("audit") in ("critical", "high")) else "green"
+            elif e.get("ends", 0) == 1:
+                status = "amber"
+            elif d == today and now_et.hour < 16:
+                status = "pending"
+            else:
+                status = "missed"
+            days.append({"date": iso, "weekday": d.weekday(), "status": status,
+                         "starts": e.get("starts", 0), "ends": e.get("ends", 0),
+                         "secs": [round(x) for x in e.get("secs", [])],
+                         "ok": e.get("ok", True), "fatal": e.get("fatal", 0),
+                         "audit": e.get("audit"), "notices": e.get("notices", 0)})
+        d += timedelta(days=1)
+    return {"weeks": weeks, "start": start.isoformat(), "end": today.isoformat(), "days": days}
+
+
+def _ivr_series(store: Store, days: int = 90) -> dict[str, list]:
+    """Per-symbol IV RANK at each cycle (journal iv_rank_source), last reading per
+    date. This is the number the credit engine gates on; charted against its
+    threshold it answers 'why 0 signals' at a glance."""
+    from datetime import date, timedelta
+    start = (date.today() - timedelta(days=days)).isoformat()
+    last: dict[tuple, list] = {}
+    try:
+        for r in store.conn.execute(
+                "SELECT ts, payload FROM journal WHERE kind='iv_rank_source' "
+                "AND ts >= ? ORDER BY id", (start,)):
+            try:
+                p = json.loads(r["payload"] or "{}")
+                rank = p.get("rank")
+                if rank is None:
+                    continue
+                d = _et_day(r["ts"])
+                last[(p.get("symbol"), d)] = [d, round(float(rank), 4),
+                                              int(p.get("observations") or 0),
+                                              str(p.get("source") or "")]
+            except Exception:
+                continue
+    except Exception:
+        pass
+    out: dict[str, list] = {}
+    for (sym, _d), v in sorted(last.items(), key=lambda kv: (kv[0][0], kv[0][1])):
+        out.setdefault(str(sym), []).append(v)
+    return out
 
 
 def build_pro(store_path: Optional[Path] = None,
@@ -445,6 +646,114 @@ def _sparkline_svg(curve: list[dict[str, Any]]) -> str:
         f'stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>'
         f'</svg>'
     )
+
+
+# Plain (non-format) string: single braces are literal here. Injected into the
+# page template as a value, so the page's f-string doubling rule does not apply.
+_EXTRA_JS = r"""
+function fmtDate(s){ if(!s) return '—'; var d=new Date(s+'T12:00:00Z'); return d.toLocaleDateString(undefined,{month:'short',day:'numeric'}); }
+
+function renderRoadToNovember(D){
+  var r = D.road||{}; if(!r.today) return '';
+  var gates = (D.ramp||{}).gates||[]; var gateOk = {}; gates.forEach(function(g){ gateOk[g.name]=g.ok; });
+  var cfgSteps = [
+    {label:'config: mode: live', ok: !!gateOk['mode:live']},
+    {label:'config: brokers.ibkr_live_market_data_type: 1', ok: !!gateOk['market_data']},
+    {label:'config: separate live port (4001)', ok: !!gateOk['live_endpoint']},
+    {label:'config: go_live.ramp_tier: 1', ok: !!gateOk['ramp_tier']}
+  ];
+  var s = '<div class="card" style="margin-bottom:10px"><div class="k" style="margin-bottom:6px">Road to November — tier-1 live validation</div>';
+  s += '<div class="note" style="margin:0 0 8px">Target window '+fmtDate(r.window_start)+' – '+fmtDate(r.window_end)+', <b>'+r.sessions_to_window+' trading sessions</b> away. Tier 1 = $250/position, 2 positions, every order clamped. It validates the untested live path; it is not the money.</div>';
+  function ms(label, have, need, eta, note){
+    var pct = Math.min(100, Math.round(100*have/need)); var done = have>=need;
+    return '<div class="gate"><span>'+label+'</span><b>'+have+' / '+need+(done?' <span class="pos">✓</span>':(eta?' <span class="muted" style="font-weight:400">· clears ~'+fmtDate(eta)+'</span>':''))+'</b></div>'
+         + '<div class="bar"><div class="barfill" style="width:'+pct+'%"></div></div>'
+         + (note?'<div class="note" style="margin:-2px 0 8px">'+note+'</div>':'');
+  }
+  s += ms('IV bank (unlocks XLK / XLF / XLE)', r.iv_days, r.iv_need, r.iv_eta, 'More eligible symbols before the window means more chances for a signal.');
+  s += ms('Paper record (graduation hurdle)', r.sessions, r.sessions_need, r.sessions_eta, 'Not required for tier 1 — required before any tier above it, together with tier 1’s own live evidence.');
+  s += '<div class="k" style="margin:10px 0 4px">Operator checklist (docs/10 §10.4)</div>';
+  var stored = {}; try { stored = JSON.parse(localStorage.getItem('ais_nov_checklist')||'{}'); } catch(e) {}
+  (r.manual_steps||[]).forEach(function(m){
+    var on = !!stored[m.id];
+    s += '<label class="gate" style="cursor:pointer;align-items:flex-start"><span><input type="checkbox" data-ck="'+esc(m.id)+'" '+(on?'checked':'')+' style="margin-right:6px">'+esc(m.label)+'</span><b class="muted" style="font-weight:400;font-size:11px;white-space:nowrap">operator · remembered in this browser</b></label>';
+  });
+  cfgSteps.forEach(function(c){
+    s += '<div class="gate"><span>'+(c.ok?'<span class="pos">✓</span>':'<span class="neg">✗</span>')+' '+esc(c.label)+'</span><b class="muted" style="font-weight:400;font-size:11px">read from config</b></div>';
+  });
+  s += '<div class="gate"><span><span class="muted">⌨</span> LIVE_ENABLED file + typed confirmation</span><b class="muted" style="font-weight:400;font-size:11px">on the day, in a real terminal</b></div>';
+  s += '</div>';
+  return s;
+}
+
+function wireChecklist(){
+  var boxes = document.querySelectorAll('[data-ck]'); if(!boxes.length) return;
+  Array.prototype.forEach.call(boxes, function(b){ b.addEventListener('change', function(){
+    var st = {}; try { st = JSON.parse(localStorage.getItem('ais_nov_checklist')||'{}'); } catch(e) {}
+    st[b.getAttribute('data-ck')] = b.checked;
+    try { localStorage.setItem('ais_nov_checklist', JSON.stringify(st)); } catch(e) {}
+  }); });
+}
+
+function renderCycleCalendar(D){
+  var c = D.cycle_calendar||{}; var days = c.days||[]; if(!days.length) return '';
+  var col = {green:'#60cc88', amber:'#ffb648', red:'#ff6b6b', missed:'#ff6b6b', holiday:'rgba(255,255,255,.06)', pending:'rgba(255,255,255,.14)'};
+  var weeks = [], cur = null;
+  days.forEach(function(d){ if(d.weekday===0 || !cur){ cur=[]; weeks.push(cur); } cur.push(d); });
+  var s = '<div class="card" style="margin-bottom:10px"><div class="k" style="margin-bottom:6px">Cycle health — every trading day, last '+c.weeks+' weeks</div>';
+  s += '<div class="note" style="margin:0 0 8px">Green: both cycles finished and reconciled. Amber: one cycle, drift, or an urgent audit finding. Red: a crash, a cycle that never finished, or a missed day. Grey: holiday, or today before the close. Hover a cell.</div>';
+  s += '<div style="display:flex;gap:3px;overflow-x:auto;padding-bottom:4px">';
+  weeks.forEach(function(w){
+    s += '<div style="display:flex;flex-direction:column;gap:3px">';
+    var byDow = {}; w.forEach(function(d){ byDow[d.weekday]=d; });
+    for (var i=0;i<5;i++){
+      var d = byDow[i];
+      if(!d){ s += '<div style="width:16px;height:16px"></div>'; continue; }
+      var tip = d.date+' — '+d.status
+        + (d.ends ? ' · '+d.ends+' cycle(s) '+(d.secs||[]).map(function(x){ return x+'s'; }).join('/') : '')
+        + (d.starts>d.ends ? ' · '+(d.starts-d.ends)+' never finished' : '')
+        + (d.ok===false ? ' · reconcile DRIFT' : '')
+        + (d.audit ? ' · audit '+d.audit : '')
+        + (d.notices ? ' · '+d.notices+' IB notices' : '');
+      s += '<div title="'+esc(tip)+'" style="width:16px;height:16px;border-radius:3px;background:'+(col[d.status]||col.pending)+'"></div>';
+    }
+    s += '</div>';
+  });
+  s += '</div>';
+  var counts = {}; days.forEach(function(d){ counts[d.status]=(counts[d.status]||0)+1; });
+  var parts = ['green','amber','red','missed','holiday'].filter(function(k){ return counts[k]; }).map(function(k){ return k+' '+counts[k]; });
+  s += '<div class="note" style="margin-top:6px">'+parts.join(' · ')+'</div></div>';
+  return s;
+}
+
+function renderIvrChart(D){
+  var iv = D.ivr_series||{}; var syms = Object.keys(iv).sort(); if(!syms.length) return '';
+  var thr = Number(D.ivr_threshold||0.4);
+  var dates = {}; syms.forEach(function(sy){ (iv[sy]||[]).forEach(function(p){ dates[p[0]]=1; }); });
+  var xs = Object.keys(dates).sort(); if(xs.length<2) return '';
+  var idx = {}; xs.forEach(function(x,i){ idx[x]=i; });
+  var W=640,H=210,L=38,R=12,T=10,B=24, iw=W-L-R, ih=H-T-B;
+  function X(i){ return L + iw*i/(xs.length-1); } function Y(v){ return T + ih*(1-Math.max(0,Math.min(1,v))); }
+  var palette = ['#6fa8ff','#ffb648','#60cc88','#ff8fd6','#c9a0ff','#7fdfe6','#ffd36b'];
+  var s = '<div class="card" style="margin-bottom:10px"><div class="k" style="margin-bottom:6px">IV rank against the '+Math.round(thr*100)+'% line — why nothing has traded</div>';
+  s += '<div class="note" style="margin:0 0 8px">Each line is one symbol’s 252-day IV rank at each cycle. The credit engine needs it above the dashed line; below it, standing aside is the system working. The breakout engine wants it low, but still needs a squeeze.</div>';
+  s += '<svg viewBox="0 0 '+W+' '+H+'" width="100%" style="max-width:100%;height:auto;display:block">';
+  [0,0.2,0.4,0.6,0.8,1].forEach(function(g){ s += '<line x1="'+L+'" y1="'+Y(g).toFixed(1)+'" x2="'+(W-R)+'" y2="'+Y(g).toFixed(1)+'" stroke="rgba(255,255,255,.07)"/><text x="'+(L-6)+'" y="'+(Y(g)+4).toFixed(1)+'" font-size="10" fill="#7a7a98" text-anchor="end">'+Math.round(g*100)+'%</text>'; });
+  s += '<line x1="'+L+'" y1="'+Y(thr).toFixed(1)+'" x2="'+(W-R)+'" y2="'+Y(thr).toFixed(1)+'" stroke="#ffb648" stroke-dasharray="5 4" stroke-width="1.5"/>';
+  syms.forEach(function(sym,k){
+    var colr = palette[k%palette.length];
+    var pts = (iv[sym]||[]).map(function(p){ return [X(idx[p[0]]), Y(Number(p[1])), p]; });
+    if(!pts.length) return;
+    s += '<polyline fill="none" stroke="'+colr+'" stroke-width="2" points="'+pts.map(function(p){ return p[0].toFixed(1)+','+p[1].toFixed(1); }).join(' ')+'"/>';
+    pts.forEach(function(p){ s += '<circle cx="'+p[0].toFixed(1)+'" cy="'+p[1].toFixed(1)+'" r="3.5" fill="'+colr+'" stroke="#0f0f1a" stroke-width="1"><title>'+esc(sym+' · '+p[2][0]+' · IV rank '+Math.round(Number(p[2][1])*100)+'% ('+(p[2][3]||'')+', '+(p[2][2]||'')+' obs)')+'</title></circle>'; });
+  });
+  s += '<text x="'+L+'" y="'+(H-6)+'" font-size="10" fill="#7a7a98">'+esc(xs[0])+'</text><text x="'+(W-R)+'" y="'+(H-6)+'" font-size="10" fill="#7a7a98" text-anchor="end">'+esc(xs[xs.length-1])+'</text>';
+  s += '</svg>';
+  s += '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:6px">'+syms.map(function(sym,k){ var last=(iv[sym]||[]).slice(-1)[0]; return '<span style="font-size:11px"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:'+palette[k%palette.length]+';margin-right:4px;vertical-align:middle"></span>'+esc(sym)+(last?' <span class="muted">'+Math.round(Number(last[1])*100)+'%</span>':'')+'</span>'; }).join('')+'</div>';
+  s += '</div>';
+  return s;
+}
+"""
 
 
 def _render(data: dict[str, Any]) -> str:
@@ -550,6 +859,7 @@ color:#8888aa;font-weight:600;padding:5px 6px;border-bottom:1px solid rgba(255,2
 </div>
 <script>
 var D = {payload};
+{_EXTRA_JS}
 function esc(s){{return (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}}
 function money(v){{if(v==null)return '—';var n=Number(v);return isNaN(n)?'—':'$'+n.toLocaleString(undefined,{{maximumFractionDigits:0}});}}
 function signed(v){{var n=Number(v||0);var s=(n>=0?'+':'-')+'$'+Math.abs(n).toLocaleString(undefined,{{maximumFractionDigits:0}});return '<span class="'+(n>=0?'pos':'neg')+'">'+s+'</span>';}}
@@ -668,6 +978,7 @@ h += '<div class="sec-title">Road to live</div>';
 var g = D.graduation||{{}};
 var tpct = Math.min(100, Math.round(100*(g.trades||0)/(g.min_trades||40)));
 var dpct = Math.min(100, Math.round(100*(g.days||0)/(g.min_days||60)));
+h += renderRoadToNovember(D);
 h += '<div class="card" style="margin-bottom:10px"><div class="k" style="margin-bottom:6px">Graduation gate</div>';
 h += '<div class="gate"><span>Closed trades</span><b>'+(g.trades||0)+' / '+(g.min_trades||40)+'</b></div>';
 h += '<div class="bar"><div class="barfill" style="width:'+tpct+'%"></div></div>';
@@ -763,6 +1074,7 @@ h += '<div class="card" style="margin-bottom:10px"><div class="k" style="margin-
    + 'gate uses only per-trade P&L net of costs, so FX can never make the system look '
    + 'tradeworthy.</div></div>';
 
+h += renderIvrChart(D);
 var ivs = D.iv_series||{{}};
 var syms = Object.keys(ivs).sort();
 if (syms.length){{
@@ -792,7 +1104,8 @@ h += '</div>';
 
 var cyc = D.cycles||[];
 if (cyc.length){{
-  h += '<div class="card" style="margin-bottom:10px"><div class="k" style="margin-bottom:6px">Recent cycles (the twice-daily runs)</div>';
+  h += renderCycleCalendar(D);
+h += '<div class="card" style="margin-bottom:10px"><div class="k" style="margin-bottom:6px">Recent cycles (the twice-daily runs)</div>';
   h += '<table class="tbl"><tr><th>When</th><th>Orders</th><th>Book check</th><th>Took</th></tr>';
   cyc.forEach(function(c){{
     h += '<tr><td class="muted">'+et(c.ts)+'</td>'+
@@ -869,6 +1182,7 @@ jr.forEach(function(j){{
 }});
 
 document.getElementById('app').innerHTML = h;
+wireChecklist();
 
 // ── interactive equity chart: range buttons + hover/touch crosshair ──────
 (function(){{
