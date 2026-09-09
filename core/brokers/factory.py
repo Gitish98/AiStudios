@@ -96,7 +96,12 @@ def build_execution_adapter(config: Config, asof: Optional[str] = None,
     # live for the day. Here (run-cycle / status / reconcile) we read that armed
     # marker; it goes stale at the date rollover so a prior day's "yes" can't ride.
     armed = store.get_kv(ARMED_KV_KEY) if store is not None else None
-    decision = GoLiveGate(config).evaluate(confirmation=armed)
+    # The store goes to the gate too: gate #7 (graduation + prior-tier live
+    # evidence) needs it above tier 1, and WITHOUT it fails closed -- which here
+    # would mean `go-live` arms tier 2 with all seven green while every cron
+    # cycle silently stays paper (preflight review, 2026-09-08). Same store, same
+    # verdict, in the CLI and in the cycle.
+    decision = GoLiveGate(config, store=store).evaluate(confirmation=armed)
 
     if not decision.allowed:
         # Keep the paper-only refusal: stay PAPER, loudly, and say what's missing.
@@ -106,7 +111,7 @@ def build_execution_adapter(config: Config, asof: Optional[str] = None,
                   "ready) with: python cli.py go-live.\n  " + b.note)
         return b
 
-    # All five gates pass — build the LIVE IBKR adapter on the live port. The
+    # All seven gates pass — build the LIVE IBKR adapter on the live port. The
     # adapter's own __init__ refuses paper=False against a paper port, so this
     # cannot be the paper endpoint.
     ramp = current_ramp_tier(config) or {}

@@ -3,7 +3,7 @@ THE GO-LIVE GATE — the deterministic, fail-closed path from paper to live.
 
 Cardinal rule (docs/14, docs/05 §1.2): **an LLM must be able to satisfy NONE of
 these conditions.** Each is an out-of-band HUMAN action. Code (or the advisor
-LLM) can *propose*; only the operator, through these six independent gates, can
+LLM) can *propose*; only the operator, through these seven independent gates, can
 *enable live*. Paper stays the default; the deterministic risk gate still binds
 in live, and the live size is clamped to the smallest ramp tier.
 
@@ -92,11 +92,16 @@ class GoLiveDecision:
 
 
 class GoLiveGate:
-    """Evaluates all six conditions. Fail-closed; any missing one → not live."""
+    """Evaluates all seven conditions. Fail-closed; any missing one → not live."""
 
-    def __init__(self, config: Any, *, live_enabled_path: Optional[Any] = None,
+    def __init__(self, config: Any, *, store: Any = None,
+                 live_enabled_path: Optional[Any] = None,
                  today: Optional[date] = None):
         self.config = config
+        # The store is needed only by gate #7 (graduation + prior-tier live
+        # evidence) and only above tier 1. Without it, any tier above 1 fails
+        # closed rather than being waved through.
+        self.store = store
         gl = _golive_cfg(config)
         self.live_enabled_path = Path(
             live_enabled_path or gl.get("live_enabled_file") or LIVE_ENABLED_PATH)
@@ -110,6 +115,7 @@ class GoLiveGate:
             self._check_live_enabled_file(),
             self._check_confirmation(confirmation),
             self._check_ramp_tier(),
+            self._check_graduation(),
         ]
         return GoLiveDecision(allowed=all(c.ok for c in conds), conditions=conds)
 
@@ -240,6 +246,71 @@ class GoLiveGate:
                 "ramp_tier", False,
                 f"go_live.ramp_tier={tier} is not a defined tier {sorted(valid)}")
         return GoLiveCondition("ramp_tier", True, f"ramp tier {tier} active")
+
+
+    # ── 7. graduation: the evidence standard for SIZE ────────────────────────
+    def _check_graduation(self) -> GoLiveCondition:
+        """Tier 1 is the VALIDATION tier — permitted before the paper record has
+        graduated, because the untested live order path is the #1 honest gap and
+        a $250-capped trade is how it gets tested. Every tier above it is
+        DEPLOYMENT and requires two things no one can type:
+
+          (a) the paper record has graduated (performance.graduation_status), and
+          (b) the PREVIOUS tier's live evidence says ready (ramp.ramp_status):
+              its configured clean live days, at least one closed LIVE trade,
+              and positive LIVE net expectancy.
+
+        docs/00 and docs/07 said "graduated only" and no code checked it (found
+        2026-09-08, the same day ramp_advancement_status was found to have no
+        caller). The human still edits the tier; this refuses a tier the
+        evidence has not earned. Needs the store; without one, fail closed."""
+        gl = _golive_cfg(self.config)
+        tier = _safe_int(gl.get("ramp_tier"), 0) or 0
+        if tier < 1:
+            return GoLiveCondition(
+                "graduated", False, "ramp tier 0 (paper) — nothing to graduate into")
+        if tier == 1:
+            return GoLiveCondition(
+                "graduated", True,
+                "tier 1 is the validation tier — permitted before graduation; every "
+                "order is clamped to its cap")
+        if self.store is None:
+            return GoLiveCondition(
+                "graduated", False,
+                f"tier {tier} requires the paper record and tier {tier - 1} live "
+                "evidence, and no store was supplied to evaluate them — refusing")
+        try:
+            from .costs import CostModel
+            from .performance import (compute_metrics, graduation_status,
+                                      paper_record_sessions)
+            from .ramp import ramp_status
+            try:
+                costs = CostModel.from_config(self.config)
+            except Exception:
+                costs = CostModel()
+            closed = self.store.get_closed_positions()
+            days = sorted({p.get("closed_asof") for p in closed if p.get("closed_asof")})
+            m = compute_metrics(closed, days, costs,
+                                sessions=paper_record_sessions(self.store))
+            grad = graduation_status(m)
+            prev = ramp_status(self.store, self.config, tier=tier - 1)
+        except Exception as e:
+            return GoLiveCondition(
+                "graduated", False,
+                f"could not evaluate graduation / tier {tier - 1} evidence ({e}) — refusing")
+        reasons = []
+        if not grad.get("graduated"):
+            reasons.append("paper record not graduated: "
+                           + "; ".join(grad.get("reasons") or ["unknown"]))
+        adv = prev.get("advancement") or {}
+        if not adv.get("ready_to_advance"):
+            reasons.append(f"tier {tier - 1} live evidence not ready: "
+                           + "; ".join(adv.get("reasons") or ["no evidence"]))
+        if reasons:
+            return GoLiveCondition("graduated", False, " | ".join(reasons))
+        return GoLiveCondition(
+            "graduated", True,
+            f"paper record graduated and tier {tier - 1} live evidence ready")
 
 
 # ── ramp helpers (shared by the factory, the risk gate, and the CLI) ──────────

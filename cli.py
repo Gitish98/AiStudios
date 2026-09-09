@@ -447,6 +447,12 @@ def cmd_reconcile(args):
                      {"drift": report["drift"]})
         if (config.raw.get("reconcile", {}) or {}).get("auto_kill_on_drift", False):
             store.set_kill_switch(True)
+            # Journal it like every other KILL: the live ramp's clean-day clock
+            # is built from kill_switch rows, and this path used to engage the
+            # switch with no row at all -- a KILL the evidence never saw.
+            store.append(datetime.now(timezone.utc).isoformat(), "kill_switch",
+                         {"engaged": True, "reason": "auto_kill_on_drift",
+                          "drift_items": len(report["drift"])})
             print("\n  Kill switch ENGAGED (reconcile.auto_kill_on_drift = true).")
         else:
             print("\n  Investigate before trading. Trip the kill switch with: "
@@ -650,13 +656,13 @@ def cmd_go_live(args):
     ts = lambda: datetime.now(timezone.utc).isoformat()
     config = load_config()
     store = Store()
-    gate = GoLiveGate(config)
+    gate = GoLiveGate(config, store=store)
 
-    # Show exactly where each of the five gates stands (no confirmation supplied
+    # Show exactly where each of the seven gates stands (no confirmation supplied
     # yet, so the confirmation gate reads 'missing').
     pre = gate.evaluate(confirmation=None)
     print("─" * 56)
-    print("  GO-LIVE GATE — all five must pass (an LLM can satisfy NONE)")
+    print("  GO-LIVE GATE — all seven must pass (an LLM can satisfy NONE)")
     print("─" * 56)
     for c in pre.conditions:
         print(f"  {'✅' if c.ok else '❌'} {c.name:<20} {c.detail}")
@@ -687,7 +693,7 @@ def cmd_go_live(args):
         sys.exit(2)
 
     expected = confirmation_phrase()
-    print("\n  Four of five gates pass. To ARM LIVE for today, type EXACTLY:")
+    print("\n  Six of seven gates pass. To ARM LIVE for today, type EXACTLY:")
     print(f"      {expected}")
     print("  (anything else aborts — nothing is changed)")
     try:
@@ -713,6 +719,59 @@ def cmd_go_live(args):
     print("        python cli.py go-paper")
     print("  Watch the first live fills closely — this path remains UNTESTED until you")
     print("  run it against a real live Gateway.")
+    store.close()
+
+
+def cmd_ramp(args):
+    """Where the live ramp stands. Read-only: the seven gates with no
+    confirmation supplied, the active tier, its clean live days, live-only
+    metrics, and whether the evidence says the NEXT tier is earned. The human
+    edits go_live.ramp_tier; this never promotes and never arms."""
+    from core.golive import GoLiveGate
+    from core.ramp import ramp_status
+    config = load_config()
+    store = Store()
+    pre = GoLiveGate(config, store=store).evaluate(confirmation=None)
+    print("─" * 56)
+    print("  LIVE RAMP — the seven gates (read-only) and the evidence")
+    print("─" * 56)
+    for c in pre.conditions:
+        if c.name == "session_confirmation" and not c.ok:
+            mark, detail = "⌨️ ", "typed by the operator at arming time (go-live)"
+        else:
+            mark, detail = ("✅" if c.ok else "❌"), c.detail
+        print(f"  {mark} {c.name:<20} {detail}")
+    try:
+        rs = ramp_status(store, config)
+    except Exception as e:                       # noqa: BLE001 -- report, never traceback
+        print(f"\n  Could not compute the ramp evidence: {e}")
+        print("  (gate #7 treats this as NOT earned; fix the cause before arming a tier above 1)")
+        store.close()
+        return 2
+    adv = rs.get("advancement") or {}
+    print()
+    if rs.get("error"):
+        print(f"  ⚠️  Evidence unavailable: {rs['error']}")
+    if (rs.get("tier") or 0) < 1:
+        print("  Ramp tier 0 — paper. Tier 1 is the VALIDATION tier: permitted before")
+        print("  graduation, every order clamped to its cap. Tiers above 1 require the")
+        print("  paper record to graduate AND the previous tier's live evidence.")
+    else:
+        cfg = rs.get("tier_cfg") or {}
+        lm = rs.get("live_metrics") or {}
+        print(f"  Active tier      : {rs['tier']}  (max ${float(cfg.get('max_notional_usd', 0)):.0f}/position, "
+              f"{cfg.get('max_positions')} concurrent)")
+        print(f"  Armed since      : {rs.get('started') or 'never'}")
+        print(f"  Live sessions    : {rs.get('live_sessions', 0)}")
+        print(f"  Clean live days  : {rs.get('clean_days', 0)} / {cfg.get('clean_days_to_advance', '?')}")
+        lb = rs.get("last_breach")
+        if lb:
+            print(f"  Clock last reset : {lb.get('kind')} at {str(lb.get('ts'))[:16]}")
+        print(f"  Closed LIVE trades: {lm.get('trades', 0)}   net expectancy "
+              f"${float(lm.get('expectancy_net', 0.0)):+.2f}/trade")
+        print(f"  Next tier earned : {'YES' if adv.get('ready_to_advance') else 'no'}")
+    for r in adv.get("reasons") or []:
+        print(f"      - {r}")
     store.close()
 
 
@@ -779,6 +838,7 @@ def main():
     sub.add_parser("clear-kill", help="Clear the kill switch").set_defaults(func=cmd_clear_kill)
     sub.add_parser("go-live", help="arm LIVE for today (interactive five-gate check)").set_defaults(func=cmd_go_live)
     sub.add_parser("go-paper", help="stand LIVE back down instantly (back to paper)").set_defaults(func=cmd_go_paper)
+    sub.add_parser("ramp", help="Where the live ramp stands: the seven gates (read-only) + clean days + live-only evidence").set_defaults(func=cmd_ramp)
 
     args = p.parse_args()
     # Propagate a command's exit code. `audit` is the first command to return

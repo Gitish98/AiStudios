@@ -50,11 +50,12 @@ def _enabled_file(tmp: str, when: date = TODAY) -> Path:
     return p
 
 
-# ── the six gates, all satisfied ──────────────────────────────────────────────
-# (five until 2026-09-08; the sixth — market_data — was added after the live
-# factory was found reading paper's DELAYED data-type key with no gate looking)
+# ── the seven gates, all satisfied ────────────────────────────────────────────
+# (five until 2026-09-08; the sixth — market_data — after the live factory was
+# found reading paper's DELAYED key; the seventh — graduated — after the docs'
+# "graduated only" was found to be enforced by no code at all)
 
-def test_all_six_gates_pass():
+def test_all_seven_gates_pass():
     with tempfile.TemporaryDirectory() as tmp:
         f = _enabled_file(tmp, TODAY)
         gate = GoLiveGate(_config(live_enabled_file=f), today=TODAY)
@@ -62,7 +63,7 @@ def test_all_six_gates_pass():
         assert d.allowed, d.reasons
         assert set(d.satisfied) == {"mode:live", "live_endpoint", "market_data",
                                     "live_enabled_file", "session_confirmation",
-                                    "ramp_tier"}
+                                    "ramp_tier", "graduated"}
 
 
 # ── each single missing condition keeps it PAPER (fail-closed) ─────────────────

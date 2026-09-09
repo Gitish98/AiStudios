@@ -330,6 +330,7 @@ def _gather(store: Store) -> dict[str, Any]:
         "trades": _trade_history(closed),
         "fx_rates": store.get_fx_rates(),
         "audit": _self_audit(store),
+        "ramp": _ramp(store),
     }
 
 
@@ -347,6 +348,25 @@ def _self_audit(store) -> dict[str, Any]:
         # The auditor failing must never blank the dashboard. Say so instead of
         # rendering a reassuring empty list.
         return {"findings": None}
+
+
+def _ramp(store) -> dict[str, Any]:
+    """The seven go-live gates (read-only, no confirmation supplied) and the live
+    ramp's evidence, for the page. So the operator can see how far the desk is
+    from the first real order without arming anything — and so
+    `ready_to_advance`, which had no consumer at all before 2026-09-08, has one."""
+    try:
+        from core.config import load_config
+        from core.golive import GoLiveGate, _golive_cfg, _ramp_rows
+        from core.ramp import ramp_status
+        cfg = load_config()
+        pre = GoLiveGate(cfg, store=store).evaluate(confirmation=None)
+        return {"gates": [{"name": c.name, "ok": c.ok, "detail": c.detail}
+                          for c in pre.conditions],
+                "status": ramp_status(store, cfg),
+                "tiers": [dict(r) for r in _ramp_rows(_golive_cfg(cfg))]}
+    except Exception as e:
+        return {"gates": None, "status": None, "tiers": [], "error": str(e)}
 
 
 def build_pro(store_path: Optional[Path] = None,
@@ -674,6 +694,38 @@ if (_rs.length) {{
   h += '</div>';
 }}
 h += '</div>';
+var rp = D.ramp||{{}};
+if (rp.gates) {{
+  h += '<div class="card" style="margin-bottom:10px"><div class="k" style="margin-bottom:6px">Live ramp — road to the first real order</div>';
+  h += '<div class="note" style="margin:0 0 8px">The seven go-live gates, read-only. An LLM can satisfy none of them; the confirmation is typed by the operator at arming time.</div>';
+  rp.gates.forEach(function(g){{
+    var typed = g.name==='session_confirmation';
+    var mark = g.ok ? '<span class="pos">✓</span>' : (typed ? '<span class="muted">⌨</span>' : '<span class="neg">✗</span>');
+    var det = (typed && !g.ok) ? 'typed by the operator when arming' : g.detail;
+    h += '<div class="gate" style="align-items:flex-start"><span>'+mark+' '+esc(g.name)+'</span><b style="font-weight:400;font-size:11.5px;max-width:62%;text-align:right;color:#9a9ab8">'+esc(det)+'</b></div>';
+  }});
+  var st = rp.status||{{}};
+  var adv = st.advancement||{{}};
+  var tcfg = st.tier_cfg||{{}};
+  var need = tcfg.clean_days_to_advance;
+  if ((st.tier||0) < 1) {{
+    var t1 = (rp.tiers||[])[0]||{{}};
+    h += '<div class="note" style="margin-top:8px">Ramp tier 0 — paper. Tier 1 is the validation tier: $'+(t1.max_notional_usd||250)+' max per position, '+(t1.max_positions||2)+' concurrent, permitted before graduation, every order clamped. Tiers above it require the paper record to graduate AND the previous tier\u2019s live evidence.</div>';
+  }} else {{
+    h += '<div class="gate" style="margin-top:8px"><span>Tier '+st.tier+' clean live days</span><b>'+(st.clean_days||0)+' / '+(need||'?')+'</b></div>';
+    if (need) h += '<div class="bar"><div class="barfill" style="width:'+Math.min(100,Math.round(100*(st.clean_days||0)/need))+'%"></div></div>';
+    var lm = st.live_metrics||{{}};
+    h += '<div class="gate"><span>Closed LIVE trades</span><b>'+(lm.trades||0)+'</b></div>';
+    h += '<div class="gate"><span>Live net expectancy</span><b>'+(lm.trades?signed(lm.expectancy_net)+' /trade':'\u2014')+'</b></div>';
+    if (st.last_breach) h += '<div class="note">Clock last reset by <b>'+esc(st.last_breach.kind)+'</b> at '+esc(String(st.last_breach.ts).slice(0,16).replace('T',' '))+'.</div>';
+    h += '<div style="margin-top:6px;font-size:12px;color:'+(adv.ready_to_advance?'#60cc88':'#ff9a6b')+'">'+(adv.ready_to_advance?'Evidence says the NEXT tier is earned \u2014 the human edits go_live.ramp_tier; the system never promotes itself.':'Next tier not yet earned.')+'</div>';
+    var rrs = adv.reasons||[];
+    if (rrs.length) {{ h += '<div class="reasons" style="margin-top:6px">'; rrs.forEach(function(r){{ h += '<span class="chip" style="color:#ff9a6b">'+esc(r)+'</span>'; }}); h += '</div>'; }}
+  }}
+  h += '</div>';
+}} else if (rp.error) {{
+  h += '<div class="card" style="margin-bottom:10px"><div class="k">Live ramp</div><div class="note">Could not evaluate the go-live gates: '+esc(rp.error)+'</div></div>';
+}}
 var ivpct = Math.min(100, Math.round(100*(iv.days||0)/(iv.target||60)));
 h += '<div class="card"><div class="k" style="margin-bottom:6px">IV-rank bootstrap (XLK/XLF/XLE)</div>';
 h += '<div class="gate"><span>Sessions of IV collected</span><b>'+(iv.days||0)+' / '+(iv.target||60)+'</b></div>';

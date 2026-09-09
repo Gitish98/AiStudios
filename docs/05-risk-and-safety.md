@@ -76,11 +76,15 @@ Going live is not a switch from $0 to full size. It is a **staged ramp** with ex
 | **Ramp-3** | $5,000 notional | 6 | 20 trading days |
 | **Ramp-N** | config cap | config cap | manual sign-off each step |
 
-The ramp tier is a config value the **human** edits. The system reads it; it never promotes itself. A single guardrail breach (any KILL event, any reconcile mismatch) **resets the clean-day counter to zero.**
+The ramp tier is a config value the **human** edits. The system reads it; it never promotes itself. A single guardrail breach **resets the clean-day counter to zero** — a KILL event, a frozen underlying (the assignment signature), a crashed cycle, or **persistent** reconcile drift (drift that survives a cycle boundary). Routine one-cycle drift does *not* count: every entry produces one cycle of `untracked_at_broker` by design, because the order fills between placement and the end-of-cycle reconcile; counting that would reset the clock on every trade and make tier 1 impossible to leave.
+
+**The evidence is computed, not assumed** (since 2026-09-08 — before that, `ramp_advancement_status` had no caller and `clean_days` was never produced anywhere): `core/ramp.py` derives clean live days from the journal (live cycles only, strictly after the tier's `go_live_armed` event and the last breach) and live-only metrics from positions with `fill_mode = live`. `python cli.py ramp` prints it; the dashboard's *Live ramp* card shows it; gate #7 refuses a tier the evidence has not earned.
+
+**Tier 1 is the validation tier.** It is permitted *before* the paper record has graduated (§1.4 gate 7), because the untested live order path is the #1 honest gap and a $250-capped trade is how it gets tested. Every tier above it is *deployment* and requires both a graduated paper record and the previous tier's live evidence.
 
 ### 1.4 The implementation (`core/golive.py`) — what's wired, and which gates are real boundaries
 
-The five gates above are implemented for **IBKR** in `core.golive.GoLiveGate`, which evaluates all five and is fail-closed (any missing/unreadable/ambiguous condition → not live). The broker factory (`core/brokers/factory.py`) is the **single construction chokepoint**: a live adapter is built *only* when the gate passes; otherwise the system stays paper, loudly, and itemizes what's missing — it **never masquerades a paper adapter as live** (if the gates pass but no live Gateway answers, it stays paper). The risk gate (`core/risk.py`) then enforces the ramp tier's notional/position caps as **hard additional limits**, and fails closed on a live run with no ramp cap.
+The seven gates below are implemented for **IBKR** in `core.golive.GoLiveGate`, which evaluates all seven and is fail-closed (any missing/unreadable/ambiguous condition → not live). The broker factory (`core/brokers/factory.py`) is the **single construction chokepoint**: a live adapter is built *only* when the gate passes; otherwise the system stays paper, loudly, and itemizes what's missing — it **never masquerades a paper adapter as live** (if the gates pass but no live Gateway answers, it stays paper). The risk gate (`core/risk.py`) then enforces the ramp tier's notional/position caps as **hard additional limits**, and fails closed on a live run with no ramp cap.
 
 Concrete mapping (the abstract table in §1.2 was Alpaca-era; this is the shipped IBKR form):
 
@@ -91,11 +95,14 @@ Concrete mapping (the abstract table in §1.2 was Alpaca-era; this is the shippe
 | 3 | dated enable-file | `~/.aistudios/LIVE_ENABLED`, first line = today's date | `GoLiveGate._check_live_enabled_file` |
 | 4 | per-session confirmation | `cli.py go-live` reads `CONFIRM LIVE <today>` from the operator's **TTY** (refuses if stdin isn't a terminal); persists the dated phrase so same-day cron runs don't re-prompt, stale at the date rollover | `cli.py go_live` + `GoLiveGate._check_confirmation` |
 | 5 | size ramp | `go_live.ramp_tier ≥ 1`; the risk gate clamps notional/positions to that tier | `GoLiveGate._check_ramp_tier` + `RiskGate` |
+| 6 | real-time data for live | `brokers.ibkr_live_market_data_type` present **and** `1` — a *separate* key, so paper's delayed setting can never leak into live; live limit orders priced off 15-minute-stale mids are quotes against a market that has moved (found 2026-09-08: the live factory read paper's key, set to 3 everywhere, and no gate looked) | `GoLiveGate._check_market_data` + `factory` live path |
+| 7 | graduation for size | tier 1 passes (validation); tier ≥ 2 requires the paper record to have **graduated** (`performance.graduation_status`) **and** tier N−1's live evidence to say **ready** (`ramp.ramp_status`: its clean days, ≥1 closed live trade, positive live expectancy). Needs the store; without one, tier ≥ 2 fails closed. (docs said "graduated only"; no code checked until 2026-09-08) | `GoLiveGate._check_graduation` |
 
 **Which are TRUE security boundaries vs. UX (be honest):**
 - **Gate 4 is the strongest boundary.** It is interactive, date-bound, and read from the operator's terminal — *never* a CLI argument or model text — so a compromised/automated LLM cannot supply it. `go-paper` stands live back down instantly.
 - **Gates 3 and 2 are strong:** an out-of-band dated filesystem write and a live-authenticated Gateway on a live port are human/broker actions the **runtime advisor LLM has no tool for** (it is read-only, sandboxed — `agent/advisor.py`).
-- **Gates 1 and 5 are config the human owns** — intent signals, weaker as *standalone* boundaries. Their value is defense-in-depth: live needs **all five at once**.
+- **Gates 1, 5 and 6 are config the human owns** — intent signals, weaker as *standalone* boundaries. Their value is defense-in-depth: live needs **all seven at once**.
+- **Gate 7 is evidence the human cannot type.** It reads the journal and the positions table. Its purpose is not to stop the first live trade — tier 1 passes it — but to make "the money" follow evidence rather than a date.
 - **Honest caveat on the threat model:** "an LLM has no tool for this" is true of the *runtime advisor*. A *developer-grade coding agent* with shell/filesystem access (like the one that built this) could in principle write the file or edit config — which is exactly why gate 4's human-typed, terminal-only confirmation is the linchpin, and why **live remains untested until the operator runs it by hand** on a real live Gateway.
 
 ---

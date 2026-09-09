@@ -99,7 +99,11 @@ After `run-cycle`, look for, in `status`:
   **and** ≥40 closed trades **and** positive after-cost expectancy that survives a
   worst-case slippage haircut. Low-frequency strategies may need *far* more than
   60 calendar days to reach 40 trades. Most strategies should never graduate —
-  that is the system working.
+  that is the system working. **One deliberate exception:** live ramp **tier 1**
+  ($250/position cap) is a *plumbing validation* step and is permitted before
+  graduation — the untested live order path is the biggest honest gap, and a
+  capped trade is how it gets tested. Tiers above 1 are gated on graduation
+  **plus** the previous tier's live evidence (docs/05 §1.4, gate 7).
 
 ---
 

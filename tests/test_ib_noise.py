@@ -155,7 +155,7 @@ def test_gate_now_has_six_conditions():
     from core.golive import GoLiveGate
     d = GoLiveGate(_cfg(ibkr_live_market_data_type=1)).evaluate()
     names = [x.name for x in d.conditions]
-    assert len(names) == 6, names
+    assert len(names) == 7, names
     assert names[1] == "live_endpoint" and names[2] == "market_data", names
     assert {"live_enabled_file", "ramp_tier"} <= set(names)
 

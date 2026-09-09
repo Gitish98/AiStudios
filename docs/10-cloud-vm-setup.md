@@ -239,3 +239,78 @@ TZ=America/New_York
 
 > Reminder: confirm options permissions with IBKR and the tax treatment of active
 > trading with a Canadian tax professional / the CRA before any live capital.
+
+## 10. Going live from this VM — the tier-1 validation (target: November 2026)
+
+This section exists because the one-session rule (§8, Error 10197) and the go-live
+gates were documented in different places and nobody had written down how they
+interact. Read it before you buy anything.
+
+### 10.1 What tier 1 is, and is not
+
+Tier 1 is **$250 max notional per position, 2 positions**, every order clamped by the
+risk gate. It is a *plumbing validation*: its job is to prove the untested live path —
+a real order places, fills, reconciles, and its slippage gets **measured** — at a size
+where a total loss is a rounding error. It is permitted before the paper record has
+graduated (gate 7 passes at tier 1). It is **not** "deploying the money"; tiers above
+1 are refused until the paper record graduates *and* tier 1 has produced its own
+evidence (`python cli.py ramp` shows exactly where that stands).
+
+### 10.2 The wall: one market-data session
+
+IBKR serves market data to **one login at a time**. Your paper trading user's data
+permissions are *bound to the live user's* — you can share the live subscriptions
+with paper, but only while the live user is **not logged in elsewhere**. This VM's
+paper Gateway *is* a login. Two Gateways (paper + live) on this box, or a live
+Gateway here plus a live TWS on your desk, produce Error 10197 / "Existing session
+detected" tug-of-war, and the data stops for whichever loses.
+
+Pick one, deliberately:
+
+| Option | What happens to the paper record | Cost |
+|---|---|---|
+| **A. Swap** — stop the paper Gateway service, run the live Gateway in its place for the validation window | Paper cycles pause; IV bank pauses. Resume paper after. | $0 extra |
+| **B. Second host** — a second small VM runs the live Gateway; this one keeps running paper | Both continue | ~$6–12/mo + a second IBC/systemd setup (§3–5 again) |
+| **C. Time-share** — live Gateway logs in only during the validation cycles, paper the rest of the day | Fragile; two logins racing the nightly restart | $0, not recommended |
+
+A is the honest default for a *validation*: it is a few days, and the paper record
+resuming afterwards is just more sessions. Choose B only if you intend to run live and
+paper side by side for months.
+
+### 10.3 Entitlements (the live login, not the paper one)
+
+Real-time subscriptions can only be bought on the **funded live account**. Gate 6
+requires `brokers.ibkr_live_market_data_type: 1`; under type 1 without the
+entitlement IB refuses the request outright (it does not silently serve delayed —
+that only happens under type 3/4), so a missing subscription shows up as *no quote*,
+which the cycle treats as "hold", never as a price. You need, on the live login:
+
+- US equities top-of-book for the ETFs' home exchanges (the "US Securities Snapshot
+  and Futures Value Bundle" covers NYSE/ARCA/NASDAQ for retail accounts);
+- **OPRA** (US options) — without it there are no live option quotes at all.
+
+Check `python cli.py ramp` after purchase: the `IB notices:` line in the cycle summary
+must read `none` under type 1. If it reports 10089/10091 under type 1 the label will
+say **UNEXPECTED — NOT delivered**; that means an entitlement is missing.
+
+### 10.4 The checklist (operator actions — none can be done by a model)
+
+1. Fund the live account. Decide the tier-1 cap is money you are content to lose.
+2. Buy the entitlements in §10.3 on the live login.
+3. `config/config.yaml`: `mode: live`, `brokers.execution: ibkr_live`,
+   `brokers.ibkr_live_port: 4001`, `brokers.ibkr_live_market_data_type: 1`,
+   `go_live.ramp_tier: 1`. Leave `ibkr_market_data_type: 3` — it is paper's.
+4. Choose §10.2 option A or B and set the live Gateway up accordingly (IBC config
+   points at the live login; `TradingMode=live`).
+5. `python cli.py ramp` — six of seven gates should read ✅; the seventh
+   (`session_confirmation`) is typed at arming time. Fix any ❌ before proceeding.
+6. Passphrase the SSH key; confirm the API bind is localhost-only (§9).
+7. On the day: write `~/.aistudios/LIVE_ENABLED` with today's date; run
+   `python cli.py go-live` **in a real terminal** and type the phrase it shows.
+8. Watch the first cycle. `python cli.py status` should show `MODE: LIVE`; the
+   heartbeat body should show `IB notices: none`. The first fill's slippage is
+   the number this whole project has been waiting for.
+9. Stand down any time with `python cli.py go-paper`. A KILL, a freeze, a crashed
+   cycle, or persistent drift resets the clean-day clock (§05 §1.3) — that is
+   the system working, not a reason to skip it.
+

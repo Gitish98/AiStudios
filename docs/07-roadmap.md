@@ -250,7 +250,7 @@ spend or the operational weight (`docs/02` §3.2, `docs/06` §1.2):
 | **2** | Claude + MCP (read/rank only) | Paper | 1 | Alpaca paper | Degraded-mode safe; no order-capable tool exists |
 | **3** | All 3 engines + 2nd broker | Paper | A, B, C | Alpaca + Tradier | Formulas tested; de-confliction + dual-adapter pass |
 | **4** | Out-of-sample validation | Paper | per-engine | — | ≥60 OOS days, **positive after-cost expectancy** |
-| **5** | Guarded small-size live ramp | **Live (gated)** | graduated only | + live | All 5 gate conditions enforced; ramp clamps; kill works |
+| **5** | Guarded small-size live ramp | **Live (gated)** | tier 1: validation (pre-graduation permitted); tier ≥2: graduated + prior-tier live evidence | + live | All 7 gate conditions enforced; ramp clamps; kill works |
 
 *Last reviewed: 2026-06-30. A phase ships on its exit criteria, not on "it runs." Default is paper;
 most strategies should never reach Phase 5, and that is the system working. Research/operations tool,

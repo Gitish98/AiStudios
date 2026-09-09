@@ -248,11 +248,41 @@ America/Toronto, grace 2h), email path tested end-to-end incl. a deliberate
 failure; `.healthcheck_url` was documented as gitignored but never was — fixed.
 362 tests.
 
+**Session 2026-09-08 (later) — the November tier-1 plan, and the ramp that had no
+evidence (commit below):** operator decision: **November = tier-1 live
+VALIDATION** ($250/position, 2 positions), NOT full deployment; "the money"
+follows evidence. Preparing for it found: `ramp_advancement_status` had NO
+CALLER — nothing computed `clean_days`, nothing computed live-only metrics,
+`ready_to_advance` was surfaced nowhere; the docs' "graduated only" was enforced
+by no code; and the factory built `GoLiveGate(config)` WITHOUT the store.
+
+Built: `core/ramp.py` (evidence engine), gate **#7 `graduated`** (tier 1 passes
+as validation; tier ≥2 needs a graduated paper record AND tier N−1's live
+evidence, fail-closed without a store), `cli.py ramp` (the seven gates read-only
++ evidence), a dashboard *Live ramp* card, docs/05 §1.3–1.4, docs/00, docs/07,
+and **docs/10 §10 — the operator's November checklist** (the one-session wall,
+entitlements on the LIVE login, nine steps no model can do).
+
+The first ramp.py was reviewed by 20 agents: **14 confirmed, every one an
+OVERSTATEMENT of evidence** — tier attribution by first-arming date (10 clean
+tier-1 days counted as tier-2's), timeout-killed cycles counted as clean days,
+kill-engaged and frozen days counted as clean, `--asof` replays padded the
+count, defaults instead of the configured cost model, a swallowed journal read
+== "zero breaches", the auto-kill path never journaled, and the factory/store
+gap that made tier ≥2 unreachable while `go-live` printed LIVE ARMED. All fixed,
+each with a test. Rules now: evidence is attributed PER DAY to the tier ARMED
+that day; a day counts only if every live cycle completed with kill off and
+nothing frozen and asof == its own ET date; unreadable evidence is reported as
+unavailable, never as clean. 388 tests.
+
+> **STANDING LESSON (5):** an evidence engine's failure modes all point one way —
+> optimistic. Review it for OVERSTATEMENT specifically, and make every
+> "could not read" an explicit "unavailable", never a zero.
+
 **Next, in priority:** (1) ~~activate the heartbeat~~ DONE 2026-09-08;
 (2) SPY/QQQ/IWM/DIA now have real 252-day IV ranks, so the paper ORDER path can fire
 as soon as a credit-ratio-worthy spread appears — watch for the first fill and verify
-the fill/slippage capture end-to-end; (3) operator live-validation of the ramp at
-tier 1; (4) XLK/XLF/XLE still bootstrap locally (~43 more sessions); (5) sector caps
+the fill/slippage capture end-to-end; (3) **operator live-validation at tier 1 — November 2026; checklist in docs/10 §10; `ais ramp` shows how close**; (4) XLK/XLF/XLE still bootstrap locally (~43 more sessions); (5) sector caps
 (needs GICS metadata) and `max_overnight_risk_at_event_pct` (needs the earnings date
 in RiskContext); (6) tighten the VM API bind to localhost, passphrase the SSH key
 before live. NOTE: cycles now take ~6 min (was ~90s) because chains stream with a
