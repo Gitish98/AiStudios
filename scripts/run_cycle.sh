@@ -34,11 +34,16 @@ HC_URL="$(cat "$REPO_DIR/.healthcheck_url" 2>/dev/null || true)"
 ping() {   # ping <suffix> [body-file] — best-effort, never fails the script
     [ -n "$HC_URL" ] || return 0
     local url="$HC_URL"; [ -n "${1:-}" ] && url="$HC_URL/$1"
+    local code
+    # Record the monitor's answer in the cron log. The ping used to be silent,
+    # which meant "did the heartbeat reach healthchecks?" could only be answered
+    # from inside the operator's account -- the one place the bot cannot look.
     if [ -n "${2:-}" ]; then
-        curl -fsS -m 15 --retry 3 --data-binary @"$2" "$url" >/dev/null 2>&1 || true
+        code="$(curl -sS -m 15 --retry 3 -o /dev/null -w "%{http_code}" --data-binary @"$2" "$url" 2>/dev/null || echo "curl-failed")"
     else
-        curl -fsS -m 15 --retry 3 "$url" >/dev/null 2>&1 || true
+        code="$(curl -sS -m 15 --retry 3 -o /dev/null -w "%{http_code}" "$url" 2>/dev/null || echo "curl-failed")"
     fi
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] heartbeat ping ${1:-success} -> ${code}"
 }
 
 ping start
