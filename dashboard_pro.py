@@ -64,9 +64,17 @@ def _equity_curve(closed: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _closed_summary(closed: list[dict[str, Any]]) -> dict[str, Any]:
-    count = len(closed)
-    wins = sum(1 for p in closed if _num(p.get("realized_pnl")) > 0)
-    net = round(sum(_num(p.get("realized_pnl")) for p in closed), 2)
+    # One position is one trade: a close booked in tranches ("<parent>#partN")
+    # is one decision. Group exactly as core.performance does, or the page
+    # reports two trade counts for one book.
+    groups: dict[str, float] = {}
+    for i, p in enumerate(closed):
+        coid = p.get("client_order_id")
+        key = str(coid).split("#part")[0] if coid else f"row:{p.get('id', i)}"
+        groups[key] = groups.get(key, 0.0) + _num(p.get("realized_pnl"))
+    count = len(groups)
+    wins = sum(1 for v in groups.values() if v > 0)
+    net = round(sum(groups.values()), 2)
     win_rate = round(100.0 * wins / count, 1) if count else 0.0
     by_reason: dict[str, int] = {}
     for p in closed:

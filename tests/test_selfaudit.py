@@ -564,3 +564,25 @@ def test_audit_brief_is_compact_and_carries_no_dollar_figures():
     assert "$" not in out, f"brief must carry no dollar figures: {out}"
     assert "unmeasured_entry_fill(high)" in out
     assert rc == 2, "a high finding must exit non-zero so a monitor can act"
+
+
+
+def test_disk_low_is_reported_by_severity_and_quiet_when_fine():
+    """A full disk makes SQLite stop recording, silently. That is the worst
+    kind of silence, so it is an invariant."""
+    from collections import namedtuple
+    from unittest import mock
+    from core.selfaudit import _check_disk_space
+    Usage = namedtuple("Usage", "total used free")
+    with tempfile.TemporaryDirectory() as td:
+        store = Store(Path(td) / "p.db")
+        with mock.patch("shutil.disk_usage", return_value=Usage(10e9, 9.7e9, 0.3e9)):
+            crit = _check_disk_space(store)
+        with mock.patch("shutil.disk_usage", return_value=Usage(10e9, 8.5e9, 1.5e9)):
+            high = _check_disk_space(store)
+        with mock.patch("shutil.disk_usage", return_value=Usage(50e9, 5e9, 45e9)):
+            fine = _check_disk_space(store)
+        store.close()
+    assert crit and crit[0].severity == "critical"
+    assert high and high[0].severity == "high"
+    assert fine == []

@@ -115,6 +115,11 @@ class CostModel:
         contracts = int(p.get("contracts") or 1)
         width = p.get("width")
         total = measured = 0.0
+        # A SIM fill's 0.0 slip is the simulator's construction, not evidence.
+        if str(p.get("fill_mode") or "") == "sim":
+            return 0.0, self.position_cost(p.get("structure", "put_credit_spread"),
+                                           int(p.get("contracts") or 1), exit_reason,
+                                           None, None, width)
         e_ok = plausible_slip_ps(p.get("entry_slip_ps"), width)
         c = self.order_cost(legs, contracts, p.get("entry_slip_ps") if e_ok else None)
         total += c

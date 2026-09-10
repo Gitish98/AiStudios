@@ -21,10 +21,10 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from .brokers.base import BrokerAdapter, OrderRequest, Position
-from .fills import (entry_slippage_ps, net_debit_from_positions,
-                    signed_credit_ps, signed_intent_ps)
+from .fills import (_usable, combo_fill_from_executions, entry_slippage_ps,
+                    net_debit_from_positions, signed_credit_ps, signed_intent_ps)
 from .options_math import MIN_IV_OBSERVATIONS
-from .manage import _is_filled, manage_open_positions
+from .manage import _executions_for, _is_filled, _orders_by_attempt, manage_open_positions
 from .positions import order_to_position
 from .reconcile import broker_legs, reconcile
 from .risk import Decision, RiskContext, RiskGate, RiskLimits, _notional
@@ -507,6 +507,18 @@ def run_cycle(
                             "pending operator review (cli.py unfreeze)"})
 
     summary["duration_secs"] = round(time.monotonic() - _t0, 1)
+    # Journal today's execution report so the finalizers keep a durable copy
+    # past IB's nightly reset. The report is day-scoped; the journal is not.
+    # Never on sim, which has no report; never fatal.
+    try:
+        if getattr(adapter, "name", "") != "sim":
+            _ex = adapter.get_executions() or []
+            if _ex:
+                store.append(_now_iso(), "executions_snapshot", {
+                    "source": "get_executions", "asof": asof, "count": len(_ex),
+                    "fills": [dict(vars(e)) for e in _ex]})
+    except Exception:
+        pass
     summary["ib_notices"] = _notices.census()
     summary["ib_market_data_type"] = getattr(adapter, "market_data_type", None)
     store.append(_now_iso(), "cycle_end", {
@@ -793,6 +805,30 @@ def _capture_entry_fill_from_book(p: dict, units: int, store: Store,
     return slip
 
 
+def _capture_entry_fill_from_executions(p: dict, store: Store, adapter) -> Optional[float]:
+    """The ENTRY price from the execution report — the exact fill, not a
+    reconstruction from average costs. Returns the adverse slippage per share,
+    or None when the report does not carry this order (day-scoped; the
+    positions-feed reconstruction is the fallback for that)."""
+    coid = str(p.get("client_order_id") or "")
+    if not coid:
+        return None
+    try:
+        cf = combo_fill_from_executions(_executions_for(adapter, store, coid), coid)
+    except Exception:
+        return None
+    if not cf:
+        return None
+    fill_ps = signed_credit_ps(cf[1])
+    intended = signed_intent_ps(p.get("entry_credit_ps"),
+                                bool(p.get("is_credit", 1)), closing=False)
+    if fill_ps is None or intended is None:
+        return None
+    slip = round(intended - fill_ps, 4)
+    store.record_entry_fill(p["id"], fill_ps, slip)
+    return slip
+
+
 def _backfill_missing_entry_fills(adapter: BrokerAdapter, store: Store) -> None:
     """Self-heal: any OPEN position whose entry price was never captured, while
     the broker still holds its legs.
@@ -818,7 +854,9 @@ def _backfill_missing_entry_fills(adapter: BrokerAdapter, store: Store) -> None:
         units = int(p.get("contracts") or 0)
         if units <= 0:
             continue
-        slip = _capture_entry_fill_from_book(p, units, store, adapter)
+        slip = _capture_entry_fill_from_executions(p, store, adapter)
+        if slip is None:
+            slip = _capture_entry_fill_from_book(p, units, store, adapter)
         if slip is not None:
             store.append(_now_iso(), "entry_fill_backfilled", {
                 "position_id": p["id"], "underlying": p["underlying"],
@@ -859,7 +897,7 @@ def _finalize_pending_entries(adapter: BrokerAdapter, store: Store) -> None:
     if getattr(adapter, "name", "") == "sim":
         return
     try:
-        bro = {o.client_order_id: o for o in adapter.list_orders()}
+        bro = _orders_by_attempt(store, adapter.list_orders())
     except Exception:
         return  # can't confirm -> leave pending (still counted for risk)
     # Broker POSITIONS are the durable truth: unlike the session-scoped order
@@ -889,11 +927,17 @@ def _finalize_pending_entries(adapter: BrokerAdapter, store: Store) -> None:
                 # what we paid. Reconstruct it HERE: this branch is the common
                 # case for a cron, and it used to journal entry_slip_ps: null
                 # while the numbers sat available at the broker.
-                slip = _capture_entry_fill_from_book(
-                    p, int(p.get("contracts") or 0), store, adapter)
+                # The execution report has the exact fill; the positions feed's
+                # average cost is the reconstruction we fall back to.
+                slip = _capture_entry_fill_from_executions(p, store, adapter)
+                via = "executions"
+                if slip is None:
+                    slip = _capture_entry_fill_from_book(
+                        p, int(p.get("contracts") or 0), store, adapter)
+                    via = "broker_positions"
                 store.append(_now_iso(), "entry_filled", {
                     "position_id": p["id"], "underlying": p["underlying"],
-                    "via": "broker_positions", "entry_slip_ps": slip,
+                    "via": via, "entry_slip_ps": slip,
                     "note": "order feed no longer had it; legs confirmed held"})
             elif any_held:
                 # Some legs held. FIRST ask whether they form COMPLETE units of
@@ -925,13 +969,21 @@ def _finalize_pending_entries(adapter: BrokerAdapter, store: Store) -> None:
         st = (o.status or "").lower()
         if _is_filled(o, 1):
             store.set_position_status(p["id"], "open")
-            # Capture realized ENTRY economics now — IB's fill feed is session-
-            # scoped, so this price is unrecoverable after today.
-            slip = entry_slippage_ps(p.get("entry_credit_ps"), o.filled_avg_price,
+            # IB reports Filled with avgFillPrice=0.0 for an order reconstructed
+            # in a new process. The execution report still has the real price.
+            fill_px, via = o.filled_avg_price, "order_feed"
+            if _usable(fill_px) is None:
+                cf = combo_fill_from_executions(
+                    _executions_for(adapter, store, p["client_order_id"]),
+                    p["client_order_id"])
+                if cf:
+                    fill_px, via = cf[1], "order_feed+executions"
+            slip = entry_slippage_ps(p.get("entry_credit_ps"), fill_px,
                                      bool(p.get("is_credit", 1)))
-            store.record_entry_fill(p["id"], signed_credit_ps(o.filled_avg_price), slip)
+            store.record_entry_fill(p["id"], signed_credit_ps(fill_px), slip)
             store.append(_now_iso(), "entry_filled", {"position_id": p["id"],
                                                        "underlying": p["underlying"],
+                                                       "via": via,
                                                        "entry_slip_ps": slip})
         elif st in DEAD_ORDER_STATUSES:
             # Reconcile the orders table too, or has_order keeps the deterministic

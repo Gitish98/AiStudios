@@ -289,6 +289,15 @@ class Store:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def _fill_mode(self) -> str:
+        """paper | live | sim. The SIM adapter fills every order at its limit
+        by construction, so its slippage is exactly 0.0 — a fact about the
+        simulator, not a measurement. Stamping those rows 'sim' lets the cost
+        model refuse to count them as evidence (second-round review)."""
+        if (self.get_kv("broker") or "") == "sim":
+            return "sim"
+        return self.get_kv("mode") or "paper"
+
     def record_entry_fill(self, pos_id: int, fill_ps: Optional[float],
                           slip_ps: Optional[float]) -> None:
         """Persist realized ENTRY execution. Called the moment a fill is observed —
@@ -298,7 +307,7 @@ class Store:
         self.conn.execute(
             "UPDATE positions SET entry_fill_ps = ?, entry_slip_ps = ?, "
             "fill_mode = COALESCE(fill_mode, ?) WHERE id = ?",
-            (fill_ps, slip_ps, self.get_kv("mode") or "paper", pos_id))
+            (fill_ps, slip_ps, self._fill_mode(), pos_id))
         self.conn.commit()
 
     def record_exit_fill(self, pos_id: int, fill_ps: Optional[float],
@@ -309,7 +318,7 @@ class Store:
         self.conn.execute(
             "UPDATE positions SET exit_fill_ps = ?, exit_slip_ps = ?, "
             "fill_mode = COALESCE(fill_mode, ?) WHERE id = ?",
-            (fill_ps, slip_ps, self.get_kv("mode") or "paper", pos_id))
+            (fill_ps, slip_ps, self._fill_mode(), pos_id))
         self.conn.commit()
 
     def record_mark(self, pos_id: int, mark_ps: Optional[float],
@@ -371,6 +380,89 @@ class Store:
             "UPDATE positions SET status='open', contracts=?, max_loss=? WHERE id=?",
             (int(filled_contracts), round(float(row["max_loss"] or 0.0) * scale, 2), pos_id))
         self.conn.commit()
+
+    def split_closed_units(self, pos_id: int, units: int, closed_asof: str,
+                           closed_ts: str, exit_reason: str, exit_value_ps: float,
+                           realized_pnl: float, exit_fill_ps=None,
+                           exit_slip_ps=None) -> Optional[int]:
+        """Book `units` of an OPEN position as a CLOSED row of their own and
+        shrink the original to the remainder. Returns the new row's id, or None
+        when `units` is not strictly inside (0, contracts).
+
+        For a partially filled close. Before 2026-09-09 the closed portion was
+        journaled and discarded — 'no recoverable fill price' — so six contracts
+        closed at a small profit would have vanished from the record while the
+        account kept the money. The execution report has the price; this books
+        it. The closed row carries the measured exit; the remainder keeps being
+        managed as the same position with a smaller size."""
+        row = self.conn.execute("SELECT * FROM positions WHERE id = ?", (pos_id,)).fetchone()
+        if row is None:
+            return None
+        total = int(row["contracts"] or 0)
+        units = int(units)
+        if units <= 0 or units >= total:
+            return None
+        d = dict(row)
+        d.pop("id", None)
+        scale = units / float(total)
+        base_max = float(row["max_loss"] or 0.0)
+        d.update({
+            "status": "closed", "contracts": units,
+            "max_loss": round(base_max * scale, 2),
+            "closed_asof": closed_asof, "closed_ts": closed_ts,
+            "exit_reason": exit_reason, "exit_value_ps": exit_value_ps,
+            "realized_pnl": realized_pnl,
+            "exit_fill_ps": exit_fill_ps, "exit_slip_ps": exit_slip_ps,
+            # A distinct id so order dedup and overlap checks never see two rows
+            # claiming one order; the suffix keeps the parentage legible.
+            "client_order_id": f"{d.get('client_order_id') or ''}#part{units}",
+            "fill_mode": d.get("fill_mode") or (self.get_kv("mode") or "paper"),
+        })
+        cols = list(d.keys())
+        cur = self.conn.execute(
+            f"INSERT INTO positions ({','.join(cols)}) VALUES ({','.join('?' * len(cols))})",
+            tuple(d[c] for c in cols))
+        new_id = cur.lastrowid
+        remaining = total - units
+        self.conn.execute(
+            "UPDATE positions SET contracts = ?, max_loss = ? WHERE id = ?",
+            (remaining, round(base_max * remaining / float(total), 2), pos_id))
+        self.conn.commit()
+        return new_id
+
+    def book_closed_units_already_resized(self, pos_id: int, units: int, closed_asof: str,
+                                          closed_ts: str, exit_reason: str,
+                                          exit_value_ps, realized_pnl: float,
+                                          exit_fill_ps=None, exit_slip_ps=None) -> Optional[int]:
+        """Book `units` as a closed row for a position that was ALREADY resized
+        to its remainder (a partial adopted without a price, priced later). The
+        original row is untouched. Refuses if a '#part<units>' row for this
+        parent already exists."""
+        row = self.conn.execute("SELECT * FROM positions WHERE id = ?", (pos_id,)).fetchone()
+        if row is None or int(units) <= 0:
+            return None
+        d = dict(row)
+        d.pop("id", None)
+        parent = str(d.get("client_order_id") or "")
+        suffix = f"{parent}#part{int(units)}"
+        if self.conn.execute("SELECT 1 FROM positions WHERE client_order_id = ?", (suffix,)).fetchone():
+            return None
+        n_rem = int(row["contracts"] or 0)
+        per_unit_max = (float(row["max_loss"] or 0.0) / n_rem) if n_rem else 0.0
+        d.update({"status": "closed", "contracts": int(units),
+                  "max_loss": round(per_unit_max * int(units), 2),
+                  "closed_asof": closed_asof, "closed_ts": closed_ts,
+                  "exit_reason": exit_reason, "exit_value_ps": exit_value_ps,
+                  "realized_pnl": realized_pnl,
+                  "exit_fill_ps": exit_fill_ps, "exit_slip_ps": exit_slip_ps,
+                  "client_order_id": suffix,
+                  "fill_mode": d.get("fill_mode") or self._fill_mode()})
+        cols = list(d.keys())
+        cur = self.conn.execute(
+            f"INSERT INTO positions ({','.join(cols)}) VALUES ({','.join('?' * len(cols))})",
+            tuple(d[c] for c in cols))
+        self.conn.commit()
+        return cur.lastrowid
 
     def set_position_status(self, pos_id: int, status: str) -> None:
         self.conn.execute("UPDATE positions SET status = ? WHERE id = ?", (status, pos_id))

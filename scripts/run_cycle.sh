@@ -67,6 +67,7 @@ fi
 #
 # It is also deliberately money-free. This body leaves the VM for a third party;
 # "go look" is as actionable as publishing equity and P&L, and safer.
+AUDIT_LINE="$("$PY" cli.py audit --brief 2>&1)"; AUDIT_RC=$?
 SUMMARY="$(mktemp)"
 {
     echo "cycle $(date -u +%Y-%m-%dT%H:%M:%SZ) exit=$RC"
@@ -77,9 +78,10 @@ SUMMARY="$(mktemp)"
     # The book's own invariants. A cycle can SUCCEED while the records it
     # produced are incoherent -- an unmeasured fill is exactly that -- and that
     # question has to leave the VM, not just land in the journal. It does NOT
-    # change $RC: an open question about the book is not a failed cycle, and
-    # conflating them makes a real cycle failure harder to see.
-    "$PY" cli.py audit --brief 2>&1 || true
+    # change $RC (an open question about the book is not a failed cycle), but a
+    # HIGH or CRITICAL finding does flip the heartbeat to /fail below, because a
+    # finding that only rides in a green ping's body is a finding nobody reads.
+    echo "$AUDIT_LINE"
     # Delayed-data entitlement notices are counted by the cycle itself and
     # printed as one line (core/ib_noise.py). Anything ELSE that still prints
     # as an IB Error is unfiltered by design -- an unclassified code must stay
@@ -100,8 +102,19 @@ SUMMARY="$(mktemp)"
     [ -n "$ERRS" ] && echo "ib_errors(unclassified): $ERRS"
 } > "$SUMMARY" 2>&1
 
-# Report the exit code to the monitor. /<n> marks failure on healthchecks.io.
-ping "$RC" "$SUMMARY"
+# Report to the monitor. /<n> marks failure on healthchecks.io. A clean cycle
+# with an URGENT audit finding is reported as a failure too -- the cycle ran,
+# but the book has a question the operator must see today, and an email is the
+# only channel that reaches a phone. $RC itself is untouched.
+# CRITICAL only: a HIGH finding can persist for days (a partial close waiting
+# on a snapshot), and a check that is "down" for a week stops notifying about
+# the real failure that happens inside that week. HIGH rides in the body.
+PING_SUFFIX="$RC"
+if [ "$RC" -eq 0 ] && [ "${AUDIT_RC:-0}" -ge 3 ]; then
+    PING_SUFFIX="fail"
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] audit is CRITICAL -> heartbeat reports failure"
+fi
+ping "$PING_SUFFIX" "$SUMMARY"
 rm -f "$SUMMARY"
 rm -f "$LOG"
 exit "$RC"

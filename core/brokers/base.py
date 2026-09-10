@@ -43,6 +43,33 @@ class Position:
 
 
 @dataclass
+class Execution:
+    """One fill from the broker's EXECUTION REPORT (IB: reqExecutions).
+
+    Found 2026-09-09: IB's `trades()`/order feed is session-scoped — a fill that
+    happened in another process shows `status=Filled, filled=0.0` — but the
+    day's execution report is ACCOUNT-scoped across client ids. Six contracts
+    closed at 0.39 that the order feed reported as `filled 0.0` were all there,
+    with prices, under a different clientId. This is the durable source for
+    "what did we actually pay", and it also carries the exact quantity.
+
+    For a combo (spread) order IB reports one BAG row per fill with the NET
+    per-share price in IB's sign convention (negative = credit received), plus
+    one row per leg. Consumers should net the BAG rows; re-deriving from legs
+    invites the partial-structure error the leg matcher once had."""
+    exec_id: str
+    time: str                    # ISO 8601
+    local_symbol: str
+    sec_type: str                # "BAG" for a combo fill, "OPT"/"STK" for a leg
+    side: str                    # BOT | SLD
+    qty: float
+    price: float                 # BAG: signed net per share; leg: per share
+    order_id: str = ""
+    client_order_id: str = ""    # IB orderRef -> our client_order_id
+    client_id: int = 0
+
+
+@dataclass
 class Quote:
     symbol: str
     bid: float
@@ -164,6 +191,13 @@ class BrokerAdapter(abc.ABC):
 
     @abc.abstractmethod
     def list_orders(self) -> list[OrderResult]: ...
+
+    def get_executions(self) -> list[Execution]:
+        """Today's fills for the ACCOUNT (not just this session). Default: none —
+        a broker that cannot report executions must not pretend to; callers fall
+        back to the order feed and the positions feed, and stay honest about
+        what they could not measure."""
+        return []
 
     @abc.abstractmethod
     def cancel_order(self, broker_order_id: str) -> bool: ...

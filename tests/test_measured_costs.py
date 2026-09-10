@@ -92,7 +92,12 @@ def test_implausible_slippage_is_REJECTED_not_believed():
     assert plausible_slip_ps(0.52, 1.0) is True         # bad but not impossible
     assert plausible_slip_ps(1.60, 1.0) is False        # exceeds the width
     assert plausible_slip_ps(None, 1.0) is False
-    assert plausible_slip_ps(0.0, 1.0) is False         # 0.0 is NO DATA, not zero
+    # 0.0 IS a measurement here. "0.0 means no data" is the rule for a BROKER
+    # PRICE (fills._usable enforces it where prices enter); a STORED slip can
+    # only be 0.0 if a real fill matched the intent exactly — record_*_fill
+    # writes NULL, never 0.0, when the price was unusable. Rejecting it charged
+    # every perfect fill with modeled slippage (preflight review, 2026-09-09).
+    assert plausible_slip_ps(0.0, 1.0) is True
 
     bad = {"structure": "put_credit_spread", "contracts": 5, "width": 1.0,
            "entry_slip_ps": 2.5, "exit_slip_ps": None}

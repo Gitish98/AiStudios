@@ -530,8 +530,11 @@ def cmd_audit(args):
             print(f"audit: {len(findings)} finding(s) worst={findings[0].severity} :: "
                   + " ".join(f"{f.code}({f.severity})" for f in findings))
         store.close()
-        return 2 if (findings and
-                     SEV_ORDER.get(findings[0].severity, 9) <= SEV_ORDER["high"]) else 0
+        # 3 = CRITICAL (pages), 2 = HIGH (rides in the body), 0 = otherwise.
+        if not findings:
+            return 0
+        w = findings[0].severity
+        return 3 if w == "critical" else (2 if w == "high" else 0)
 
     print("─" * 56)
     print("  SELF-AUDIT  (our records vs what we believe about them)")
@@ -557,8 +560,8 @@ def cmd_audit(args):
     worst = findings[0].severity
     print(f"  {len(findings)} finding(s); worst severity: {worst.upper()}")
     store.close()
-    # Exit non-zero on anything urgent so a cron/monitor can act on it.
-    return 2 if SEV_ORDER.get(worst, 9) <= SEV_ORDER["high"] else 0
+    # 3 = CRITICAL, 2 = HIGH, 0 otherwise -- so a monitor can act by degree.
+    return 3 if worst == "critical" else (2 if worst == "high" else 0)
 
 
 def cmd_export_trades(args):
@@ -775,6 +778,54 @@ def cmd_ramp(args):
     store.close()
 
 
+def cmd_snapshot_executions(args):
+    """Journal today's execution report. Read-only against the broker.
+
+    The per-cycle snapshot is taken at cycle END, so a close placed by the
+    15:30 cycle that fills at 15:48 is never captured before IB's nightly reset
+    empties the day's report — and the next morning's finalizer finds nothing.
+    Run this after the close (cron 17:00 ET) so the last fills of the day are
+    on disk before the reset."""
+    from core.brokers.factory import build_execution_adapter
+    config = load_config()
+    store = Store()
+    try:
+        build = build_execution_adapter(config, store=store)
+        adapter = build.adapter
+        if getattr(adapter, "name", "") == "sim":
+            # A configured sim has nothing to snapshot (exit 0). A DEGRADED sim
+            # means the Gateway did not answer -- the day's fills are about to
+            # be lost at the reset, and this is the only job that saves them.
+            exec_cfg = str((config.brokers or {}).get("execution", "")).lower()
+            if getattr(build, "degraded", False) or exec_cfg.startswith("ibkr"):
+                print("  could not reach the broker (degraded sim) -- NOTHING snapshotted")
+                store.append(datetime.now(timezone.utc).isoformat(), "executions_unreadable",
+                             {"source": "cli snapshot-executions", "error": str(build.note)[:200]})
+                return 1
+            print("  sim adapter — no execution report to snapshot")
+            return 0
+        try:
+            execs = adapter.get_executions() or []
+        finally:
+            try:
+                adapter.disconnect()
+            except Exception:
+                pass
+        if not execs:
+            print("  no executions reported today")
+            return 0
+        store.append(datetime.now(timezone.utc).isoformat(), "executions_snapshot", {
+            "source": "cli snapshot-executions", "count": len(execs),
+            "fills": [dict(vars(e)) for e in execs]})
+        print(f"  journaled executions_snapshot with {len(execs)} fill(s)")
+        return 0
+    except Exception as e:                        # noqa: BLE001 — report, never traceback
+        print(f"  could not snapshot executions: {e}")
+        return 1
+    finally:
+        store.close()
+
+
 def cmd_go_paper(args):
     """Instantly disarm LIVE — clear the armed marker so the factory immediately
     stops building a live adapter and falls back to paper."""
@@ -838,6 +889,7 @@ def main():
     sub.add_parser("clear-kill", help="Clear the kill switch").set_defaults(func=cmd_clear_kill)
     sub.add_parser("go-live", help="arm LIVE for today (interactive five-gate check)").set_defaults(func=cmd_go_live)
     sub.add_parser("go-paper", help="stand LIVE back down instantly (back to paper)").set_defaults(func=cmd_go_paper)
+    sub.add_parser("snapshot-executions", help="Journal today's broker execution report (run after the close, before IB's nightly reset)").set_defaults(func=cmd_snapshot_executions)
     sub.add_parser("ramp", help="Where the live ramp stands: the seven gates (read-only) + clean days + live-only evidence").set_defaults(func=cmd_ramp)
 
     args = p.parse_args()

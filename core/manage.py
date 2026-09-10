@@ -14,7 +14,8 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from .brokers.base import BrokerAdapter, OrderLeg, OrderRequest
-from .fills import exit_slippage_ps, signed_credit_ps
+from .fills import (_usable, combo_fill_from_executions, exit_slippage_ps,
+                    signed_credit_ps)
 from .exdiv import exdiv_risk
 from .positions import ManageParams, dte_from, evaluate_exit
 from .store import DEAD_ORDER_STATUSES, Store
@@ -338,6 +339,152 @@ def _save_pending(store: Store, d: dict) -> None:
     store.set_kv("pending_closes", json.dumps(d))
 
 
+def _orders_by_attempt(store: Store, results: list) -> dict:
+    """{client_order_id: OrderResult} choosing THE CURRENT ATTEMPT when several
+    feed rows share a coid.
+
+    A close's coid is reused by every re-placement, and after IB's nightly
+    reset the feed can list yesterday's Cancelled attempt AND today's working
+    one under the same orderRef. A last-wins dict picked whichever the library
+    listed last — the dead one — so the finalizer would release the LIVE close
+    and the next pass would place a third one: eight contracts of close against
+    four held (second-round review, 2026-09-09). Prefer the row whose
+    broker_order_id equals the orders table's (the attempt we placed last);
+    then a non-dead row; then whatever is left."""
+    want: dict = {}
+    try:
+        for r in store.conn.execute("SELECT client_order_id, broker_order_id FROM orders"):
+            want[str(r["client_order_id"])] = str(r["broker_order_id"] or "").strip()
+    except Exception:
+        want = {}
+    out: dict = {}
+    for o in results or []:
+        coid = str(getattr(o, "client_order_id", "") or "")
+        cur = out.get(coid)
+        if cur is None:
+            out[coid] = o
+            continue
+        w = want.get(coid, "")
+        o_is_current = bool(w) and str(getattr(o, "broker_order_id", "") or "").strip() == w
+        c_is_current = bool(w) and str(getattr(cur, "broker_order_id", "") or "").strip() == w
+        if o_is_current and not c_is_current:
+            out[coid] = o
+        elif o_is_current == c_is_current:
+            o_dead = (getattr(o, "status", "") or "").lower() in DEAD_ORDER_STATUSES
+            c_dead = (getattr(cur, "status", "") or "").lower() in DEAD_ORDER_STATUSES
+            if c_dead and not o_dead:
+                out[coid] = o
+    return out
+
+
+def _executions_for(adapter, store: Store, coid: str) -> list:
+    """Executions for ONE ATTEMPT of one order.
+
+    Sources: the broker's live report first, then the journaled
+    `executions_snapshot` rows (the live report is day-scoped and empties at
+    IB's nightly reset; a snapshot journaled that day survives it). Deduped by
+    exec_id. Reads both snapshot shapes: the hand-journaled 2026-09-09 one
+    (`order_ref`) and the per-cycle one (`client_order_id`).
+
+    SCOPED TO THE ATTEMPT, not the coid. A close's client_order_id is
+    `CLOSE-<entry coid>` and is REUSED by every re-placement (the escalation
+    ladder, and the remainder after a partial), so "all fills with this
+    orderRef" would net the first tranche's fills into the next attempt's price
+    — earlier, better fills diluting a later, worse one: an OPTIMISTIC error the
+    width bound cannot catch (preflight review, 2026-09-09). The orders table
+    holds the CURRENT attempt's IB orderId (`broker_order_id`, overwritten on
+    each placement), and every execution carries its orderId. Match on that;
+    fall back to "executed at/after this attempt's placement time" only when
+    no orderId was recorded; with neither, report nothing — absence, not a
+    blend.
+
+    Malformed snapshot rows (not a dict, missing qty/price) are SKIPPED, never
+    coerced to 0.0: one fabricated zero-price fill would drag the average and
+    be booked as measured. Never raises: a measurement helper must not be able
+    to abort a cycle."""
+    from .brokers.base import Execution
+    try:
+        orow = store.conn.execute(
+            "SELECT broker_order_id, ts FROM orders WHERE client_order_id = ?",
+            (str(coid or ""),)).fetchone()
+    except Exception:
+        orow = None
+    if orow is None:
+        return []
+    want_oid = str(orow["broker_order_id"] or "").strip()
+    placed_ts = str(orow["ts"] or "").replace(" ", "T")
+    if not want_oid and not placed_ts:
+        return []
+
+    def _mine(order_id: str, t: str) -> bool:
+        if want_oid:
+            return str(order_id or "").strip() == want_oid
+        return str(t or "").replace(" ", "T") >= placed_ts
+
+    seen: set = set()
+    out: list = []
+    try:
+        live = adapter.get_executions() or []
+    except Exception as e:                       # noqa: BLE001
+        live = []
+        try:
+            store.append(_now_iso(), "executions_unreadable",
+                         {"coid": str(coid), "error": str(e)[:200]})
+        except Exception:
+            pass
+    for e in live:
+        try:
+            if str(getattr(e, "client_order_id", "") or "") != str(coid or ""):
+                continue
+            if not _mine(getattr(e, "order_id", ""), getattr(e, "time", "")):
+                continue
+            xid = str(getattr(e, "exec_id", "") or "")
+            if xid and xid not in seen:
+                seen.add(xid)
+                out.append(e)
+        except Exception:
+            continue
+    try:
+        rows = store.conn.execute(
+            "SELECT payload FROM journal WHERE kind='executions_snapshot' "
+            "ORDER BY id DESC LIMIT 30").fetchall()
+    except Exception:
+        rows = []
+    for r in rows:
+        try:
+            fills = json.loads(r["payload"] or "{}").get("fills") or []
+        except Exception:
+            continue
+        if not isinstance(fills, list):
+            continue
+        for f in fills:
+            if not isinstance(f, dict):
+                continue
+            try:
+                ref = f.get("client_order_id") or f.get("order_ref") or ""
+                if str(ref) != str(coid or ""):
+                    continue
+                if not _mine(f.get("order_id", ""), f.get("time", "")):
+                    continue
+                xid = str(f.get("exec_id") or "")
+                if not xid or xid in seen:
+                    continue
+                q, px = f.get("qty"), f.get("price")
+                if q is None or px is None:
+                    continue                       # never coerce a hole to 0.0
+                out.append(Execution(
+                    exec_id=xid, time=str(f.get("time") or ""),
+                    local_symbol=str(f.get("local_symbol") or ""),
+                    sec_type=str(f.get("sec_type") or ""), side=str(f.get("side") or ""),
+                    qty=float(q), price=float(px),
+                    order_id=str(f.get("order_id") or ""), client_order_id=str(ref),
+                    client_id=int(f.get("client_id") or 0)))
+                seen.add(xid)
+            except (TypeError, ValueError):
+                continue
+    return out
+
+
 def _finalize_pending_closes(adapter: BrokerAdapter, store: Store, asof: str) -> dict:
     """A close accepted-but-not-yet-filled in a prior cycle is finalized here once
     the broker reports it filled — so we never mark a position closed (dropping its
@@ -353,7 +500,7 @@ def _finalize_pending_closes(adapter: BrokerAdapter, store: Store, asof: str) ->
     if getattr(adapter, "name", "") == "sim":
         return pend
     try:
-        bro = {o.client_order_id: o for o in adapter.list_orders()}
+        bro = _orders_by_attempt(store, adapter.list_orders())
     except Exception:
         return pend  # can't confirm -> leave pending, the position stays tracked
     # Broker POSITIONS are durable across sessions; the order feed is not.
@@ -366,6 +513,18 @@ def _finalize_pending_closes(adapter: BrokerAdapter, store: Store, asof: str) ->
     changed = False
     for pid, info in list(pend.items()):
         o = bro.get(info["coid"])
+        # A close the feed reports DEAD (Cancelled/Inactive/...) may have filled
+        # first: IB reports `Cancelled, filled=0.0` cross-process for a DAY order
+        # that filled 6 of 10 and expired at the close (observed 2026-09-09). The
+        # dead-order branch below used to release the row at FULL size and book
+        # nothing — and the next pass would have placed a 10-lot close against 4
+        # held legs, OPENING six reverse spreads. If the broker does not still
+        # hold every leg, the order is not merely dead: resolve it against the
+        # book exactly as if the feed had forgotten it.
+        if (o is not None and held is not None and held
+                and (o.status or "").lower() in DEAD_ORDER_STATUSES
+                and _close_leg_state(store, int(pid), held) != "all_held"):
+            o = None
         if o is None:
             # The close order has VANISHED from the broker (a DAY order that
             # expired unfilled, or a session roll). Skipping meant the position was
@@ -410,34 +569,78 @@ def _finalize_pending_closes(adapter: BrokerAdapter, store: Store, asof: str) ->
             elif state == "partial_units":
                 # The close filled PART of the position and then vanished from
                 # the feed. The remainder is a real, complete, defined-risk
-                # structure — resize to it and keep managing, exactly as the
-                # entry side adopts a partial fill. Booking a full close here
-                # would orphan the remainder; booking the filled part needs a
-                # fill price we do not have, so it is journaled rather than
-                # invented.
+                # structure — resize to it and keep managing, as the entry side
+                # adopts a partial fill. The CLOSED portion: before 2026-09-09
+                # it was journaled and discarded ("no recoverable fill price").
+                # The execution report has the price AND the quantity; when it
+                # agrees with the broker's book about how much closed, book those
+                # units as a measured close of their own. When it does not, the
+                # broker's book is truth and the price stays unbooked, loudly.
                 units = _held_close_units(store, int(pid), held)
-                was = int((store.conn.execute(
-                    "SELECT contracts FROM positions WHERE id = ?", (int(pid),)
-                ).fetchone() or {"contracts": 0})["contracts"] or 0)
-                store.adopt_partial_fill(int(pid), units)
+                row = store.conn.execute(
+                    "SELECT contracts, is_credit FROM positions WHERE id = ?",
+                    (int(pid),)).fetchone()
+                was = int((row or {"contracts": 0})["contracts"] or 0)
+                _ic = bool((row or {"is_credit": 1})["is_credit"])
+                closed_n = was - units
+                cf = combo_fill_from_executions(
+                    _executions_for(adapter, store, info["coid"]), info["coid"])
+                booked = None
+                if cf and closed_n > 0 and abs(cf[0] - closed_n) < 1e-9:
+                    per_unit = (float(info.get("realized_pnl") or 0.0) / float(was)) if was else 0.0
+                    booked = store.split_closed_units(
+                        int(pid), closed_n, asof, _now_iso(), info["reason"],
+                        info["exit_value_ps"], round(per_unit * closed_n, 2),
+                        exit_fill_ps=signed_credit_ps(cf[1]),
+                        exit_slip_ps=exit_slippage_ps(info["exit_value_ps"], cf[1], _ic))
                 del pend[pid]; changed = True
                 store.set_order_status(info["coid"], "canceled")
-                store.append(_now_iso(), "partial_close_adopted", {
-                    "position_id": int(pid), "was": was, "remaining": units,
-                    "severity": "high",
-                    "note": "close filled partially then vanished from the feed; "
-                            "resized to the units still held so the remainder stays "
-                            "managed. The closed portion has no recoverable fill "
-                            "price and is NOT booked as realized P&L."})
+                if booked:
+                    store.set_position_status(int(pid), "open")
+                    store.append(_now_iso(), "partial_close_booked", {
+                        "position_id": int(pid), "closed_row_id": int(booked),
+                        "was": was, "closed": closed_n, "remaining": units,
+                        "exit_fill_ps": signed_credit_ps(cf[1]),
+                        "exit_slip_ps": exit_slippage_ps(info["exit_value_ps"], cf[1], _ic),
+                        "via": "executions",
+                        "note": "closed units booked at the MEASURED price from the "
+                                "execution report; the remainder stays managed"})
+                else:
+                    store.adopt_partial_fill(int(pid), units)
+                    store.append(_now_iso(), "partial_close_adopted", {
+                        "position_id": int(pid), "was": was, "remaining": units,
+                        "coid": info["coid"], "reason": info.get("reason"),
+                        "exit_value_ps": info.get("exit_value_ps"),
+                        "realized_pnl_total": info.get("realized_pnl"),
+                        "executions_qty": (cf[0] if cf else None),
+                        "severity": "high",
+                        "note": "close filled partially then vanished from the feed; "
+                                "resized to the units still held. The closed portion's "
+                                "price was not in the execution report, or its quantity "
+                                "disagreed with the broker's book, so it is journaled, "
+                                "not invented, and NOT booked as realized P&L."})
             elif state == "none_held":
                 # THIS position's legs are gone (others may remain) => the close
                 # filled and the feed forgot. Price is the INTENDED one, unverified.
                 store.close_position(int(pid), asof, _now_iso(), info["reason"],
                                      info["exit_value_ps"], info["realized_pnl"])
+                # The feed forgot; the execution report may not have.
+                _ic = bool((store.conn.execute(
+                    "SELECT is_credit FROM positions WHERE id = ?", (int(pid),)
+                ).fetchone() or {"is_credit": 1})["is_credit"])
+                cf = combo_fill_from_executions(
+                    _executions_for(adapter, store, info["coid"]), info["coid"])
+                if cf:
+                    store.record_exit_fill(
+                        int(pid), signed_credit_ps(cf[1]),
+                        exit_slippage_ps(info["exit_value_ps"], cf[1], _ic))
                 store.append(_now_iso(), "position_closed", {
                     "position_id": int(pid), "reason": info["reason"],
-                    "realized_pnl": info["realized_pnl"], "via": "positions_confirm",
-                    "note": "fill price unverified (intended values; feed had no fill)"})
+                    "realized_pnl": info["realized_pnl"],
+                    "via": "positions_confirm+executions" if cf else "positions_confirm",
+                    "exit_slip_ps": (exit_slippage_ps(info["exit_value_ps"], cf[1], _ic) if cf else None),
+                    "note": ("exit price MEASURED from the execution report" if cf else
+                             "fill price unverified (intended values; feed had no fill)")})
                 del pend[pid]; changed = True
             else:
                 # 'partial' / 'unknown': one leg alive, one gone — the signature of
@@ -462,18 +665,25 @@ def _finalize_pending_closes(adapter: BrokerAdapter, store: Store, asof: str) ->
         if _is_filled(o, 1):
             store.close_position(int(pid), asof, _now_iso(), info["reason"],
                                  info["exit_value_ps"], info["realized_pnl"])
-            # Capture realized exit economics NOW — this feed is session-scoped.
             _ic = bool((store.conn.execute(
                 "SELECT is_credit FROM positions WHERE id = ?", (int(pid),)
             ).fetchone() or {"is_credit": 1})["is_credit"])
+            # IB reports status=Filled with avgFillPrice=0.0 for an order it
+            # reconstructed in a new process (ours, every cycle). The execution
+            # report still has the real price. Ask it before giving up.
+            fill_px, via = o.filled_avg_price, "pending_fill"
+            if _usable(fill_px) is None:
+                cf = combo_fill_from_executions(
+                    _executions_for(adapter, store, info["coid"]), info["coid"])
+                if cf:
+                    fill_px, via = cf[1], "pending_fill+executions"
             store.record_exit_fill(
-                int(pid), signed_credit_ps(o.filled_avg_price),
-                exit_slippage_ps(info["exit_value_ps"], o.filled_avg_price, _ic))
+                int(pid), signed_credit_ps(fill_px),
+                exit_slippage_ps(info["exit_value_ps"], fill_px, _ic))
             store.append(_now_iso(), "position_closed", {
                 "position_id": int(pid), "reason": info["reason"],
-                "realized_pnl": info["realized_pnl"], "via": "pending_fill",
-                "exit_slip_ps": exit_slippage_ps(info["exit_value_ps"],
-                                                 o.filled_avg_price, _ic)})
+                "realized_pnl": info["realized_pnl"], "via": via,
+                "exit_slip_ps": exit_slippage_ps(info["exit_value_ps"], fill_px, _ic)})
             del pend[pid]; changed = True
         elif st in DEAD_ORDER_STATUSES:
             store.set_order_status(info["coid"], "canceled")  # canonicalize the close order
@@ -481,6 +691,64 @@ def _finalize_pending_closes(adapter: BrokerAdapter, store: Store, asof: str) ->
     if changed:
         _save_pending(store, pend)
     return pend
+
+
+def _retry_unbooked_partials(adapter: BrokerAdapter, store: Store, asof: str) -> None:
+    """A partial close that was resized but NOT booked (no price at the time)
+    gets booked here once the execution report or a later snapshot carries its
+    fills. Without this the audit's remedy ("the finalizer can book it on the
+    next cycle") was a promise nobody kept (second-round review). Idempotent:
+    a position with a later partial_close_booked, or a closed row already
+    carrying the '#partN' suffix for that many units, is skipped."""
+    if getattr(adapter, "name", "") == "sim":
+        return
+    try:
+        rows = store.conn.execute(
+            "SELECT id, ts, payload FROM journal WHERE kind='partial_close_adopted' "
+            "ORDER BY id DESC LIMIT 20").fetchall()
+    except Exception:
+        return
+    for r in rows:
+        try:
+            p = json.loads(r["payload"] or "{}")
+            pid = int(p.get("position_id"))
+            coid = str(p.get("coid") or "")
+            was = int(p.get("was") or 0)
+            remaining = int(p.get("remaining") or 0)
+            closed_n = was - remaining
+            if not coid or closed_n <= 0:
+                continue
+            booked = store.conn.execute(
+                "SELECT 1 FROM journal WHERE kind='partial_close_booked' AND id > ? "
+                "AND payload LIKE ? LIMIT 1", (r["id"], f'%"position_id": {pid},%')).fetchone()
+            if booked:
+                continue
+            cf = combo_fill_from_executions(_executions_for(adapter, store, coid), coid)
+            if not cf or abs(cf[0] - closed_n) > 1e-9:
+                continue
+            row = store.conn.execute(
+                "SELECT is_credit FROM positions WHERE id = ?", (pid,)).fetchone()
+            if row is None:
+                continue
+            _ic = bool(row["is_credit"])
+            total = float(p.get("realized_pnl_total") or 0.0)
+            per_unit = total / float(was) if was else 0.0
+            new_id = store.book_closed_units_already_resized(
+                pid, closed_n, asof, _now_iso(), str(p.get("reason") or "partial_close"),
+                p.get("exit_value_ps"), round(per_unit * closed_n, 2),
+                exit_fill_ps=signed_credit_ps(cf[1]),
+                exit_slip_ps=exit_slippage_ps(p.get("exit_value_ps"), cf[1], _ic))
+            if new_id:
+                store.append(_now_iso(), "partial_close_booked", {
+                    "position_id": pid, "closed_row_id": int(new_id), "was": was,
+                    "closed": closed_n, "remaining": remaining,
+                    "exit_fill_ps": signed_credit_ps(cf[1]),
+                    "exit_slip_ps": exit_slippage_ps(p.get("exit_value_ps"), cf[1], _ic),
+                    "via": "executions_retry",
+                    "note": "closed units booked LATE at the measured price once the "
+                            "execution report / snapshot carried the fills"})
+        except Exception:
+            continue
 
 
 def manage_open_positions(adapter: BrokerAdapter, store: Store, config,
@@ -493,6 +761,7 @@ def manage_open_positions(adapter: BrokerAdapter, store: Store, config,
     # Finalize closes that were accepted-but-unfilled in a prior cycle, then load
     # the still-open book.
     pending = _finalize_pending_closes(adapter, store, asof)
+    _retry_unbooked_partials(adapter, store, asof)
     open_positions = store.get_open_positions()
 
     # The broker's leg map, fetched ONCE per pass. Every order this pass places

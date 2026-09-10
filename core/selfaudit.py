@@ -292,6 +292,66 @@ def _check_live_on_delayed_data(store) -> list[Finding]:
                "real-time entitlements before re-arming.")]
 
 
+def _check_disk_space(store) -> list[Finding]:
+    """SQLite fails to write when the disk is full, and it does not fail
+    loudly from a cron. A book that stops recording is the worst kind of
+    silence. Checked on the filesystem that holds the database."""
+    import shutil
+    try:
+        path = None
+        for _seq, _name, file in store.conn.execute("PRAGMA database_list"):
+            if _name == "main" and file:
+                path = file
+                break
+        if not path:
+            return []
+        from pathlib import Path
+        free = shutil.disk_usage(Path(path).parent).free
+    except Exception:
+        return []
+    gb = free / 1e9
+    if gb >= 2.0:
+        return []
+    return [Finding(
+        code="disk_low",
+        severity="critical" if gb < 0.5 else "high",
+        summary=f"Only {gb:.1f} GB free on the disk holding the books — SQLite "
+                "will stop recording without warning when it hits zero.",
+        evidence={"free_gb": round(gb, 2)},
+        remedy="Free space (logs/, data/backups/) or resize the volume before the next cycle.")]
+
+
+def _check_unbooked_partial_closes(store) -> list[Finding]:
+    """A partial close whose filled units were NOT booked — no fill price was
+    recoverable, or the report disagreed with the broker's book — is realized
+    P&L missing from every metric. It used to be a journal row nobody read.
+    Loud for 15 days: long enough to recover it from a snapshot, not forever."""
+    from datetime import timedelta
+    since = (_now() - timedelta(days=15)).isoformat()
+    rows = _rows(store, "SELECT ts, payload FROM journal WHERE kind='partial_close_adopted' "
+                        "AND ts >= ? ORDER BY id DESC", (since,))
+    if not rows:
+        return []
+    items = []
+    for r in rows:
+        try:
+            p = json.loads(r["payload"] or "{}")
+        except Exception:
+            p = {}
+        items.append({"ts": str(r["ts"])[:16], "position_id": p.get("position_id"),
+                      "closed_units": (int(p.get("was") or 0) - int(p.get("remaining") or 0)),
+                      "executions_qty": p.get("executions_qty")})
+    units = sum(i["closed_units"] for i in items)
+    return [Finding(
+        code="unbooked_partial_close",
+        severity="high",
+        summary=(f"{len(items)} partial close(s) totalling {units} contract(s) were resized "
+                 f"but NOT booked — their realized P&L is missing from every metric."),
+        evidence={"items": items[:5]},
+        remedy="If an executions_snapshot for that day exists, the finalizer can book it on "
+               "the next cycle; otherwise the price is gone and the record must say so.")]
+
+
 def _check_cycle_freshness(store) -> list[Finding]:
     """The newest cycle should be recent. Everything downstream reads as current
     whether or not the data behind it still is."""
@@ -482,6 +542,8 @@ def _cycles_since(store):
 
 CHECKS = (
     _check_live_on_delayed_data,
+    _check_disk_space,
+    _check_unbooked_partial_closes,
     _check_cycle_freshness,
     _check_persistent_drift,
     _check_unmeasured_entry_fills,

@@ -115,6 +115,14 @@ def plausible_slip_ps(slip_ps: Any, width: Any) -> bool:
     the model and say so, not to clamp a garbage figure into a plausible-looking
     one. (The project's standing rule: absence and ambiguity must be
     unrepresentable as a confident number.)"""
+    # A measured slippage of EXACTLY zero is a real measurement — the fill hit
+    # the intended price — not absence. The store records absence as NULL, so
+    # 0.0 here is unambiguous. Routing it through _usable() (which must treat
+    # 0.0 as "no data" for BROKER-reported prices) made every perfect fill in
+    # the record read as unmeasured, charged with modeled slippage while the
+    # journal called it measured (preflight review, 2026-09-09).
+    if isinstance(slip_ps, (int, float)) and not isinstance(slip_ps, bool) and float(slip_ps) == 0.0:
+        return True
     v = _usable(slip_ps)
     if v is None:
         return False
@@ -176,3 +184,38 @@ def net_debit_from_positions(legs: list, contracts: int = 1) -> Optional[float]:
     if not seen:
         return None
     return round(-net_paid, 4)                  # paid -> negative credit
+
+
+def combo_fill_from_executions(execs: list, client_order_id: str) -> Optional[tuple[float, float]]:
+    """(filled_qty, avg_combo_price) for ONE order from its BAG executions, in
+    IB's sign convention (negative = net credit received). None when no combo
+    execution carries that orderRef, or a price is unusable.
+
+    Only BAG rows count. The BAG row IS the net per-share price of the spread;
+    re-deriving it from the OPT leg rows would repeat the partial-structure
+    error the leg matcher once had (a condor priced off half its legs). Any
+    order with combo fills has BAG rows; single-leg orders are not traded here.
+
+    Quantity comes from the same rows, so a partial fill reports exactly how
+    much filled — the number the order feed shows as 0.0 cross-process."""
+    qty = 0.0
+    notional = 0.0
+    for e in execs or []:
+        if str(getattr(e, "client_order_id", "") or "") != str(client_order_id or ""):
+            continue
+        if str(getattr(e, "sec_type", "") or "").upper() != "BAG":
+            continue
+        q = _usable(getattr(e, "qty", None))
+        if q is None or q <= 0:
+            continue
+        # A combo price of 0.0 is IB's "unpopulated", never a real net-zero
+        # spread. ONE such row would drag the average and be booked as
+        # measured, so the whole answer is refused rather than diluted.
+        px = _usable(getattr(e, "price", None))
+        if px is None:
+            return None
+        qty += q
+        notional += q * px
+    if qty <= 0:
+        return None
+    return round(qty, 4), round(notional / qty, 4)

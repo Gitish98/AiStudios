@@ -279,6 +279,47 @@ unavailable, never as clean. 388 tests.
 > optimistic. Review it for OVERSTATEMENT specifically, and make every
 > "could not read" an explicit "unavailable", never a zero.
 
+**Session 2026-09-09/10 — the execution report, and a partial close that would
+have vanished (commit below):** the 10:00 cycle closed the SPY 763/762 x10 at
+21 DTE (`manage_at_dte`, limit 0.39 = the mark); **6 of 10 filled at exactly
+0.39** in three tranches, the DAY remainder cancelled at the close. The order
+feed reported `Cancelled, filled 0.0` (session-scoped). The partial-close
+finalizer would have resized to 4 and DISCARDED six contracts of realized P&L
+("no recoverable fill price"). But **`reqExecutions()` is ACCOUNT-scoped for
+the day**, across client ids: all nine fills were there with prices. The
+"IB's fill feed is session-scoped" belief was true of `trades()` and false of
+the execution report. Raw fills were hand-journaled that night
+(`executions_snapshot`) before the reset; the finalizers now consult the report
+(live + journaled snapshots, deduped), both finalizers measure fills the feed
+reports at 0.0, and a partial close BOOKS its closed units
+(`store.split_closed_units`, `"<parent>#partN"`) when the report's quantity
+agrees with the broker's book.
+
+**Two review rounds, 22 confirmed, all fixed** — every one an OVERSTATEMENT or
+a wrong-size order (lesson 5): executions were keyed by coid alone while a
+close's coid is REUSED by every re-placement (the remainder's re-close would
+have netted the first tranche's fills — now scoped to the attempt's IB
+`order_id`); the feed can list a dead attempt AND a live one under one coid and
+last-wins picked the dead one, releasing the live close and placing a THIRD
+(`_orders_by_attempt` prefers the current attempt); the DEAD-order branch
+ignored partial fills and would have sent a 10-lot close against 4 held
+(dead + not all held => resolve by the book — THE 10:00 ET CASE); zero-price
+snapshot rows diluted the average (refused); the per-cycle snapshot missed the
+15:30 cycle's own late fills (`cli.py snapshot-executions`, cron 17:00 ET);
+`plausible_slip_ps(0.0)` read a perfect fill as NO DATA (fixed) — which then
+made the SIM's by-construction 0.0 "measured" and the backtest cost-blind
+(`fill_mode="sim"` stamped, never evidence); split rows inflated the trade
+count (grouped by parent, metrics AND dashboard); a HIGH audit paged every
+cycle and would have masked real failures (CRITICAL pages, HIGH rides);
+unbooked partials had no retry (`_retry_unbooked_partials`) and no alarm
+(`unbooked_partial_close`, HIGH 15 days). Also: on-box books backup with
+rotation + off-box rclone hook (`scripts/backup_books.sh`, cron 17:30 ET),
+`disk_low` audit invariant, heartbeat pings now log their HTTP result.
+
+Rehearsed on a copy of the VM's real store before deploy: Day 2 books 6 @0.39
+and shrinks to 4; Day 2 PM leaves the live re-close alone beside its dead
+sibling; Day 3 measures the remainder at 0.33, not a blend. 420 tests.
+
 **Next, in priority:** (1) ~~activate the heartbeat~~ DONE 2026-09-08;
 (2) SPY/QQQ/IWM/DIA now have real 252-day IV ranks, so the paper ORDER path can fire
 as soon as a credit-ratio-worthy spread appears — watch for the first fill and verify

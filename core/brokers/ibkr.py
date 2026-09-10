@@ -26,7 +26,7 @@ import math
 from datetime import date, datetime, timedelta
 from typing import Any, Optional
 
-from .base import (
+from .base import (Execution, 
     Account, BrokerAdapter, OptionContract, OrderLeg, OrderRequest, OrderResult,
     Position, Quote,
 )
@@ -697,6 +697,32 @@ class IBKRAdapter(BrokerAdapter):
                 broker_order_id=str(t.order.orderId or ""),
                 status=st.status or "", filled_qty=float(st.filled or 0),
                 filled_avg_price=float(st.avgFillPrice or 0)))
+        return out
+
+    def get_executions(self) -> list[Execution]:
+        """Today's fills for the whole account, across client ids — the source
+        the session-scoped order feed is not. Best-effort: an empty list means
+        'could not read', never 'nothing filled'; callers treat it as absence."""
+        ib = _load_ib()
+        live = self._require()
+        out: list[Execution] = []
+        try:
+            fills = live.reqExecutions(ib.ExecutionFilter())
+        except Exception:
+            return out
+        for f in fills or []:
+            try:
+                c, e = f.contract, f.execution
+                out.append(Execution(
+                    exec_id=str(e.execId), time=str(e.time),
+                    local_symbol=str(getattr(c, "localSymbol", "") or c.symbol),
+                    sec_type=str(c.secType), side=str(e.side),
+                    qty=float(e.shares), price=float(e.price),
+                    order_id=str(e.orderId),
+                    client_order_id=str(getattr(e, "orderRef", "") or ""),
+                    client_id=int(e.clientId or 0)))
+            except Exception:
+                continue
         return out
 
     def cancel_order(self, broker_order_id: str) -> bool:

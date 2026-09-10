@@ -51,16 +51,36 @@ def compute_metrics(closed: list[dict], days: list[str],
     # Slippage is MEASURED per position where the broker reported a fill, modeled
     # otherwise. This is what makes realized_pnl (computed from INTENDED prices)
     # honest: gross_from_intent - measured_slippage == gross_from_actual_fills.
+    def _slips(p):
+        # SIM fills are at the limit by construction: their 0.0 slippage is a
+        # property of the simulator, not a measurement, and must fall back to
+        # the model (or the backtest becomes cost-blind on entries).
+        if str(p.get("fill_mode") or "") == "sim":
+            return None, None
+        return p.get("entry_slip_ps"), p.get("exit_slip_ps")
     trade_costs = [costs.position_cost(p.get("structure", "put_credit_spread"),
                                        int(p.get("contracts") or 1),
                                        p.get("exit_reason", ""),
-                                       p.get("entry_slip_ps"),
-                                       p.get("exit_slip_ps"),
+                                       *_slips(p),
                                        p.get("width")) for p in closed]
     _cov = [costs.measured_dollars(p, p.get("exit_reason", "")) for p in closed]
     _m, _a = sum(x for x, _ in _cov), sum(y for _, y in _cov)
-    pnls = [g - c for g, c in zip(gross, trade_costs)]
+    row_pnls = [g - c for g, c in zip(gross, trade_costs)]
     total_costs = round(sum(trade_costs), 2)
+    # ONE POSITION IS ONE TRADE. A close that fills in tranches is booked as
+    # separate closed rows (store.split_closed_units suffixes the parent's
+    # client_order_id with "#partN"), and each row carries its own costs
+    # correctly — but counting the rows would let one decision that filled in
+    # three pieces pass as three trades toward the 40-trade graduation hurdle.
+    # Aggregate P&L per parent before any per-trade statistic.
+    _groups: dict = {}
+    for i, (p, x) in enumerate(zip(closed, row_pnls)):
+        coid = p.get("client_order_id")
+        # Rows without an order id (backtest rows, old fixtures) are each their
+        # own trade; only a "#partN" suffix ever joins two rows together.
+        key = str(coid).split("#part")[0] if coid else f"row:{p.get('id') if p.get('id') is not None else i}"
+        _groups[key] = _groups.get(key, 0.0) + x
+    pnls = list(_groups.values())
     n = len(pnls)
     wins = [x for x in pnls if x > 0]
     losses = [x for x in pnls if x < 0]
